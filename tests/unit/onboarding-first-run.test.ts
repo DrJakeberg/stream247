@@ -258,6 +258,30 @@ describe("I6: the instance step is prefilled (M91)", () => {
     expect(pinned).not.toContain("192.168.1.20");
     expect(pinned).not.toContain("check it");
   });
+
+  it("does not offer the browser's zone on an install that runs on UTC with an empty zone (R16)", () => {
+    vi.spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions").mockReturnValue({
+      ...new Intl.DateTimeFormat("en-US", { timeZone: "UTC" }).resolvedOptions(),
+      timeZone: "Europe/Berlin"
+    });
+    // The URL was saved once and the schedule has blocks; the zone was left empty, so the channel runs on UTC.
+    const html = mountWithEffects(SetupInstanceForm, {
+      initialAppUrl: "https://saved.example.com",
+      detectedAppUrl: "http://192.168.1.20:3000",
+      initialTimezone: "",
+      initialLanguage: "",
+      envAppUrl: "",
+      envTimezone: "",
+      envLanguage: "",
+      zoneInUse: true
+    });
+    expect(html).toMatch(/id="channel-timezone"[^>]*value=""|value=""[^>]*id="channel-timezone"/);
+    expect(html).not.toContain("check it");
+    expect(html).toContain("Empty means UTC, and the channel runs on UTC now.");
+    // The wizard passes it from the saved state: a stored public URL, or any schedule block.
+    const setupPage = readFileSync(path.join(process.cwd(), "apps/web/app/setup/page.tsx"), "utf8");
+    expect(setupPage).toContain("zoneInUse={Boolean(state.managedConfig.appUrl) || state.scheduleBlocks.length > 0}");
+  });
 });
 
 describe("I7: the password warning sits under the field (M91)", () => {

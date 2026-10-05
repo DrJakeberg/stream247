@@ -95,6 +95,31 @@ describe("the next 24 hours, item by item", () => {
     expect(programme.next[0]?.items.map((item) => item.title)).toEqual(["a 1", "a 2", "a 3", "a 4", "a 5"]);
   });
 
+  it("does not list or count the pool's inserts, but keeps the time they take (R24)", () => {
+    const ident = {
+      id: "ident",
+      sourceId: "source-idents",
+      title: "station_ident_v3_final",
+      status: "ready",
+      includeInProgramming: true,
+      durationSeconds: 30,
+      createdAt: "2026-09-01T00:00:00.000Z"
+    };
+    const programme = programmeAt({
+      time: "10:00",
+      blocks: [block({ id: "Morning", dayOfWeek: 1, startMinuteOfDay: 12 * 60, durationMinutes: 150, poolId: "a" })],
+      pools: [{ ...pool("a"), insertAssetId: "ident", insertEveryItems: 2 }],
+      assets: [...assets("a", 5, 1800), ident]
+    });
+    const [group] = programme.next;
+    // Before M105: "a 1 | a 2 | station_ident_v3_final | a 3 | ..." with the ident counted as a video.
+    expect(group?.items.map((item) => item.title)).toEqual(["a 1", "a 2", "a 3", "a 4", "a 5"]);
+    expect(group?.itemCount).toBe(5);
+    // The ident airs between "a 2" and "a 3", so "a 3" starts 30 s after "a 2" ends.
+    const [, second, third] = group?.items ?? [];
+    expect(Date.parse(third!.startsAt) - Date.parse(second!.endsAt)).toBe(30_000);
+  });
+
   it("runs across midnight without a break", () => {
     const programme = programmeAt({
       time: "21:00",
@@ -155,6 +180,31 @@ describe("the next 24 hours, item by item", () => {
     expect(programme.next.map((group) => [group.title, group.items.map((item) => `${berlin(item.startsAt)}-${berlin(item.endsAt)}`)])).toEqual([
       ["Weekly", ["19:40-20:00"]],
       ["Special", ["20:00-21:00"]],
+      ["Weekly", ["21:00-21:20", "21:20-21:40", "21:40-22:00"]]
+    ]);
+  });
+
+  it("cuts the dated block's last item where the weekly block takes the air back (R7)", () => {
+    // Dated 20-21 on air at 20:30, the item on air runs 20:25-20:50: the next one starts 20:50 and is cut at
+    // 21:00 as the worker cuts it, no longer listed to 21:15 over the weekly block's first item.
+    const startedAt = getScheduleInstant({ date: MONDAY, seconds: (20 * 60 + 25) * 60, timeZone: ZONE });
+    const programme = programmeAt({
+      time: "20:30",
+      blocks: [
+        block({ id: "Weekly", dayOfWeek: 1, startMinuteOfDay: 18 * 60, durationMinutes: 240, poolId: "a" }),
+        block({ id: "Special", dayOfWeek: 1, startMinuteOfDay: 20 * 60, durationMinutes: 60, poolId: "b", validFrom: MONDAY, validUntil: MONDAY })
+      ],
+      pools: [pool("a"), pool("b")],
+      assets: [...assets("a", 9, 1200), ...assets("b", 4, 1500)],
+      current: {
+        title: "On air",
+        categoryName: "Archive",
+        startsAt: startedAt.toISOString(),
+        endsAt: new Date(startedAt.getTime() + 1500_000).toISOString()
+      }
+    });
+    expect(programme.next.map((group) => [group.title, group.items.map((item) => `${berlin(item.startsAt)}-${berlin(item.endsAt)}`)])).toEqual([
+      ["Special", ["20:50-21:00"]],
       ["Weekly", ["21:00-21:20", "21:20-21:40", "21:40-22:00"]]
     ]);
   });

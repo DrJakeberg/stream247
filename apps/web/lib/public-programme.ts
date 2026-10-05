@@ -77,9 +77,15 @@ type BlockEntry = {
   title: string;
   categoryName: string;
   dated: boolean;
+  /** Another block takes the air at its end with a cut (R7): the item on air then stops there. */
+  cutAtEnd: boolean;
   /** Air windows as instants (ms). */
   windows: { start: number; end: number }[];
-  items: { title: string; start: number; end: number }[];
+  /**
+   * Every item that airs, the pool's own inserts (idents, bumpers) included: they take air time, so the
+   * items after them start later. Only programme items are listed (`insert` false, R24).
+   */
+  items: { title: string; start: number; end: number; insert: boolean }[];
   /** It has something to play; decided before the item on air moves its items. */
   playable: boolean;
 };
@@ -112,7 +118,8 @@ function collectBlocks(days: MaterializedProgrammingDay[], timeZone: string): Bl
         .map((item) => ({
           title: item.title,
           start: firstInstant + ((item.startSecond as number) - firstSecond) * 1000,
-          end: firstInstant + ((item.endSecond as number) - firstSecond) * 1000
+          end: firstInstant + ((item.endSecond as number) - firstSecond) * 1000,
+          insert: item.kind === "insert"
         }))
         // Elapsed and wall-clock time part on a night the clocks change: an item that would start after the
         // block has ended does not air.
@@ -122,6 +129,7 @@ function collectBlocks(days: MaterializedProgrammingDay[], timeZone: string): Bl
         title: block.title || block.categoryName,
         categoryName: block.categoryName,
         dated: Boolean(block.dated),
+        cutAtEnd: Boolean(block.cutAtEnd),
         windows,
         items,
         playable: items.length > 0
@@ -170,19 +178,21 @@ export function buildPublicProgramme(args: {
       if (moved.start >= window.end) {
         return [];
       }
-      // Cut where a dated block takes over, as the projection cuts it; the last window may overrun.
-      return [lastWindow ? moved : { ...moved, end: Math.min(moved.end, window.end) }];
+      // Cut where a dated block takes over, as the projection cuts it; the last window may overrun, unless
+      // a dated block's start or end cuts it there too (R7).
+      return [lastWindow && !onAir.cutAtEnd ? moved : { ...moved, end: Math.min(moved.end, window.end) }];
     });
   }
 
   // Items in airing order, each with its block; consecutive items of one block form a group.
-  type TimelineEntry = { block: BlockEntry; item: { title: string; start: number; end: number } | null; start: number; end: number };
+  type TimelineEntry = { block: BlockEntry; item: BlockEntry["items"][number] | null; start: number; end: number };
   const timeline: TimelineEntry[] = blocks
     .flatMap((block): TimelineEntry[] => {
       if (block.playable) {
-        // Possibly none left: the item on air outlasts the block.
+        // Possibly none left: the item on air outlasts the block. A pool's insert is not a programme video
+        // to viewers: not listed, not counted in "N more", never a group's headline (review finding R24).
         return block.items
-          .filter((item) => item.start >= fromMs && item.start < horizonMs)
+          .filter((item) => !item.insert && item.start >= fromMs && item.start < horizonMs)
           .map((item) => ({ block, item, start: item.start, end: item.end }));
       }
       // A block with nothing to play is still on the programme: listed by its air window. One on air now is

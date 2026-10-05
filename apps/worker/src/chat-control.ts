@@ -227,11 +227,12 @@ export class ChatControlRuntime {
   }
 
   /**
-   * True at most once a minute per viewer: whether the bot tells this viewer why a request was refused
-   * (M104). An accepted request is always confirmed and does not ask.
+   * True at most once a minute per viewer and five times in 30 seconds in the room: whether the bot tells
+   * this viewer why a request was refused (M104, R23). An accepted request is always confirmed and does
+   * not ask.
    */
   claimRequestRefusalReply(actor: string): boolean {
-    return this.replyCooldown.claimViewer(actor, this.now().getTime());
+    return this.replyCooldown.claimRefusal(actor, this.now().getTime());
   }
 
   clearSkipVote(): void {

@@ -4307,6 +4307,11 @@ if (!schemaMigrations.some((migration) => migration.id === removeNextHoldMigrati
  *
  * Two dates bound when a block may start; empty means unbounded, so every existing row keeps airing exactly
  * as before. Word for word the base-schema lines.
+ *
+ * Additive, but not harmless backwards (2026-10-05 review, R6/R33): an older image ignores the two columns,
+ * so it airs a dated or one-off block every week on its weekday, and its whole-state write re-inserts every
+ * row without them, which erases the dates. The step before a reverse repin is in `docs/deployment.md`,
+ * *Rollback to 2.1.0*.
  */
 export const scheduleBlockDatesMigration: MigrationDefinition = {
   id: "20261003_001_schedule_block_dates",
@@ -9465,6 +9470,18 @@ export async function acknowledgeIncident(fingerprint: string, acknowledgedBy: s
       [fingerprint, now, acknowledgedBy]
     );
   });
+}
+
+/**
+ * What the playout row says plays now and next, without the whole state: the chat bot reads it when it
+ * answers !now or !next (review finding R22), which can be any second between two worker cycles.
+ */
+export async function readPlayoutProgrammeTitles(): Promise<{ status: string; currentTitle: string; nextTitle: string }> {
+  const result = await getPool().query<{ status: string; current_title: string; next_title: string }>(
+    "SELECT status, current_title, next_title FROM playout_runtime WHERE singleton_id = 1"
+  );
+  const row = result.rows[0];
+  return { status: row?.status ?? "", currentTitle: row?.current_title ?? "", nextTitle: row?.next_title ?? "" };
 }
 
 export async function updatePlayoutRuntime(

@@ -104,19 +104,51 @@ describe("every critical incident has an operator action", () => {
       .map((entry) => `${entry.file}:${entry.line} ${entry.fingerprint}`);
     expect(missing).toEqual([]);
 
+    // Every entry is the one its own fingerprint finds (an exact entry wins over a keyed family, R25),
+    // and no two entries of one kind share a fingerprint.
     for (const entry of INCIDENT_OPERATOR_ACTIONS) {
       const probe = entry.keyed ? `${entry.fingerprint}.some-key` : entry.fingerprint;
-      const matches = INCIDENT_OPERATOR_ACTIONS.filter((other) =>
-        other.keyed ? probe.startsWith(`${other.fingerprint}.`) : probe === other.fingerprint
+      expect(findIncidentOperatorAction(probe), entry.fingerprint).toBe(entry);
+      const sameKind = INCIDENT_OPERATOR_ACTIONS.filter(
+        (other) => other.keyed === entry.keyed && other.fingerprint === entry.fingerprint
       );
-      expect(matches, entry.fingerprint).toHaveLength(1);
+      expect(sameKind, entry.fingerprint).toHaveLength(1);
     }
   });
 
   it("names something to press or run in every action", () => {
     for (const entry of INCIDENT_OPERATOR_ACTIONS) {
-      expect(entry.action, entry.fingerprint).toMatch(/Live → |Program → |Admin → |`docker |Reconnect|Free space|Put back/);
+      expect(entry.action, entry.fingerprint).toMatch(/Live → |Program → |Admin → |Studio → |`docker |Reconnect|Free space|Put back/);
       expect(entry.action, entry.fingerprint).not.toMatch(/Manual intervention/i);
+    }
+  });
+
+  it("gives the source-wide warnings their own action, not the per-source one (R25)", () => {
+    const perSource = describeIncidentOperatorAction("source.youtube-channel.source-abc");
+    // Every literal `source.` fingerprint the worker writes is source-wide: a per-source one is built from
+    // the source's kind and id. Each has an entry of its own, so a new one cannot fall into the family.
+    const sourceWide = [...new Set(reported.filter((entry) => !entry.keyed && entry.fingerprint.startsWith("source.")).map((entry) => entry.fingerprint))];
+    expect(sourceWide.sort()).toEqual([
+      "source.direct-media.invalid",
+      "source.local-library.empty",
+      "source.local-library.scan-failed"
+    ]);
+    for (const fingerprint of sourceWide) {
+      expect(findIncidentOperatorAction(fingerprint)?.fingerprint, fingerprint).toBe(fingerprint);
+      expect(describeIncidentOperatorAction(fingerprint), fingerprint).not.toBe(perSource);
+    }
+    expect(describeIncidentOperatorAction("source.local-library.scan-failed")).not.toMatch(/address|still online/);
+    expect(describeIncidentOperatorAction("source.local-library.scan-failed")).toContain("/app/data/media");
+    // The per-source family still answers for every source, the local library's own one included.
+    expect(describeIncidentOperatorAction("source.local-library.source-local-library")).toBe(perSource);
+    expect(describeIncidentOperatorAction("source.direct-media.source-1")).toBe(perSource);
+  });
+
+  it("sends a destination fix to Studio → Output, where M99 moved the forms (R19)", () => {
+    expect(describeIncidentOperatorAction("playout.start.failed")).toContain("Studio → Output → Output destinations");
+    // Live → Status shows the destinations' state only: no action may send an address or key edit there.
+    for (const entry of INCIDENT_OPERATOR_ACTIONS) {
+      expect(entry.action, entry.fingerprint).not.toMatch(/(address|stream key)[^.]*Live → Status/);
     }
   });
 

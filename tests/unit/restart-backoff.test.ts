@@ -97,12 +97,21 @@ describe("the crash-loop incident message (M103)", () => {
 });
 
 describe("the uplink watchdog backs off (M103)", () => {
-  it("plans every watchdog restart and holds a profile until its pause is over", () => {
-    // The four watchdog restarts: never encoded, discontinuity storm, encoder stall, destination stall.
-    expect(workerSource.match(/const backoffNote = planUplinkWatchdogRestart\(running\.key, now\);/g)).toHaveLength(4);
+  // The decisions themselves are tested on the watchdog (tests/unit/uplink-watchdog.test.ts, R4 and R35);
+  // runUplinkCycle needs a database and ffmpeg, so only its use of them is pinned here.
+  it("decides every watchdog restart through the watchdog and holds a profile until its pause is over", () => {
+    // Never encoded, encoder stall and destination stall are dark: held, unless the network was down.
+    expect(workerSource.match(/const backoffNote = await planUplinkDarkRestart\(/g)).toHaveLength(3);
+    // The storm stops its process only on a restart decision; while its restart waits it stays on air and
+    // the stall check after it still runs.
+    const storm = workerSource.slice(workerSource.indexOf('fault: "storm"'), workerSource.indexOf("uplinkWatchdog.stormOver(running.key);"));
+    const restart = storm.slice(storm.indexOf('if (storm.action === "restart") {'), storm.indexOf("if (storm.first) {"));
+    expect(restart).toContain('await stopUplinkProcess(running, "encoder-stalled"); continue;'.replace(" continue;", "\n        continue;"));
+    expect(storm.slice(storm.indexOf("if (storm.first) {"))).not.toContain("stopUplinkProcess");
+    expect(storm.slice(storm.indexOf("if (storm.first) {"))).not.toContain("continue;");
     const start = workerSource.indexOf("await startUplink(group, state.managedConfig);");
-    const guard = workerSource.slice(start - 600, start);
-    expect(guard).toContain("uplinkWatchdogHoldUntilMs.get(group.key)");
-    expect(guard).toContain("if (Date.now() < holdUntilMs)");
+    const guard = workerSource.slice(start - 700, start);
+    expect(guard).toContain("uplinkWatchdog.holdOf(group.key, Date.now(), uplinkOutputSignature(group.targets))");
+    expect(guard).toContain("if (hold.untilMs > 0) {");
   });
 });

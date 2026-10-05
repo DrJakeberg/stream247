@@ -3,7 +3,7 @@ import { collectUpcomingPoolIds, shouldKeepFinishedVodCache } from "./vod-cache-
 import { lastPtsSecondsFromProbeOutput, resolveFeedAvLead } from "./feed-av-lead.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { abortableDelay } from "./abortable-delay.js";
 import {
   canBlameUplinkForStall,
@@ -39,6 +39,7 @@ import {
   formatCuepointOffsetLabel,
   buildScheduleOccurrences,
   getScheduleOccurrenceRunKey,
+  carryCuepointFiredKeys,
   describePresenceStatus,
   findCurrentScheduleOccurrence,
   findNextScheduleOccurrence,
@@ -61,10 +62,6 @@ import {
   formatChatGameNoRoomReply,
   decidePassedSkipVote,
   formatChatSkipPausedReply,
-  formatChatCommandsReply,
-  formatChatNextReply,
-  formatChatNowReply,
-  formatChatRequestReply,
   type ChatProgrammeInfo,
   resolveOperatorHold,
   resolveOperatorOverrideHold,
@@ -202,7 +199,8 @@ import {
   recordAsRunStart,
   recordAsRunEnd,
   closeOpenAsRunRecords,
-  resolveTwitchAccountsForState
+  resolveTwitchAccountsForState,
+  readPlayoutProgrammeTitles
 } from "@stream247/db";
 import {
   ON_AIR_SCENE_PIPE_FD,
@@ -219,18 +217,29 @@ import { incrementQueueVersion, prioritizeManualNextAsset } from "./broadcast-qu
 import { getChapterBackfillConfig, probeAssetChapters, selectChapterBackfillCandidates } from "./chapter-backfill.js";
 import { isDirectMediaUrl, planDirectMediaSync } from "./direct-media.js";
 import { buildLocalLibraryAssetId, buildLocalLibraryFolderPath, scanMediaFiles } from "./local-library.js";
-import { resolveLocalFileDurations } from "./local-durations.js";
+import { resolveLocalFileDurations, type LocalDurationRetry } from "./local-durations.js";
 import { resolvePoolAudioLane, type ResolvedAudioLane } from "./audio-lanes.js";
 import { getCuepointInsertPlan, getCuepointWarmAsset } from "./cuepoints.js";
-import { decideInputOpenRetry, decideInputOpenRetryAfterExit, isCurrentItemSlotFree, type InputOpenRetryState } from "./input-open-retry.js";
+import {
+  decideInputOpenRetry,
+  decideInputOpenRetryAfterExit,
+  isCurrentItemSlotFree,
+  isFailedScheduledInsertRetry,
+  isFinalScheduledInsertOpenFailure,
+  type InputOpenRetryState
+} from "./input-open-retry.js";
+import { createFailedExitWrite } from "./playout-exit-write.js";
+import { decideQuarantineTrialMode } from "./quarantine-trial.js";
 import {
   decideScheduledInsertSkip,
   describeSkippedInsert,
   isPoolIntervalInsertDueNext,
+  keepsRunningScheduledInsert,
   type ScheduledInsertSkipReason,
   type ScheduledInsertTrigger
 } from "./scheduled-insert.js";
 import { planTwitchScheduleSegments } from "./twitch-schedule-plan.js";
+import { decideScheduleTakeover, decideTakeoverPrepareFailure, type ScheduleTakeover } from "./schedule-takeover.js";
 import {
   buildFfmpegOutputTarget,
   evaluateUplinkDestinationStall,
@@ -246,7 +255,8 @@ import {
 import { logRuntimeEvent } from "./runtime-log.js";
 import { decideHealthcheck } from "./healthcheck.js";
 import { HealthSelfRestartWatch, HEALTH_SELF_RESTART_AFTER_MS, selfRestartReason } from "./health-self-restart.js";
-import { RestartBackoff, describeCrashLoopHold, describeRestartBackoff, type RestartBackoffPlan } from "./restart-backoff.js";
+import { RestartBackoff, describeCrashLoopHold, type RestartBackoffPlan } from "./restart-backoff.js";
+import { UplinkWatchdog, type UplinkWatchdogFault } from "./uplink-watchdog.js";
 import { planSourceBreakerIncidents } from "./source-breaker-incidents.js";
 import { createBreakerOutcomeCarry, sourceBreakerOutcomesOf, type QueueProbeOutcome } from "./source-breaker-outcomes.js";
 import { createNetworkOutageCheck, ProbeOutageLogLimiter, withoutNetworkOutageOutcomes, networkLookingFailuresOf } from "./probe-network-outage.js";
@@ -260,7 +270,7 @@ import {
   watchAsRunEnd,
   type AsRunStopIntent
 } from "./as-run.js";
-import { AlertDeduper, deliverAlert } from "./alerts.js";
+import { AlertDeduper, deliverAlert, opensIncident } from "./alerts.js";
 import {
   ensureLocalAssetThumbnail,
   getAssetThumbnailPath,
@@ -334,9 +344,9 @@ import {
   type SceneRenderFont,
   type SceneRenderRequest
 } from "./scene-renderer.js";
-import { execFileText, runWithStallGuard } from "./process-utils.js";
+import { execFileText, hasChildExited, runWithStallGuard } from "./process-utils.js";
 import { DATABASE_OUTAGE_EXIT_AFTER_MS, DatabaseOutageBudget } from "./database-outage.js";
-import { CycleStepIncidentTracker, runIsolatedCycleSteps, type CycleStep } from "./cycle-steps.js";
+import { CycleStepAlertWatch, CycleStepIncidentTracker, runIsolatedCycleSteps, type CycleStep } from "./cycle-steps.js";
 import { fetchWithTimeout } from "./http-timeout.js";
 import {
   TWITCH_REFRESH_REFUSED_ERROR,
@@ -379,6 +389,7 @@ import {
   decideCycleEndInsert,
   decideCycleEndPendingAction,
   decideCycleEndRestartFlag,
+  decideCycleEndStatus,
   decideFailedCycleInsert,
   decideInsertAfterPrepareFailure,
   decideInsertAfterSelection,
@@ -406,6 +417,8 @@ import {
 } from "./playable-input.js";
 import {
   decideQueuePrefetchBudget,
+  isProbeCandidatePlayFailed,
+  isProbeRefreshDue,
   planQueuePrefetch,
   raceResolveAgainstDeath,
   takeUncountedProbeOutcome
@@ -426,7 +439,8 @@ import { buildFlatListingArgs, resolveListingEntryPublishedAt, type FlatListingC
 import { buildTwitchMetadataTitle, resolveTwitchFallbackTitle } from "./twitch-metadata.js";
 import { ActiveChatterRoster } from "./active-chatters.js";
 import { ChatViewerRequestPass } from "./chat-viewer-requests.js";
-import { buildChatProgrammeInfo } from "./chat-programme-info.js";
+import { buildChatProgrammeInfo, readChatProgrammeInfoNow } from "./chat-programme-info.js";
+import { answerChatEffect, replyToChatRequest } from "./chat-answers.js";
 import { EngagementGameTracker } from "./engagement-game.js";
 import {
   ChatGameRuntime,
@@ -520,15 +534,17 @@ const asRunLog = createAsRunLog(
 // has just stopped the process (duration bound, feed watchdog) awaits it before it reads state again;
 // otherwise the read can still show the stopped item on air and its insert active (M74).
 let pendingPlayoutExitUpdate: Promise<void> = Promise.resolve();
+// That write when the database refused it, kept until a cycle applies it again (R3, playout-exit-write.ts).
+const failedPlayoutExitWrite = createFailedExitWrite<(playout: AppState["playout"]) => AppState["playout"]>();
 // The item that failed to open and is started once more on the next cycle (M94, input-open-retry.ts).
 let inputOpenRetry: InputOpenRetryState | null = null;
 let uplinkProcesses: UplinkProcessRuntime[] = [];
 let uplinkReconnectUntil = "";
 const uplinkDestinationStallStartedAt: Map<string, number> = new Map();
 // M103 (H7): the uplink watchdog's restarts back off per output profile. A profile whose process the
-// watchdog stopped is not started again before its hold ends.
-const uplinkWatchdogBackoff: Map<string, RestartBackoff> = new Map();
-const uplinkWatchdogHoldUntilMs: Map<string, number> = new Map();
+// watchdog stopped for a dark fault is not started again before its hold ends; a storm on a picture that
+// is still on air waits on air (R4), and a restart the channel's network outage caused is not counted (R35).
+const uplinkWatchdog = new UplinkWatchdog();
 // Why the uplink cycle deliberately left nothing running, for the self-restart check (M103, H8).
 let uplinkDeliberateHold = "";
 // M103 (H7): crash-loop protection's reset backs off. The hold starts when this process first sees
@@ -619,24 +635,15 @@ const twitchChatBridge = new TwitchChatBridge({
       pendingChatEffects.push(effect);
     }
 
-    // The room is told once why its !skip did nothing (M78); a silent refusal is what makes a room
-    // type the command again.
-    if (effect.kind === "skip-paused" && effect.announce) {
-      twitchChatBridge.say(formatChatSkipPausedReply(effect.hold, viewerLanguage()));
-    }
-
-    // !commands, !now, !next (M104): answered from what the last cycle read, within the reply cooldowns.
-    if (effect.kind === "info" && effect.answer) {
-      const locale = viewerLanguage();
-      if (effect.info === "now") {
-        twitchChatBridge.say(formatChatNowReply(effect.actor, latestChatProgrammeInfo, locale));
-      } else if (effect.info === "next") {
-        twitchChatBridge.say(formatChatNextReply(effect.actor, latestChatProgrammeInfo, locale));
-      } else {
-        // !game always answers while chat is connected (handleChatGameCommand), so it is listed with the rest.
-        twitchChatBridge.say(formatChatCommandsReply({ actor: effect.actor, config: latestChatInteractionConfig, gameCommand: true, locale }));
-      }
-    }
+    // Why a !skip did nothing (M78), and !commands, !now, !next within the reply cooldowns (M104); !now and
+    // !next read what plays when asked (R22). chat-answers.ts; the skip line and !commands go out in this turn.
+    void answerChatEffect({
+      effect,
+      say: twitchChatBridge.say.bind(twitchChatBridge),
+      config: latestChatInteractionConfig,
+      locale: viewerLanguage(),
+      programme: readChatProgrammeForAnswer
+    }).catch(() => undefined);
 
     // Every accepted skip vote goes on air within a second (see CHAT_SKIP_FLUSH_DELAY_MS). The
     // passed campaign flushes too: its full bar stays honest on screen until the worker cycle
@@ -707,8 +714,27 @@ let latestManagedConfig: AppState["managedConfig"] | null = null;
 function viewerLanguage(): ViewerLocale {
   return resolveChannelLanguage(latestManagedConfig ?? undefined);
 }
-// What !now and !next answer (M104), rebuilt by every reconcileChatInteraction from the state it reads.
+// What !now and !next answer (M104), rebuilt by every reconcileChatInteraction from the state it reads: the
+// fallback when the playout row cannot be read at the moment a viewer asks (R22).
 let latestChatProgrammeInfo: ChatProgrammeInfo = { nowTitle: "", nextTitle: "", nextStartsAt: "", channelUrl: "" };
+// What an answer needs beside the playout row, from the last chat cycle: the blocks for "next" while nothing
+// plays, and the link to /channel. Null before the first chat cycle, which answers from the fallback.
+let latestChatProgrammeContext: { schedule: Pick<AppState, "managedConfig" | "scheduleBlocks">; appUrl: string } | null = null;
+
+/** What !now and !next answer from, read when asked (R22). Never throws. */
+function readChatProgrammeForAnswer(): Promise<ChatProgrammeInfo> {
+  const context = latestChatProgrammeContext;
+  if (!context) {
+    return Promise.resolve(latestChatProgrammeInfo);
+  }
+  return readChatProgrammeInfoNow({
+    readTitles: readPlayoutProgrammeTitles,
+    nextScheduleItem: () => getNextScheduleItem(context.schedule),
+    appUrl: context.appUrl,
+    locale: viewerLanguage(),
+    fallback: latestChatProgrammeInfo
+  });
+}
 
 // Effects the socket handler cannot apply itself; drained by the worker cycle.
 const pendingChatEffects: ChatControlEffect[] = [];
@@ -945,6 +971,11 @@ const UPLINK_DESTINATION_STALL_RESTART_SECONDS = (() => {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 60;
 })();
 const NEXT_ASSET_PROBE_READY_TTL_MS = 5 * 60_000;
+// A warm remote item is resolved again in the last minute of its entry, while the entry is still used (R12,
+// queue-prefetch.ts isProbeRefreshDue): four scans fall in that minute, and a yt-dlp resolve fits in it.
+const NEXT_ASSET_PROBE_REFRESH_AHEAD_MS = 60_000;
+// At most one such background refresh is started per cycle, next to the awaited budget below.
+const MAX_QUEUE_PROBE_REFRESHES_PER_CYCLE = 1;
 const NEXT_ASSET_PROBE_FAILED_TTL_MS = 60_000;
 // At most one expensive (remote: Twitch VOD cache prep / yt-dlp resolve) queue prefetch may be
 // awaited per playout cycle, so a cascade of uncached remote queue assets cannot accumulate
@@ -3900,6 +3931,9 @@ function buildAssetFromPath(filePath: string, now: string): AssetRecord {
   };
 }
 
+// Local files whose duration probe got no answer, and when each may be probed again (R14, local-durations.ts).
+const localDurationProbeRetries = new Map<string, LocalDurationRetry>();
+
 async function syncLocalMediaLibrary(): Promise<void> {
   const mediaRoot = getMediaRoot();
   const startedAt = new Date().toISOString();
@@ -3918,13 +3952,16 @@ async function syncLocalMediaLibrary(): Promise<void> {
     files: scan.failed ? [] : scan.files,
     existingByPath: new Map(
       state.assets.filter((asset) => asset.sourceId === LOCAL_LIBRARY_SOURCE_ID).map((asset) => [asset.path, asset] as const)
-    )
+    ),
+    // A probe that got no answer (a timeout, ffprobe not started) is tried again later, not stored (R14).
+    retries: localDurationProbeRetries
   });
   if (durations.probed > 0 || durations.deferred > 0) {
     logRuntimeEvent("local-library.durations.probed", {
       probed: durations.probed,
       failed: durations.failed,
-      deferred: durations.deferred
+      deferred: durations.deferred,
+      unanswered: durations.unanswered
     });
   }
   const nextAssets: AssetRecord[] = discoveredAssets.map((discovered) => {
@@ -4773,10 +4810,10 @@ async function backfillAssetChapters(): Promise<void> {
   }
 }
 
-function getCurrentScheduleItem(state: AppState): ReturnType<typeof buildScheduleOccurrences>[number] | null {
+function getCurrentScheduleItem(state: AppState, now: Date = new Date()): ReturnType<typeof buildScheduleOccurrences>[number] | null {
   const timeZone = resolveChannelTimeZone(state.managedConfig);
   const scheduleMoment = getCurrentScheduleMoment({
-    now: new Date(),
+    now,
     timeZone
   });
 
@@ -4790,7 +4827,30 @@ function getCurrentScheduleItem(state: AppState): ReturnType<typeof buildSchedul
   });
 }
 
-function getNextScheduleItem(state: AppState): ReturnType<typeof buildScheduleOccurrences>[number] | null {
+// A dated block's start or end, seen by this cycle (schedule-takeover.ts, review finding R7): the item on air
+// is cut there and the newly current block's pool picks. Null at every other moment, a change between two
+// weekly blocks included, so those keep the graceful handoff. `now` is the instant `currentScheduleItem` was
+// read at: the cycle reads both once (runPlayoutCycle, scheduleNow).
+function getScheduleTakeover(
+  state: AppState,
+  currentScheduleItem: ReturnType<typeof getCurrentScheduleItem>,
+  now: Date
+): ScheduleTakeover | null {
+  const timeZone = resolveChannelTimeZone(state.managedConfig);
+  const scheduleMoment = getCurrentScheduleMoment({ now, timeZone });
+  return decideScheduleTakeover({
+    previousRunKey: state.playout.cuepointWindowKey,
+    current: currentScheduleItem,
+    date: scheduleMoment.date,
+    blocks: state.scheduleBlocks,
+    now,
+    timeZone
+  });
+}
+
+function getNextScheduleItem(
+  state: Pick<AppState, "managedConfig" | "scheduleBlocks">
+): ReturnType<typeof buildScheduleOccurrences>[number] | null {
   const timeZone = resolveChannelTimeZone(state.managedConfig);
   const scheduleMoment = getCurrentScheduleMoment({
     now: new Date(),
@@ -4961,7 +5021,8 @@ function getFreshProbeCache(assetId: string): QueueProbeCacheEntry | null {
   }
 
   const ttl = entry.status === "ready" ? NEXT_ASSET_PROBE_READY_TTL_MS : NEXT_ASSET_PROBE_FAILED_TTL_MS;
-  if (Date.now() - entry.checkedAt > ttl) {
+  // A late resolve may have written back a candidate that has failed to open since (queue-prefetch.ts).
+  if (Date.now() - entry.checkedAt > ttl || isProbeCandidatePlayFailed(entry, getPlayFailedCandidateIds(assetId))) {
     queueProbeCache.delete(assetId);
     return null;
   }
@@ -5058,6 +5119,91 @@ function resolveQueueAssetIntoProbeCache(asset: AssetRecord): Promise<{ asset: A
     });
 }
 
+// The daily trial of a quarantined item (M95, H9). An uncached Twitch archive is only asked whether it
+// still resolves, without the download its ordinary resolve would queue ahead of the programme's own
+// (R34, quarantine-trial.ts); everything else is tried with the ordinary resolve.
+function resolveQuarantineTrialIntoProbeCache(asset: AssetRecord): Promise<{ asset: AssetRecord; media: ResolvedPlayableMedia }> {
+  if (!isTwitchVodAsset(asset)) {
+    return resolveQueueAssetIntoProbeCache(asset);
+  }
+  return peekTwitchVodCache(asset, getTwitchVodCacheRuntimeConfig()).then((cache) =>
+    decideQuarantineTrialMode({
+      twitchArchive: true,
+      cacheReady: cache.status === "ready",
+      settledTooLarge: asset.cacheStatus === "too-large"
+    }) === "resolve"
+      ? resolveQueueAssetIntoProbeCache(asset)
+      : checkTwitchArchiveAvailability(asset)
+  );
+}
+
+// Does the archive still resolve on Twitch? Nothing is downloaded and a success caches nothing: the remote
+// address is not what the playout would play with the remote fallback off. A failure is cached like any
+// failed probe, so the scan reports it once.
+function checkTwitchArchiveAvailability(asset: AssetRecord): Promise<{ asset: AssetRecord; media: ResolvedPlayableMedia }> {
+  queueResolvesInFlight.add(asset.id);
+  logRuntimeEvent("playout.asset.reprobe.availability", { assetId: asset.id });
+  return resolvePlayableMedia(asset.path)
+    .then((media) => ({ asset, media }))
+    .catch((error: unknown) => {
+      queueProbeCache.set(asset.id, {
+        status: "failed",
+        checkedAt: Date.now(),
+        resolvedInput: "",
+        resolvedAudioInput: "",
+        formatId: "",
+        candidateId: "",
+        outcomeCounted: false,
+        error: error instanceof Error ? error.message : "Unknown Twitch archive availability error.",
+        pendingDownload: false,
+        assetId: asset.id
+      });
+      throw error;
+    })
+    .finally(() => {
+      queueResolvesInFlight.delete(asset.id);
+    });
+}
+
+// The early re-resolve of a warm entry (R12, queue-prefetch.ts isProbeRefreshDue). In the background, so
+// the cycle keeps using the entry it has; that entry is replaced only by a successful resolve. A failure
+// leaves it to expire and to the ordinary resolve after it, which records the failure as before.
+function refreshQueueAssetProbeCache(asset: AssetRecord): void {
+  if (queueResolvesInFlight.has(asset.id)) {
+    return;
+  }
+  queueResolvesInFlight.add(asset.id);
+  void resolveAssetPlaybackInput(asset)
+    .then((prepared) => {
+      // The item failed to open on this candidate while the refresh ran: the exit handler dropped the entry
+      // for the retry's fresh resolve, and writing it back would hand the retry the same candidate.
+      if (isProbeCandidatePlayFailed({ status: "ready", candidateId: prepared.media.candidateId }, getPlayFailedCandidateIds(asset.id))) {
+        return;
+      }
+      queueProbeCache.set(asset.id, {
+        status: "ready",
+        checkedAt: Date.now(),
+        resolvedInput: prepared.media.input,
+        resolvedAudioInput: prepared.media.audioInput,
+        formatId: prepared.media.formatId,
+        candidateId: prepared.media.candidateId,
+        outcomeCounted: false,
+        error: "",
+        pendingDownload: false,
+        assetId: asset.id
+      });
+    })
+    .catch((error: unknown) => {
+      logRuntimeEvent("playout.prefetch.refresh_failed", {
+        assetId: asset.id,
+        error: (error instanceof Error ? error.message : String(error)).slice(0, 300)
+      });
+    })
+    .finally(() => {
+      queueResolvesInFlight.delete(asset.id);
+    });
+}
+
 async function getPlayableQueuedAssets(
   poolQueueAssets: AssetRecord[],
   // warmOnly: items probed ahead of the queue and with the queue's budget, but not part of it (M94: the
@@ -5107,12 +5253,28 @@ async function getPlayableQueuedAssets(
   const expensiveBudget = options.expensiveBudget ?? MAX_EXPENSIVE_QUEUE_RESOLVES_PER_CYCLE;
   const cachedEntries = queueAssets.map((asset) => getFreshProbeCache(asset.id));
   const expensiveFlags = queueAssets.map((asset) => isExpensiveQueueResolve(asset));
+  const nowMs = Date.now();
   const actions = planQueuePrefetch(
     queueAssets.map((asset, index) => ({
       cacheStatus: cachedEntries[index]?.status ?? "none",
-      expensive: expensiveFlags[index]!
+      expensive: expensiveFlags[index]!,
+      // Not a trial: its result is all it is for.
+      refreshDue:
+        !isReprobe(index) &&
+        Boolean(
+          cachedEntries[index] &&
+            isProbeRefreshDue({
+              status: cachedEntries[index]!.status,
+              checkedAt: cachedEntries[index]!.checkedAt,
+              nowMs,
+              ttlMs: NEXT_ASSET_PROBE_READY_TTL_MS,
+              aheadMs: NEXT_ASSET_PROBE_REFRESH_AHEAD_MS
+            })
+        )
     })),
-    expensiveBudget
+    expensiveBudget,
+    // Only while something is on air, as for the awaited resolves (the budget is 0 otherwise).
+    expensiveBudget > 0 ? MAX_QUEUE_PROBE_REFRESHES_PER_CYCLE : 0
   );
 
   for (let index = 0; index < queueAssets.length; index += 1) {
@@ -5132,7 +5294,11 @@ async function getPlayableQueuedAssets(
       continue;
     }
 
-    if (action === "use-cache") {
+    if (action === "refresh") {
+      refreshQueueAssetProbeCache(asset);
+    }
+
+    if (action === "use-cache" || action === "refresh") {
       // Counted once: here only when a background resolve finished after its cycle moved on.
       if (takeUncountedProbeOutcome(cached)) {
         probeOutcomes.push({ asset, outcome: "ok", error: "" });
@@ -5180,10 +5346,12 @@ async function getPlayableQueuedAssets(
       continue;
     }
 
+    // A quarantine trial asks without downloading (R34); every other item is resolved as it will play.
+    const resolveInto = isReprobe(index) ? resolveQuarantineTrialIntoProbeCache : resolveQueueAssetIntoProbeCache;
     try {
       if (!expensiveFlags[index]) {
         // Cheap (local/direct) resolves return effectively instantly — await normally.
-        const prepared = await resolveQueueAssetIntoProbeCache(asset);
+        const prepared = await resolveInto(asset);
         takeUncountedProbeOutcome(queueProbeCache.get(asset.id));
         probeOutcomes.push({ asset: prepared.asset, outcome: "ok", error: "" });
         if (!isWarmOnly(index)) {
@@ -5199,7 +5367,7 @@ async function getPlayableQueuedAssets(
       // the remainder of the resolve — the exact 94s no-playout gap of the v1.5.16 soak failure.
       // The resolve keeps running in the background and writes the probe cache on completion.
       const death = watchPlayoutProcessExit();
-      const outcome = await raceResolveAgainstDeath(resolveQueueAssetIntoProbeCache(asset), death?.promise ?? null);
+      const outcome = await raceResolveAgainstDeath(resolveInto(asset), death?.promise ?? null);
       death?.dispose();
       if (outcome.kind === "abandoned") {
         logRuntimeEvent("playout.prefetch.abandoned", {
@@ -5363,6 +5531,12 @@ type SelectionResult = {
   fallbackTier: AppState["playout"]["fallbackTier"];
   // The once-more start of an item that failed to open (M94, input-open-retry.ts).
   inputOpenRetry?: boolean;
+  // Set on the new block's pick at a dated block's start or end (schedule-takeover.ts), the selection that
+  // cuts the item on air.
+  scheduleTakeover?: ScheduleTakeover;
+  // Set on the item kept on air at such a boundary when the new block has no item to take the air with yet:
+  // the cycle records the run before the boundary, so the next cycle tries the takeover again.
+  scheduleTakeoverWaiting?: ScheduleTakeover;
 };
 
 function buildQueueHeadForSelection(args: {
@@ -5385,6 +5559,25 @@ function buildQueueHeadForSelection(args: {
   }
 
   if ((args.selection.reasonCode === "operator_insert" || args.selection.reasonCode === "scheduled_insert") && args.selection.asset) {
+    // A scheduled insert held on air (R11) or started once more (M94) has no trigger of its own; it keeps the
+    // line its start wrote, or a cuepoint insert would read "Automatic insert" from its second cycle on.
+    const previousHead = args.state.playout.queueItems[0];
+    if (
+      args.selection.reasonCode === "scheduled_insert" &&
+      args.selection.insertTrigger === "" &&
+      previousHead?.kind === "insert" &&
+      previousHead.assetId === args.selection.asset.id
+    ) {
+      return {
+        title: previousHead.title,
+        subtitle: previousHead.subtitle,
+        scenePreset: resolveOverlayScenePresetForQueueKind(args.state.overlay.scenePreset, "insert", {
+          insertScenePreset: args.state.overlay.insertScenePreset,
+          standbyScenePreset: args.state.overlay.standbyScenePreset,
+          reconnectScenePreset: args.state.overlay.reconnectScenePreset
+        })
+      };
+    }
     return {
       title: buildAssetDisplayTitle(args.selection.asset),
       subtitle: `${
@@ -5454,7 +5647,14 @@ function buildQueueHeadForSelection(args: {
   };
 }
 
-function choosePlaybackCandidate(state: AppState): SelectionResult {
+// `scheduleNow` is the instant the schedule is read at; a cycle passes one instant to every selection and to
+// the run it records (runPlayoutCycle). `setTakeoverAside` selects as if no dated block started or ended now:
+// what keeps the item on air while a takeover waits for its pick (decideTakeoverPrepareFailure).
+function choosePlaybackCandidate(
+  state: AppState,
+  scheduleNow: Date = new Date(),
+  options: { setTakeoverAside?: boolean } = {}
+): SelectionResult {
   const createSelection = (
     overrides: Omit<
       SelectionResult,
@@ -5592,6 +5792,8 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
   if (retryAsset && retryDecision) {
     return createSelection({
       asset: retryAsset,
+      // A scheduled insert's retry (R13) is still an insert on air and in the as-run log.
+      queueKind: retryDecision.reasonCode === "scheduled_insert" ? "insert" : "asset",
       inputOpenRetry: true,
       reason: `${retryAsset.title} failed to open and is tried once more.`,
       lifecycleStatus: "recovering" as const,
@@ -5626,14 +5828,56 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
     });
   }
 
-  const currentScheduleItem = getCurrentScheduleItem(state);
+  const currentScheduleItem = getCurrentScheduleItem(state, scheduleNow);
   const currentPool = currentScheduleItem?.poolId ? state.pools.find((pool) => pool.id === currentScheduleItem.poolId) ?? null : null;
-  const processRunning = Boolean(playoutProcess && !playoutProcess.killed);
+  // The pick of a block without a pool: an item of the block's source.
+  const findScheduledSourceAsset = (): AssetRecord | null =>
+    state.assets.find((entry) => {
+      if (entry.status !== "ready") {
+        return false;
+      }
+      if (entry.id === skippedAssetId || entry.id === removedNextAssetId) {
+        return false;
+      }
+      if (entry.includeInProgramming === false) {
+        return false;
+      }
+      if (isAssetBlockedForAutomaticSelection(entry)) {
+        return false;
+      }
+      const matchingSource = state.sources.find((source) => source.id === entry.sourceId);
+      return matchingSource?.name === currentScheduleItem?.sourceName;
+    }) ?? null;
+  // The same test as the boundary's "nothing on air" (M105): a handle on a child that has already ended no
+  // longer keeps its item, or the boundary bridged the fallback for the item this arm still called on air.
+  const processRunning = isPlayoutProcessRunning();
+  // A dated or one-off block takes the air at its start and gives it back at its end (owner decision 5.1
+  // Q1; review finding R7): at that boundary neither arm below keeps the item on air, so the newly current
+  // block's pool picks and the switch cuts the item (as-run `switch`). Before, the item finished first and
+  // a one-off under a multi-hour archive could pass without airing while Twitch and /channel announced it.
+  // The operator arms above (Pin, Fallback, Play now / Insert, Live Bridge) come first and still win.
+  const scheduleTakeoverEdge =
+    processRunning && !options.setTakeoverAside ? getScheduleTakeover(state, currentScheduleItem, scheduleNow) : null;
+  // A block without an item of its own to take the air with takes nothing yet (review of M105): the ladder
+  // below (global fallback, generic fallback, standby slate) cut the healthy item on air for a fallback,
+  // where before M105 the item ran on and a fallback came only after it. The keep-arms hold the item and
+  // say the takeover waits (scheduleTakeoverWaiting), so the cycle records the run before the boundary and
+  // tries again: a pool whose only source the breaker holds at 20:00 takes the air once it is let go.
+  const takeoverPick = scheduleTakeoverEdge
+    ? currentScheduleItem?.poolId
+      ? selectPoolAsset(state, currentScheduleItem.poolId, skippedAssetId, removedNextAssetId)
+      : findScheduledSourceAsset()
+    : null;
+  const scheduleTakeover = takeoverPick ? scheduleTakeoverEdge : null;
+  const waitingTakeover = scheduleTakeoverEdge && !takeoverPick ? scheduleTakeoverEdge : null;
+  const holdingForTakeover = (selection: SelectionResult): SelectionResult =>
+    waitingTakeover ? { ...selection, scheduleTakeoverWaiting: waitingTakeover } : selection;
   // A Move next (or Replay previous) item plays to its end like a scheduled item. Its manual_next start
   // clears the queued id, so from the next cycle on nothing else holds it: an item from outside the
   // running pool's sources was cut after one cycle for the pool's next pick. Replay previous, which has
   // an item since M74 (an insert that gave way to the pool, for one), reaches that case every time.
   const runningScheduledAsset =
+    !scheduleTakeover &&
     processRunning &&
     state.playout.currentAssetId !== "" &&
     (state.playout.selectionReasonCode === "scheduled_match" ||
@@ -5672,6 +5916,33 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
     isAssetBlocked: isInsertBlocked
   });
 
+  // A scheduled insert on air plays to its end (review finding R11): nothing else holds it once the cycle
+  // that started it has used up its cuepoint or the pool's counter, and an item from outside the pool's
+  // sources was cut at the next cycle for the pool's pick (scheduled-insert.ts). No trigger, so nothing is
+  // used up again.
+  const runningScheduledInsert = keepsRunningScheduledInsert({
+    processRunning,
+    scheduleTakeover: Boolean(scheduleTakeover),
+    runtimeReasonCode: state.playout.selectionReasonCode,
+    runtimeCurrentAssetId: state.playout.currentAssetId,
+    runningAssetId: playoutAssetId,
+    heldOutAssetIds: [skippedAssetId, removedNextAssetId].filter(Boolean)
+  })
+    ? state.assets.find((asset) => asset.id === state.playout.currentAssetId && asset.status === "ready") ?? null
+    : null;
+  if (runningScheduledInsert) {
+    return holdingForTakeover(
+      createSelection({
+        asset: runningScheduledInsert,
+        queueKind: "insert",
+        reason: `Scheduled insert ${runningScheduledInsert.title} plays to its end.`,
+        lifecycleStatus: "running" as const,
+        reasonCode: "scheduled_insert" as const,
+        fallbackTier: "scheduled" as const
+      })
+    );
+  }
+
   if (cuepointInsertPlan && currentSlotFree) {
     return createSelection({
       asset: cuepointInsertPlan.asset,
@@ -5707,7 +5978,7 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
   // end as the pool's item, as it did before M74.
   const runningOperatorItem = state.playout.selectionReasonCode === "operator_insert";
   const currentPoolAsset =
-    processRunning && !runningOperatorItem && currentScheduleItem?.poolId && state.playout.currentAssetId
+    !scheduleTakeover && processRunning && !runningOperatorItem && currentScheduleItem?.poolId && state.playout.currentAssetId
       ? state.assets.find(
           (asset) =>
             asset.id === state.playout.currentAssetId &&
@@ -5719,44 +5990,37 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
       : null;
 
   if (runningScheduledAsset && (!currentPool || !currentPool.sourceIds.includes(runningScheduledAsset.sourceId))) {
-    return createSelection({
-      asset: runningScheduledAsset,
-      reason: `Current on-air asset ${runningScheduledAsset.title} will finish before the next scheduled block takes over.`,
-      lifecycleStatus: "running" as const,
-      reasonCode: "graceful_handoff" as const,
-      fallbackTier: "scheduled" as const
-    });
+    return holdingForTakeover(
+      createSelection({
+        asset: runningScheduledAsset,
+        reason: `Current on-air asset ${runningScheduledAsset.title} will finish before the next scheduled block takes over.`,
+        lifecycleStatus: "running" as const,
+        reasonCode: "graceful_handoff" as const,
+        fallbackTier: "scheduled" as const
+      })
+    );
   }
 
-  const preferredAsset = currentScheduleItem?.poolId
+  const preferredAsset =
+    takeoverPick ??
+    (currentScheduleItem?.poolId
       ? currentPoolAsset ?? selectPoolAsset(state, currentScheduleItem.poolId, skippedAssetId, removedNextAssetId)
-    : state.assets.find((entry) => {
-        if (entry.status !== "ready") {
-          return false;
-        }
-        if (entry.id === skippedAssetId || entry.id === removedNextAssetId) {
-          return false;
-        }
-        if (entry.includeInProgramming === false) {
-          return false;
-        }
-        if (isAssetBlockedForAutomaticSelection(entry)) {
-          return false;
-        }
-        const matchingSource = state.sources.find((source) => source.id === entry.sourceId);
-        return matchingSource?.name === currentScheduleItem?.sourceName;
-      });
+      : findScheduledSourceAsset());
 
   if (preferredAsset) {
-    return createSelection({
-      asset: preferredAsset,
-      reason: currentScheduleItem
-        ? `Scheduled block ${currentScheduleItem.title} is mapped to asset ${preferredAsset.title}.`
-        : `Selected asset ${preferredAsset.title}.`,
-      lifecycleStatus: "running" as const,
-      reasonCode: "scheduled_match" as const,
-      fallbackTier: "scheduled" as const
-    });
+    // While a takeover waits for a pick, the only item here is the one the pool keeps on air.
+    return holdingForTakeover(
+      createSelection({
+        asset: preferredAsset,
+        reason: currentScheduleItem
+          ? `Scheduled block ${currentScheduleItem.title} is mapped to asset ${preferredAsset.title}.`
+          : `Selected asset ${preferredAsset.title}.`,
+        lifecycleStatus: "running" as const,
+        reasonCode: "scheduled_match" as const,
+        fallbackTier: "scheduled" as const,
+        ...(scheduleTakeover ? { scheduleTakeover } : {})
+      })
+    );
   }
 
   const globalFallback = [...state.assets]
@@ -5811,6 +6075,9 @@ function choosePlaybackCandidate(state: AppState): SelectionResult {
   });
 }
 
+// The dated run whose waiting takeover was logged last (runPlayoutCycle), so the wait is logged once.
+let loggedWaitingTakeoverRunKey = "";
+
 /** Processes the stop deadline gave up on; their late exit is ignored (process-exit-guard.ts). */
 const abandonedPlayoutProcesses = new WeakSet<ChildProcess>();
 
@@ -5823,7 +6090,13 @@ async function stopPlayoutProcess(reason = ""): Promise<void> {
   // variable is how the next reader gets it wrong.
   activeTickerCrawl = null;
 
-  if (!currentProcess || currentProcess.killed) {
+  // A child that has already ended is gone as well: waiting for its 'exit' (which has happened, or for a
+  // failed spawn never comes) only ran into the 20 s deadline below with nothing on air (M105).
+  const alreadyExited = currentProcess !== null && hasChildExited(currentProcess);
+  if (alreadyExited) {
+    logRuntimeEvent("playout.stop.already_exited", { reason, pid: currentProcess?.pid ?? 0 });
+  }
+  if (!currentProcess || currentProcess.killed || alreadyExited) {
     playoutProcess = null;
     playoutAssetId = "";
     playoutDestinationId = "";
@@ -6353,6 +6626,8 @@ async function startOrSwitchPlayout(args: {
 
   playoutProcess = child;
   playoutProcessStartedAtMs = Date.now();
+  // This start's own write describes the air from now on; an older exit write still kept must not undo it.
+  failedPlayoutExitWrite.supersede();
   playoutAssetId = args.asset?.id ?? "";
   playoutDestinationId = leadDestination.id;
   playoutDestinationIds = args.destinations.map((destination) => destination.id);
@@ -6462,88 +6737,14 @@ async function startOrSwitchPlayout(args: {
     stopSceneRendererLoop();
   }
 
-  await updatePlayoutRuntime((playout) => ({
-    ...playout,
-    status:
-      args.lifecycleStatus === "standby" || args.lifecycleStatus === "reconnecting"
-        ? args.lifecycleStatus
-        : switching
-          ? "switching"
-          : args.lifecycleStatus === "recovering"
-            ? "recovering"
-            : "starting",
-    transitionState: switching ? "switching" : "idle",
-    transitionTargetKind: args.asset
-      ? args.reasonCode === "operator_insert" || args.reasonCode === "scheduled_insert"
-        ? "insert"
-        : "asset"
-      : args.liveBridge
-        ? "live"
-        : args.lifecycleStatus === "reconnecting"
-          ? "reconnect"
-          : "standby",
-    transitionTargetAssetId: args.asset?.id ?? "",
-    transitionTargetTitle:
-      buildAssetDisplayTitle(args.asset) ||
-      args.liveBridge?.label ||
-      (args.lifecycleStatus === "reconnecting" ? "Scheduled reconnect" : "Replay standby"),
-    transitionReadyAt: "",
-    currentAssetId: args.asset?.id ?? "",
-    currentTitle: buildAssetDisplayTitle(args.asset) || args.liveBridge?.label || "Replay standby",
-    desiredAssetId: args.asset?.id ?? "",
-    currentDestinationId: leadDestination.id,
-    restartRequestedAt: decideCycleEndRestartFlag({
-      consumed: args.consumed.restartRequestedAt,
-      row: playout.restartRequestedAt,
-      keepReconnectWindow: false
-    }),
-    heartbeatAt: startedAt,
-    processPid: pid,
-    processStartedAt: startedAt,
-    lastTransitionAt: startedAt,
-    selectionReasonCode: args.reasonCode,
-    fallbackTier: args.fallbackTier,
-    liveBridgeStatus: args.liveBridge
-      ? playout.liveBridgeStatus === "releasing"
-        ? "releasing"
-        : "active"
-      : playout.liveBridgeStatus,
-    liveBridgeStartedAt: args.liveBridge ? playout.liveBridgeStartedAt || startedAt : playout.liveBridgeStartedAt,
-    liveBridgeReleasedAt: args.liveBridge
-      ? playout.liveBridgeStatus === "releasing"
-        ? playout.liveBridgeReleasedAt
-        : ""
-      : playout.liveBridgeReleasedAt,
-    liveBridgeLastError: args.liveBridge && playout.liveBridgeStatus !== "releasing" ? "" : playout.liveBridgeLastError,
-    programFeedPlaylistPath: programFeedConfig?.playlistPath ?? playout.programFeedPlaylistPath,
-    programFeedTargetSeconds: programFeedConfig?.targetSeconds ?? playout.programFeedTargetSeconds,
-    programFeedBufferedSeconds: programFeedConfig?.bufferedSeconds ?? playout.programFeedBufferedSeconds,
-    lastError: "",
-    ...decideCycleEndPendingAction({ consumed: args.consumed, row: playout }),
-    message: args.reason
-  }));
-
-  // One fingerprint for the whole family, not one per asset: see incident-classes.ts. The asset
-  // that failed is named in the incident's message, which is where the detail belongs.
-  await resolveIncident(
-    "playout.ffmpeg.exit",
-    args.asset ? `Asset ${args.asset.title} started successfully.` : "Playout process started successfully."
-  );
-
-  if (args.updateDestinations !== false) {
-    for (const destination of args.destinations) {
-      await updateDestinationRecord({
-        ...destination,
-        status: "ready",
-        lastValidatedAt: startedAt,
-        // Failures since the last clean start — the counter meant nothing while it only ever grew.
-        failureCount: 0,
-        lastError: "",
-        notes: `${destination.role === "backup" ? "Backup" : "Primary"} destination is active in the current multi-output group.`
-      });
-    }
-  }
-
+  // Both listeners go on before the first await below (the start write). An ffmpeg that ended during that
+  // write -- a YouTube pair refused at once, while the database answered slowly -- used to emit its 'exit'
+  // with nobody listening: no exit log, no runtime write, no retry, and the handle stayed on the dead child.
+  // The next cycle kept "the item on air" (a handle that is not killed), found no running process at the
+  // boundary, bridged the fallback for that very item and then waited the 20 s stop deadline for an exit
+  // that had already happened -- production v2.1.0 on 2026-10-02 10:24 UTC, right after a container
+  // restart: playout.boundary.fallback_bridge naming the item started 15 s before, then
+  // playout.stop.deadline_exceeded (switch). Review of M84-M104, M105.
   child.stderr?.on("data", (chunk) => {
     const line = redactSecrets(chunk.toString().trim());
     if (!line) {
@@ -6706,6 +6907,13 @@ async function startOrSwitchPlayout(args: {
       nowMs: Date.now()
     });
     inputOpenRetry = openRetry.next;
+    // A scheduled insert refused on both tries is skipped with an incident, like one that could not be
+    // prepared (R13); its first start already used up its cuepoint or the pool's counter.
+    if (isFinalScheduledInsertOpenFailure({ exit: openRetry, immediateOpenFailure })) {
+      void reportScheduledInsertOpenFailed(lastAssetId, lastStderrSample || exitReason).catch((error) => {
+        logRuntimeEvent("playout.insert.skip_report_failed", { assetId: lastAssetId, error: error instanceof Error ? error.message : String(error) });
+      });
+    }
     if (immediateOpenFailure) {
       queueProbeCache.delete(lastAssetId);
       // "Try another format when the first does not work": the candidate that resolved but could
@@ -6720,7 +6928,7 @@ async function startOrSwitchPlayout(args: {
       });
     }
     let crashLoopDetectedAfterExit = false;
-    const runtimeUpdate = updatePlayoutRuntime((playout) => {
+    const exitRuntimeUpdate = (playout: AppState["playout"]): AppState["playout"] => {
       const ranPastCrashWindow =
         playout.processStartedAt !== "" && Date.now() - new Date(playout.processStartedAt).getTime() >= PLAYOUT_CRASH_LOOP_WINDOW_MS;
       const nextCrashCountWindow =
@@ -6784,10 +6992,19 @@ async function startOrSwitchPlayout(args: {
               ? "Playout entered crash-loop protection."
               : `Playout process ${exitReason}.`
       };
-    });
+    };
+    const runtimeUpdate = updatePlayoutRuntime(exitRuntimeUpdate);
     pendingPlayoutExitUpdate = runtimeUpdate.then(
       () => undefined,
-      () => undefined
+      () => {
+        // Refused, a database outage most likely: applied again before the next state read, unless a new
+        // process has started since (R3, playout-exit-write.ts). Dropped, an operator insert that ended
+        // here read as still active after the outage and aired again from 0.
+        if (!isPlayoutProcessRunning()) {
+          failedPlayoutExitWrite.fail(exitRuntimeUpdate);
+          logRuntimeEvent("playout.exit_write.kept", { assetId: lastAssetId });
+        }
+      }
     );
     void runtimeUpdate
       .then(() => {
@@ -6853,6 +7070,98 @@ async function startOrSwitchPlayout(args: {
       }
     }
   });
+
+  // A child that has already ended (its exit handler above ran, or runs right after) leaves the row to
+  // its exit write; this start never took the air.
+  await updatePlayoutRuntime((playout) => (hasChildExited(child) ? playout : {
+    ...playout,
+    status:
+      args.lifecycleStatus === "standby" || args.lifecycleStatus === "reconnecting"
+        ? args.lifecycleStatus
+        : switching
+          ? "switching"
+          : args.lifecycleStatus === "recovering"
+            ? "recovering"
+            : "starting",
+    transitionState: switching ? "switching" : "idle",
+    transitionTargetKind: args.asset
+      ? args.reasonCode === "operator_insert" || args.reasonCode === "scheduled_insert"
+        ? "insert"
+        : "asset"
+      : args.liveBridge
+        ? "live"
+        : args.lifecycleStatus === "reconnecting"
+          ? "reconnect"
+          : "standby",
+    transitionTargetAssetId: args.asset?.id ?? "",
+    transitionTargetTitle:
+      buildAssetDisplayTitle(args.asset) ||
+      args.liveBridge?.label ||
+      (args.lifecycleStatus === "reconnecting" ? "Scheduled reconnect" : "Replay standby"),
+    transitionReadyAt: "",
+    currentAssetId: args.asset?.id ?? "",
+    currentTitle: buildAssetDisplayTitle(args.asset) || args.liveBridge?.label || "Replay standby",
+    desiredAssetId: args.asset?.id ?? "",
+    currentDestinationId: leadDestination.id,
+    // A flag written before this spawn is satisfied by it (R1): it was aimed at the item this start replaced.
+    restartRequestedAt: decideCycleEndRestartFlag({
+      consumed: args.consumed.restartRequestedAt,
+      row: playout.restartRequestedAt,
+      keepReconnectWindow: false,
+      spawnedAtMs: asRunStartedAtMs
+    }),
+    heartbeatAt: startedAt,
+    processPid: pid,
+    processStartedAt: startedAt,
+    lastTransitionAt: startedAt,
+    selectionReasonCode: args.reasonCode,
+    fallbackTier: args.fallbackTier,
+    liveBridgeStatus: args.liveBridge
+      ? playout.liveBridgeStatus === "releasing"
+        ? "releasing"
+        : "active"
+      : playout.liveBridgeStatus,
+    liveBridgeStartedAt: args.liveBridge ? playout.liveBridgeStartedAt || startedAt : playout.liveBridgeStartedAt,
+    liveBridgeReleasedAt: args.liveBridge
+      ? playout.liveBridgeStatus === "releasing"
+        ? playout.liveBridgeReleasedAt
+        : ""
+      : playout.liveBridgeReleasedAt,
+    liveBridgeLastError: args.liveBridge && playout.liveBridgeStatus !== "releasing" ? "" : playout.liveBridgeLastError,
+    programFeedPlaylistPath: programFeedConfig?.playlistPath ?? playout.programFeedPlaylistPath,
+    programFeedTargetSeconds: programFeedConfig?.targetSeconds ?? playout.programFeedTargetSeconds,
+    programFeedBufferedSeconds: programFeedConfig?.bufferedSeconds ?? playout.programFeedBufferedSeconds,
+    lastError: "",
+    ...decideCycleEndPendingAction({ consumed: args.consumed, row: playout }),
+    message: args.reason
+  }));
+
+  // An ffmpeg that has already ended did not start successfully: its exit handler raised the incident
+  // and judges the destinations.
+  if (hasChildExited(child)) {
+    return;
+  }
+
+  // One fingerprint for the whole family, not one per asset: see incident-classes.ts. The asset
+  // that failed is named in the incident's message, which is where the detail belongs.
+  await resolveIncident(
+    "playout.ffmpeg.exit",
+    args.asset ? `Asset ${args.asset.title} started successfully.` : "Playout process started successfully."
+  );
+
+  if (args.updateDestinations !== false) {
+    for (const destination of args.destinations) {
+      await updateDestinationRecord({
+        ...destination,
+        status: "ready",
+        lastValidatedAt: startedAt,
+        // Failures since the last clean start — the counter meant nothing while it only ever grew.
+        failureCount: 0,
+        lastError: "",
+        notes: `${destination.role === "backup" ? "Backup" : "Primary"} destination is active in the current multi-output group.`
+      });
+    }
+  }
 }
 
 async function syncDestinations(): Promise<void> {
@@ -7307,8 +7616,10 @@ async function skipScheduledInsert(args: {
   attempt: ScheduledInsertAttempt;
   reason: ScheduledInsertSkipReason;
   error?: string;
+  // The instant the cycle's selection read the schedule at, so the cuepoint is used up in the run it fired in.
+  now?: Date;
 }): Promise<AppState> {
-  const currentScheduleItem = getCurrentScheduleItem(args.state);
+  const currentScheduleItem = getCurrentScheduleItem(args.state, args.now);
   const runKey = currentScheduleItem ? getScheduleOccurrenceRunKey(currentScheduleItem) : "";
   const decide = (playout: AppState["playout"]) =>
     decideScheduledInsertSkip({ trigger: args.attempt.trigger, cuepointKey: args.attempt.cuepointKey, runKey, playout });
@@ -7332,6 +7643,11 @@ async function skipScheduledInsert(args: {
     reason: args.reason,
     ...(error ? { error } : {})
   });
+  await recordSkippedInsert(message);
+  return state;
+}
+
+async function recordSkippedInsert(message: string): Promise<void> {
   await appendAuditEvent("playout.insert.skipped", message);
   await upsertIncident({
     scope: "playout",
@@ -7340,7 +7656,30 @@ async function skipScheduledInsert(args: {
     message,
     fingerprint: "playout.insert.skipped"
   });
-  return state;
+}
+
+// A scheduled insert that failed to open on its retry too (R13, input-open-retry.ts). Called from the exit
+// handler, which knows the item but not its trigger; the log line is written before the first await. The
+// cycle reports a retry that fails before ffmpeg runs it the same way (isFailedScheduledInsertRetry), with
+// its own reason.
+async function reportScheduledInsertOpenFailed(
+  assetId: string,
+  cause: string,
+  reason: ScheduledInsertSkipReason = "open-failed"
+): Promise<void> {
+  const error = cause.slice(0, 300);
+  logRuntimeEvent("playout.insert.skipped", { assetId, trigger: "", reason, ...(error ? { error } : {}) });
+  const state = await readAppState();
+  const title = buildAssetDisplayTitle(state.assets.find((asset) => asset.id === assetId) ?? null) || assetId;
+  await recordSkippedInsert(describeSkippedInsert({ title, trigger: "", reason, error }));
+}
+
+// An exit write the database refused is applied again before the cycle reads the state (R3,
+// playout-exit-write.ts). Refused again, it fails the cycle here, as the read after it would.
+async function reapplyFailedPlayoutExitWrite(): Promise<void> {
+  if (await failedPlayoutExitWrite.reapply((updater) => updatePlayoutRuntime(updater))) {
+    logRuntimeEvent("playout.exit_write.reapplied", {});
+  }
 }
 
 async function runPlayoutCycle(): Promise<void> {
@@ -7351,6 +7690,7 @@ async function runPlayoutCycle(): Promise<void> {
   // insert again from 0 (M74 review).
   const processRunningAtCycleStart = isPlayoutProcessRunning();
   await pendingPlayoutExitUpdate;
+  await reapplyFailedPlayoutExitWrite();
   let state = await readAppState();
   // The playout and uplink modes run as their own processes, so each cycle refreshes the managed
   // config it hands to the between-cycle readers (watchdog options, feed geometry, VOD cache
@@ -7386,7 +7726,12 @@ async function runPlayoutCycle(): Promise<void> {
   // natural EOF exit — the selection sees no running process and starts the next queue item.
   await enforceAssetDurationBound(state.assets);
 
-  const previewSelection = choosePlaybackCandidate(state);
+  // One instant for the schedule of this whole cycle (review of M105): every selection below and the run the
+  // end write records read it. With a second clock read at the end, a cycle that straddled a minute judged
+  // the weekly run (no takeover, the item held) and recorded the dated one, so the next cycle saw no boundary
+  // and the archive on air swallowed the one-off as before R7, while the takeover line was still logged.
+  const scheduleNow = new Date();
+  const previewSelection = choosePlaybackCandidate(state, scheduleNow);
   if (playoutProcess && !playoutProcess.killed && !isMatchingRunningSelection(previewSelection)) {
     const promotedCount = await promoteRecoveringDestinations("transition");
     if (promotedCount > 0) {
@@ -7416,9 +7761,10 @@ async function runPlayoutCycle(): Promise<void> {
   // read what it left (M74).
   if (processRunningAtCycleStart && !isPlayoutProcessRunning()) {
     await pendingPlayoutExitUpdate;
+    await reapplyFailedPlayoutExitWrite();
     state = await readAppState();
   }
-  let selection: SelectionResult = choosePlaybackCandidate(state);
+  let selection: SelectionResult = choosePlaybackCandidate(state, scheduleNow);
 
   const skippedAtSelection = isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "";
   const removedNextAtSelection = isTimestampActive(state.playout.removeNextUntil) ? state.playout.removeNextAssetId : "";
@@ -7459,7 +7805,7 @@ async function runPlayoutCycle(): Promise<void> {
         : playout
     );
     state = await readAppState();
-    selection = choosePlaybackCandidate(state);
+    selection = choosePlaybackCandidate(state, scheduleNow);
   }
 
   if (state.playout.manualNextAssetId !== "" && selection.reasonCode !== "manual_next") {
@@ -7481,7 +7827,7 @@ async function runPlayoutCycle(): Promise<void> {
         message: "The requested next item is no longer available. Returning to the scheduled queue."
       }));
       state = await readAppState();
-      selection = choosePlaybackCandidate(state);
+      selection = choosePlaybackCandidate(state, scheduleNow);
     }
   }
 
@@ -7672,6 +8018,9 @@ async function runPlayoutCycle(): Promise<void> {
   let resolvedSelection: ResolvedPlayableMedia | null = null;
   // The breakers after this cycle's failed inline resolve was recorded (M75), null when nothing was.
   let breakersAfterFailedResolve: SourceBreakerRecord[] | null = null;
+  // A dated block's takeover waits for its pick: the item on air keeps its input (decideTakeoverPrepareFailure).
+  let scheduleTakeoverDeferral: { takeover: ScheduleTakeover; pickAssetId: string; pendingDownload: boolean; error: string } | null =
+    null;
   // The programme already on air keeps its input (playout-boundary.ts: shouldKeepRunningInput). A
   // re-resolve here could only fail it off air, never improve it.
   const keepRunningInput =
@@ -7689,6 +8038,12 @@ async function runPlayoutCycle(): Promise<void> {
     const failedReasonCode = selection.reasonCode;
     // A scheduled insert that is bridged or fails here is skipped once (M94, skipScheduledInsert).
     const scheduledInsertAttempt = scheduledInsertAttemptOf(selection);
+    // Its once-more start after an open failure, which has no trigger: a failure here is final and reported.
+    const failedInsertRetry = isFailedScheduledInsertRetry({
+      selectionIsOpenRetry,
+      reasonCode: selection.reasonCode,
+      insertTrigger: selection.insertTrigger
+    });
     // Set while the local bridge is resolved: an error then is the bridge's, and the insert was bridged.
     let bridgingInsert = false;
     try {
@@ -7730,7 +8085,7 @@ async function runPlayoutCycle(): Promise<void> {
             fallbackAvailable: Boolean(bridgeAsset)
           })
         ) {
-          bridgingInsert = scheduledInsertAttempt !== null;
+          bridgingInsert = scheduledInsertAttempt !== null || failedInsertRetry;
           const bridged = await resolveAssetPlaybackInput(bridgeAsset);
           logRuntimeEvent("playout.boundary.fallback_bridge", {
             scheduledAssetId: failedAsset.id,
@@ -7753,7 +8108,7 @@ async function runPlayoutCycle(): Promise<void> {
           };
           resolvedSelection = bridged.media;
           if (scheduledInsertAttempt) {
-            state = await skipScheduledInsert({ state, attempt: scheduledInsertAttempt, reason: "bridged" });
+            state = await skipScheduledInsert({ state, attempt: scheduledInsertAttempt, reason: "bridged", now: scheduleNow });
           }
           // The retry of an item that failed to open is still owed while the bridge covers its resolve.
           if (selectionIsOpenRetry && inputOpenRetry?.assetId === failedAsset.id) {
@@ -7761,16 +8116,42 @@ async function runPlayoutCycle(): Promise<void> {
           }
           requestImmediatePlayoutCycle("boundary-fallback-bridge");
         } else {
-          let prepared: Awaited<ReturnType<typeof resolveAssetPlaybackInput>>;
+          let prepared: Awaited<ReturnType<typeof resolveAssetPlaybackInput>> | null = null;
           try {
             prepared = await resolveAssetPlaybackInput(failedAsset);
           } catch (error) {
             breakersAfterFailedResolve = await recordSelectionResolveOutcome(failedAsset, "failed", error);
-            throw error;
+            // A takeover's pick that cannot be prepared yet leaves the item on air where it is
+            // (decideTakeoverPrepareFailure): no recovery plan, and the run before the boundary is recorded
+            // below, so the next cycle tries the takeover again while the prefetch warms the pick.
+            const takeover = selection.scheduleTakeover;
+            const held = takeover ? choosePlaybackCandidate(state, scheduleNow, { setTakeoverAside: true }) : null;
+            if (
+              !takeover ||
+              !held ||
+              decideTakeoverPrepareFailure({
+                takeover: true,
+                processRunning: isPlayoutProcessRunning(),
+                restartRequested: state.playout.restartRequestedAt !== "",
+                heldAssetId: held.asset?.id ?? "",
+                runningAssetId: playoutAssetId
+              }) !== "hold"
+            ) {
+              throw error;
+            }
+            scheduleTakeoverDeferral = {
+              takeover,
+              pickAssetId: failedAsset.id,
+              pendingDownload: error instanceof TwitchVodCachePendingError,
+              error: (error instanceof Error ? error.message : String(error)).slice(0, 300)
+            };
+            selection = held;
           }
-          await recordSelectionResolveOutcome(failedAsset, "ok");
-          selection = { ...selection, asset: prepared.asset };
-          resolvedSelection = prepared.media;
+          if (prepared) {
+            await recordSelectionResolveOutcome(failedAsset, "ok");
+            selection = { ...selection, asset: prepared.asset };
+            resolvedSelection = prepared.media;
+          }
         }
       }
     } catch (error) {
@@ -7819,9 +8200,11 @@ async function runPlayoutCycle(): Promise<void> {
       if (scheduledInsertAttempt) {
         state = await skipScheduledInsert(
           bridgingInsert
-            ? { state, attempt: scheduledInsertAttempt, reason: "bridged" }
-            : { state, attempt: scheduledInsertAttempt, reason: "prepare-failed", error: message }
+            ? { state, attempt: scheduledInsertAttempt, reason: "bridged", now: scheduleNow }
+            : { state, attempt: scheduledInsertAttempt, reason: "prepare-failed", error: message, now: scheduleNow }
         );
+      } else if (failedInsertRetry) {
+        await reportScheduledInsertOpenFailed(failedAsset.id, message, bridgingInsert ? "bridged" : "prepare-failed");
       }
       await upsertIncident({
         scope: "playout",
@@ -8002,7 +8385,43 @@ async function runPlayoutCycle(): Promise<void> {
     insertRequestedAt: state.playout.insertRequestedAt,
     insertStatus: state.playout.insertStatus
   };
-  const currentScheduleItem = getCurrentScheduleItem(state);
+  // The block the selection judged, from the same instant (scheduleNow).
+  const currentScheduleItem = getCurrentScheduleItem(state, scheduleNow);
+  // A takeover that waits, for its pick to be prepared or for the block to have one, keeps the item on air
+  // and the run before the boundary (the end write below), so the next cycle sees the boundary again. One
+  // line when it starts to wait; an archive download can take an hour of cycles.
+  const waitingTakeover = scheduleTakeoverDeferral?.takeover ?? selection.scheduleTakeoverWaiting ?? null;
+  if (waitingTakeover && loggedWaitingTakeoverRunKey !== waitingTakeover.toRunKey) {
+    loggedWaitingTakeoverRunKey = waitingTakeover.toRunKey;
+    logRuntimeEvent("playout.schedule.takeover_deferred", {
+      edge: waitingTakeover.edge,
+      fromRunKey: waitingTakeover.fromRunKey,
+      toRunKey: waitingTakeover.toRunKey,
+      onAirAssetId: playoutAssetId,
+      reason: scheduleTakeoverDeferral ? "prepare-failed" : "no-item",
+      ...(scheduleTakeoverDeferral
+        ? {
+            pickAssetId: scheduleTakeoverDeferral.pickAssetId,
+            pendingDownload: scheduleTakeoverDeferral.pendingDownload,
+            error: scheduleTakeoverDeferral.error
+          }
+        : {})
+    });
+  }
+  // One line per dated block's start or end (R7): the end write below records the new run, so the next
+  // cycle no longer sees the boundary. With an operator arm on air the line names it, and nothing was cut.
+  const scheduleTakeover =
+    !waitingTakeover && isPlayoutProcessRunning() ? getScheduleTakeover(state, currentScheduleItem, scheduleNow) : null;
+  if (scheduleTakeover) {
+    logRuntimeEvent("playout.schedule.takeover", {
+      edge: scheduleTakeover.edge,
+      fromRunKey: scheduleTakeover.fromRunKey,
+      toRunKey: scheduleTakeover.toRunKey,
+      onAirAssetId: state.playout.currentAssetId,
+      selectedAssetId: selection.asset?.id ?? "",
+      selectionReasonCode: selection.reasonCode
+    });
+  }
   const currentAudioLane = resolvePoolAudioLane({
     state,
     poolId: currentScheduleItem?.poolId,
@@ -8239,7 +8658,7 @@ async function runPlayoutCycle(): Promise<void> {
   // process has exited since -- a natural end between the resolve and here -- starting now would
   // restart the old selection from a cold inline resolve with no bridge and no recovery. Let the next
   // cycle select and resolve properly instead; it runs at once. Found by the M68 review.
-  if (keepRunningInput && !isPlayoutProcessRunning()) {
+  if ((keepRunningInput || scheduleTakeoverDeferral) && !isPlayoutProcessRunning()) {
     requestImmediatePlayoutCycle("kept-input-process-exited");
     return;
   }
@@ -8298,7 +8717,9 @@ async function runPlayoutCycle(): Promise<void> {
       // A scheduled insert that cannot be started is skipped once too, or it would be due again for good.
       const startedInsert = scheduledInsertAttemptOf(selection);
       if (startedInsert) {
-        state = await skipScheduledInsert({ state, attempt: startedInsert, reason: "start-failed", error: message });
+        state = await skipScheduledInsert({ state, attempt: startedInsert, reason: "start-failed", error: message, now: scheduleNow });
+      } else if (selection.asset && isFailedScheduledInsertRetry({ selectionIsOpenRetry, reasonCode: selection.reasonCode, insertTrigger: selection.insertTrigger })) {
+        await reportScheduledInsertOpenFailed(selection.asset.id, message, "start-failed");
       }
       await updatePlayoutRuntime((playout) => ({
         ...playout,
@@ -8380,7 +8801,9 @@ async function runPlayoutCycle(): Promise<void> {
       // A scheduled insert that cannot be started is skipped once too, or it would be due again for good.
       const startedInsert = scheduledInsertAttemptOf(selection);
       if (startedInsert) {
-        state = await skipScheduledInsert({ state, attempt: startedInsert, reason: "start-failed", error: message });
+        state = await skipScheduledInsert({ state, attempt: startedInsert, reason: "start-failed", error: message, now: scheduleNow });
+      } else if (selection.asset && isFailedScheduledInsertRetry({ selectionIsOpenRetry, reasonCode: selection.reasonCode, insertTrigger: selection.insertTrigger })) {
+        await reportScheduledInsertOpenFailed(selection.asset.id, message, "start-failed");
       }
       await updatePlayoutRuntime((playout) => ({
         ...playout,
@@ -8436,9 +8859,19 @@ async function runPlayoutCycle(): Promise<void> {
   const transitionTargetKind = nextQueueItem?.kind ?? "";
   const transitionTargetAssetId = nextQueueItem?.assetId ?? "";
   const transitionTargetTitle = nextQueueItem?.title ?? "";
-  const cuepointWindowKey = currentScheduleItem ? getScheduleOccurrenceRunKey(currentScheduleItem) : "";
-  const cuepointFiredKeys =
-    cuepointWindowKey && state.playout.cuepointWindowKey === cuepointWindowKey ? [...state.playout.cuepointFiredKeys] : [];
+  // A takeover that waits keeps the run before the boundary, so the next cycle sees it again.
+  const cuepointWindowKey = waitingTakeover
+    ? state.playout.cuepointWindowKey
+    : currentScheduleItem
+      ? getScheduleOccurrenceRunKey(currentScheduleItem)
+      : "";
+  // The previous run's keys stay with the new run's (R8): a block that comes back after another one (the
+  // October fall-back night) does not fire its cuepoints again.
+  const cuepointFiredKeys = carryCuepointFiredKeys({
+    previousRunKey: state.playout.cuepointWindowKey,
+    firedKeys: state.playout.cuepointFiredKeys,
+    runKey: cuepointWindowKey
+  });
   if (selection.insertTrigger === "cuepoint" && selection.cuepointKey && !cuepointFiredKeys.includes(selection.cuepointKey)) {
     cuepointFiredKeys.push(selection.cuepointKey);
   }
@@ -8465,14 +8898,19 @@ async function runPlayoutCycle(): Promise<void> {
 
   await updatePlayoutRuntime((playout) => ({
     ...playout,
-    status:
-      selection.lifecycleStatus === "recovering"
-        ? "recovering"
-        : selection.lifecycleStatus === "standby"
-          ? "standby"
-          : selection.lifecycleStatus === "reconnecting"
-            ? "reconnecting"
-            : "running",
+    // An exit of the item this cycle started that is already written (failed, nothing running) stands.
+    status: decideCycleEndStatus<AppState["playout"]["status"]>({
+      computed:
+        selection.lifecycleStatus === "recovering"
+          ? "recovering"
+          : selection.lifecycleStatus === "standby"
+            ? "standby"
+            : selection.lifecycleStatus === "reconnecting"
+              ? "reconnecting"
+              : "running",
+      row: playout.status,
+      processRunning: isPlayoutProcessRunning()
+    }),
     transitionState:
       selection.lifecycleStatus === "standby" || selection.lifecycleStatus === "reconnecting"
         ? "idle"
@@ -8513,7 +8951,8 @@ async function runPlayoutCycle(): Promise<void> {
     restartRequestedAt: decideCycleEndRestartFlag({
       consumed: consumedRequests.restartRequestedAt,
       row: playout.restartRequestedAt,
-      keepReconnectWindow: selection.reasonCode === "scheduled_reconnect"
+      keepReconnectWindow: selection.reasonCode === "scheduled_reconnect",
+      spawnedAtMs: playoutProcessStartedAtMs
     }),
     selectionReasonCode: selection.reasonCode,
     fallbackTier: selection.fallbackTier,
@@ -8823,26 +9262,77 @@ async function startUplink(group: DestinationRuntimeTargetGroup, managedConfig: 
   });
 }
 
+// The uplink's own outage check (R35): every publish host of its outputs unreachable means the channel's
+// way out is down, as for the playout's probes (M82). No grace: the watchdog keeps the sighting itself,
+// and a hold has to end as soon as a publish host answers again.
+const uplinkNetworkOutageCheck = createNetworkOutageCheck();
+// A check that breaks does so on every cycle: its line goes through a limiter, as the playout's does.
+const uplinkNetworkCheckFailedLog = new ProbeOutageLogLimiter();
+
 /**
- * The pause before the uplink watchdog's restart of one output profile (M103, H7), recorded as that
- * profile's next restart. Returns the sentence the restart incident appends; "" for an immediate one.
+ * Asks the outage check (cached for 10 s) and tells the watchdog. Asked only while it can matter: before a
+ * dark-fault restart, while a running profile has a destination in error, while a profile is held, and
+ * until an outage it saw is over.
  */
-function planUplinkWatchdogRestart(key: string, nowMs: number): string {
-  let backoff = uplinkWatchdogBackoff.get(key);
-  if (!backoff) {
-    backoff = new RestartBackoff();
-    uplinkWatchdogBackoff.set(key, backoff);
+async function observeUplinkNetwork(destinations: StreamDestinationRecord[]): Promise<void> {
+  const wasOpen = uplinkWatchdog.networkOutageOpen;
+  const verdict = await uplinkNetworkOutageCheck(publishHostTargetsOfDestinations(destinations));
+  const seen = uplinkWatchdog.observeNetwork(verdict, Date.now());
+  if (seen === "down" && !wasOpen) {
+    logRuntimeEvent("uplink.watchdog.network_outage", { evidence: verdict.evidence });
+  } else if (seen === "back") {
+    logRuntimeEvent("uplink.watchdog.network_back", { evidence: verdict.evidence });
+  } else if (seen === "unknown") {
+    const unlogged = uplinkNetworkCheckFailedLog.take("check", Date.now());
+    if (unlogged !== null) {
+      logRuntimeEvent("uplink.watchdog.network_check_failed", {
+        error: verdict.evidence.slice(0, 300),
+        unloggedSinceLastLine: unlogged
+      });
+    }
   }
-  const plan = backoff.plan(nowMs);
-  const resumeAtMs = nowMs + plan.delayMs;
-  backoff.recordRestart(resumeAtMs);
-  if (plan.delayMs > 0) {
-    uplinkWatchdogHoldUntilMs.set(key, resumeAtMs);
-    logRuntimeEvent("uplink.watchdog.backoff", { outputProfile: key, attempt: plan.attempt, backoffMs: plan.delayMs });
-  } else {
-    uplinkWatchdogHoldUntilMs.delete(key);
+}
+
+/** What a hold is tied to: the profile's destinations, addresses and stream keys, never kept in clear. */
+function uplinkOutputSignature(targets: DestinationRuntimeTarget[]): string {
+  return createHash("sha256").update(buildFfmpegOutputTarget(targets).output).digest("hex");
+}
+
+/**
+ * The watchdog's restart of a running profile for a fault that is dark already (never encoded, `out_time`
+ * frozen, every destination in error): held for its pause on a working network (M103), at once and
+ * uncounted when the channel's network was down since the fault began (R35). Returns the sentence the
+ * restart incident appends.
+ */
+async function planUplinkDarkRestart(
+  running: UplinkProcessRuntime,
+  fault: Exclude<UplinkWatchdogFault, "storm">,
+  troubleSinceMs: number,
+  nowMs: number,
+  destinations: StreamDestinationRecord[]
+): Promise<string> {
+  await observeUplinkNetwork(destinations);
+  const decision = uplinkWatchdog.decide({
+    key: running.key,
+    fault,
+    nowMs,
+    troubleSinceMs,
+    output: uplinkOutputSignature(running.runtimeTargets)
+  });
+  if (decision.action !== "restart") {
+    return "";
   }
-  return describeRestartBackoff(plan, resumeAtMs);
+  if (!decision.counted) {
+    logRuntimeEvent("uplink.watchdog.network_outage.uncounted", { outputProfile: running.key, fault });
+  } else if (decision.holdUntilMs > 0) {
+    logRuntimeEvent("uplink.watchdog.backoff", {
+      outputProfile: running.key,
+      fault,
+      attempt: decision.plan.attempt,
+      backoffMs: decision.plan.delayMs
+    });
+  }
+  return decision.note;
 }
 
 async function runUplinkCycle(): Promise<void> {
@@ -8967,6 +9457,14 @@ async function runUplinkCycle(): Promise<void> {
     STREAM247_UPLINK_INPUT_MODE,
     state.playout.programFeedStatus
   );
+  // The outage check runs only while it can matter (R35): a sighting during the trouble is what keeps the
+  // restarts it causes out of the backoff, and the end of an outage it saw ends every hold.
+  const runningDestinationInError = getRunningUplinkProcesses().some((running) =>
+    running.destinationIds.some((id) => state.destinations.find((destination) => destination.id === id)?.status === "error")
+  );
+  if (uplinkWatchdog.networkOutageOpen || uplinkWatchdog.hasHolds(now) || runningDestinationInError) {
+    await observeUplinkNetwork(state.destinations);
+  }
   for (const running of feedCanSupplyUplink ? getRunningUplinkProcesses() : []) {
     const startedAtMs = new Date(running.startedAt).getTime();
     if (!Number.isFinite(startedAtMs)) {
@@ -8994,7 +9492,7 @@ async function runUplinkCycle(): Promise<void> {
         destinationIds: running.destinationIds,
         runningSeconds
       });
-      const backoffNote = planUplinkWatchdogRestart(running.key, now);
+      const backoffNote = await planUplinkDarkRestart(running, "never-encoded", startedAtMs, now, state.destinations);
       await upsertIncident({
         scope: "playout",
         severity: "warning",
@@ -9007,21 +9505,51 @@ async function runUplinkCycle(): Promise<void> {
     }
 
     if (isDiscontinuityStorm(running.discontinuity, now, startedAtMs, uplinkStallOptions)) {
-      logRuntimeEvent("uplink.discontinuity_storm.restart", {
-        outputProfile: running.key,
-        destinationIds: running.destinationIds,
-        eventsInWindow: running.discontinuity.count
+      // The picture is still on air (R4): a repeat within the streak waits on air for its pause instead of
+      // holding the profile stopped, and is restarted then only if the storm lasts.
+      const storm = uplinkWatchdog.decide({
+        key: running.key,
+        fault: "storm",
+        nowMs: now,
+        troubleSinceMs: now,
+        output: uplinkOutputSignature(running.runtimeTargets)
       });
-      const backoffNote = planUplinkWatchdogRestart(running.key, now);
-      await upsertIncident({
-        scope: "playout",
-        severity: "warning",
-        title: "Uplink restarted after its input timeline came apart",
-        message: `The uplink process for ${running.key} reported ${running.discontinuity.count} timestamp discontinuities in a minute. It keeps encoding in this state but corrects audio and video onto separate timelines, which viewers hear as the tracks drifting apart. Reattaching it to the live edge clears the seam.${backoffNote ? ` ${backoffNote}` : ""}`,
-        fingerprint: `uplink.discontinuity-storm.${running.key}`
-      });
-      await stopUplinkProcess(running, "encoder-stalled");
-      continue;
+      if (storm.action === "restart") {
+        logRuntimeEvent("uplink.discontinuity_storm.restart", {
+          outputProfile: running.key,
+          destinationIds: running.destinationIds,
+          eventsInWindow: running.discontinuity.count,
+          attempt: storm.plan.attempt
+        });
+        await upsertIncident({
+          scope: "playout",
+          severity: "warning",
+          title: "Uplink restarted after its input timeline came apart",
+          message: `The uplink process for ${running.key} reported ${running.discontinuity.count} timestamp discontinuities in a minute. It keeps encoding in this state but corrects audio and video onto separate timelines, which viewers hear as the tracks drifting apart. Reattaching it to the live edge clears the seam.`,
+          fingerprint: `uplink.discontinuity-storm.${running.key}`
+        });
+        await stopUplinkProcess(running, "encoder-stalled");
+        continue;
+      }
+      if (storm.first) {
+        logRuntimeEvent("uplink.discontinuity_storm.restart_waits", {
+          outputProfile: running.key,
+          destinationIds: running.destinationIds,
+          eventsInWindow: running.discontinuity.count,
+          attempt: storm.plan.attempt,
+          backoffMs: storm.plan.delayMs
+        });
+        await upsertIncident({
+          scope: "playout",
+          severity: "warning",
+          title: "Uplink input timeline came apart",
+          message: `The uplink process for ${running.key} reported ${running.discontinuity.count} timestamp discontinuities in a minute. It keeps encoding in this state but corrects audio and video onto separate timelines, which viewers hear as the tracks drifting apart. ${storm.note}`,
+          fingerprint: `uplink.discontinuity-storm.${running.key}`
+        });
+      }
+      // Kept on air; an `out_time` that freezes meanwhile is dark, and the stall check below still restarts it.
+    } else {
+      uplinkWatchdog.stormOver(running.key);
     }
 
     if (!isUplinkStalled(running.progress, now, startedAtMs, uplinkStallOptions)) {
@@ -9035,7 +9563,13 @@ async function runUplinkCycle(): Promise<void> {
       stalledSeconds,
       thresholdSeconds: Math.round(uplinkStallOptions.stallMs / 1000)
     });
-    const backoffNote = planUplinkWatchdogRestart(running.key, now);
+    const backoffNote = await planUplinkDarkRestart(
+      running,
+      "encoder-stall",
+      running.progress.lastAdvanceAtMs,
+      now,
+      state.destinations
+    );
     await upsertIncident({
       scope: "playout",
       severity: "warning",
@@ -9064,6 +9598,7 @@ async function runUplinkCycle(): Promise<void> {
       uplinkDestinationStallStartedAt.set(running.key, stallDecision.nextStallStartedAt);
       continue;
     }
+    const stallStartedAtMs = uplinkDestinationStallStartedAt.get(running.key) ?? now;
     uplinkDestinationStallStartedAt.delete(running.key);
     logRuntimeEvent("uplink.destination_stall.restart", {
       destinationIds: running.destinationIds,
@@ -9071,7 +9606,13 @@ async function runUplinkCycle(): Promise<void> {
       stallSeconds: stallDecision.stallSeconds,
       thresholdSeconds: UPLINK_DESTINATION_STALL_RESTART_SECONDS
     });
-    const backoffNote = planUplinkWatchdogRestart(running.key, now);
+    const backoffNote = await planUplinkDarkRestart(
+      running,
+      "destination-stall",
+      stallStartedAtMs,
+      now,
+      state.destinations
+    );
     await upsertIncident({
       scope: "playout",
       severity: "warning",
@@ -9096,13 +9637,16 @@ async function runUplinkCycle(): Promise<void> {
     }
 
     if (!isMatchingRunningUplinkGroup(group)) {
-      // A profile the watchdog stopped waits out its backoff (M103, H7); the others start as before.
-      const holdUntilMs = uplinkWatchdogHoldUntilMs.get(group.key) ?? 0;
-      if (Date.now() < holdUntilMs) {
+      // A profile the watchdog stopped waits out its backoff (M103, H7); the others start as before. The
+      // hold ends early when the operator changed the profile's output, or when the network is back (R35).
+      const hold = uplinkWatchdog.holdOf(group.key, Date.now(), uplinkOutputSignature(group.targets));
+      if (hold.outputChanged) {
+        logRuntimeEvent("uplink.watchdog.hold_ended", { outputProfile: group.key, reason: "output-changed" });
+      }
+      if (hold.untilMs > 0) {
         heldGroupKeys.push(group.key);
         continue;
       }
-      uplinkWatchdogHoldUntilMs.delete(group.key);
       await startUplink(group, state.managedConfig);
     }
   }
@@ -9418,26 +9962,44 @@ async function recordIdentityRefreshFailure(error: unknown): Promise<void> {
  * Only a refused refresh token, never a Twitch that is down or slow: that says nothing about the
  * token, and an error status for it would switch chat, moderation and the schedule sync off over a
  * network blip. The record keeps its token, account and sync history; the operator reconnects.
+ *
+ * True for a refused token: its alert is "Reconnect Twitch", once, when the entry opens, so a caller with
+ * an alert of its own (the 401 retries of reconciliation and schedule sync) leaves it out. Each sent its
+ * own besides, and sendAlert dedups by subject, so one refused token gave up to three alerts in one cycle.
  */
-async function markIdentityRefreshRefused(error: unknown): Promise<void> {
+async function markIdentityRefreshRefused(error: unknown): Promise<boolean> {
   if (!isIdentityRefreshRefusal(error)) {
-    return;
+    return false;
   }
 
   const state = await readAppState();
+  // Read before the write: the alert belongs to the moment the entry opens (R2), not to each refusal.
+  const opening = opensIncident(state.incidents, "twitch.reconnect.required");
   await updateTwitchConnectionRecord({
     ...state.twitch,
     status: "error",
     error: TWITCH_REFRESH_REFUSED_ERROR
   });
+  const message = `Twitch refused the stored refresh token of ${state.twitch.broadcasterLogin || "the bot account"}, so the connection cannot be renewed. Reconnect it under Admin → Settings → Twitch accounts; until then title, category and schedule sync are paused, and chat cannot sign in once the access token has run out.`;
   await upsertIncident({
     scope: "twitch",
     severity: "critical",
     title: "Reconnect Twitch",
-    message: `Twitch refused the stored refresh token of ${state.twitch.broadcasterLogin || "the bot account"}, so the connection cannot be renewed. Reconnect it under Admin → Settings → Twitch accounts; until then title, category and schedule sync are paused, and chat cannot sign in once the access token has run out.`,
+    message,
     fingerprint: "twitch.reconnect.required"
   });
   logRuntimeEvent("twitch.refresh.refused", { account: "identity", status: error.status });
+  // The proactive refresh, five minutes before the token runs out, is where a refusal is usually found;
+  // since M87 it alerted nobody, while the same refusal found by a Helix call's 401 retry did (R2).
+  if (opening) {
+    await sendAlert("Reconnect Twitch", message).catch((alertError: unknown) => {
+      logRuntimeEvent("alert.delivery.failed", {
+        subject: "Reconnect Twitch",
+        error: alertError instanceof Error ? alertError.message : String(alertError)
+      });
+    });
+  }
+  return true;
 }
 
 /**
@@ -9799,7 +10361,7 @@ async function reconcileTwitch(): Promise<void> {
           message: refreshMessage,
           fingerprint: "twitch.refresh.failed"
         });
-        await markIdentityRefreshRefused(refreshError);
+        const refused = await markIdentityRefreshRefused(refreshError);
         await upsertIncident({
           scope: "twitch",
           severity: "warning",
@@ -9807,7 +10369,9 @@ async function reconcileTwitch(): Promise<void> {
           message: refreshMessage,
           fingerprint: "twitch.reconcile.failed"
         });
-        await sendAlert("Twitch reconciliation warning", refreshMessage);
+        if (!refused) {
+          await sendAlert("Twitch reconciliation warning", refreshMessage);
+        }
         return;
       }
     } else {
@@ -9851,7 +10415,7 @@ async function reconcileTwitch(): Promise<void> {
           message: refreshMessage,
           fingerprint: "twitch.refresh.failed"
         });
-        await markIdentityRefreshRefused(refreshError);
+        const refused = await markIdentityRefreshRefused(refreshError);
         await upsertIncident({
           scope: "twitch",
           severity: "warning",
@@ -9859,7 +10423,9 @@ async function reconcileTwitch(): Promise<void> {
           message: refreshMessage,
           fingerprint: "twitch.schedule.sync.failed"
         });
-        await sendAlert("Twitch schedule sync warning", refreshMessage);
+        if (!refused) {
+          await sendAlert("Twitch schedule sync warning", refreshMessage);
+        }
         return;
       }
     }
@@ -10191,14 +10757,17 @@ async function drainChatEffects(state: AppState, config: ChatInteractionConfig):
     if (!verdict.accepted) {
       logRuntimeEvent("chat.request.rejected", { actor: effect.actor, query: effect.query, reason: verdict.reason });
       // One answer per request (M104); a viewer hears why at most once a minute, so a wrong title typed
-      // ten times is not ten lines from the bot.
-      if (config.requestRepliesEnabled) {
-        // Formatted before the claim, so a verdict with nothing to say does not use up the viewer's minute.
-        const refusal = formatChatRequestReply({ actor: effect.actor, verdict, position: 0, locale: viewerLanguage() });
-        if (refusal && chatControl.claimRequestRefusalReply(effect.actor)) {
-          twitchChatBridge.say(refusal);
-        }
-      }
+      // ten times is not ten lines from the bot, and the room at most five times in 30 s, so a flood of
+      // refusals cannot take the lines other answers need (R23).
+      replyToChatRequest({
+        actor: effect.actor,
+        verdict,
+        position: 0,
+        config,
+        locale: viewerLanguage(),
+        claimRefusal: (actor) => chatControl.claimRequestRefusalReply(actor),
+        say: twitchChatBridge.say.bind(twitchChatBridge)
+      });
       continue;
     }
 
@@ -10212,12 +10781,15 @@ async function drainChatEffects(state: AppState, config: ChatInteractionConfig):
     logRuntimeEvent("chat.request.queued", { actor: effect.actor, assetId: verdict.assetId, queuedRequestCount: queuedRequestCount + 1 });
     await appendAuditEvent("chat.request", `${effect.actor} requested "${verdict.title}" from chat.`);
     // An accepted request is always confirmed: the request cooldown and the queue cap already bound how often.
-    if (config.requestRepliesEnabled) {
-      const reply = formatChatRequestReply({ actor: effect.actor, verdict, position, locale: viewerLanguage() });
-      if (reply) {
-        twitchChatBridge.say(reply);
-      }
-    }
+    replyToChatRequest({
+      actor: effect.actor,
+      verdict,
+      position,
+      config,
+      locale: viewerLanguage(),
+      claimRefusal: (actor) => chatControl.claimRequestRefusalReply(actor),
+      say: twitchChatBridge.say.bind(twitchChatBridge)
+    });
   }
 }
 
@@ -10243,6 +10815,10 @@ async function reconcileChatInteraction(): Promise<void> {
     appUrl: resolveAppBaseUrl(state.managedConfig),
     locale: resolveChannelLanguage(state.managedConfig)
   });
+  latestChatProgrammeContext = {
+    schedule: { managedConfig: state.managedConfig, scheduleBlocks: state.scheduleBlocks },
+    appUrl: resolveAppBaseUrl(state.managedConfig)
+  };
 
   const outcome = chatControl.settleVoteIfDue(config);
   if (outcome?.winnerAssetId) {
@@ -10408,6 +10984,8 @@ async function resolveFinishedIncidents(state: AppState): Promise<void> {
 }
 
 const workerCycleStepIncidents = new CycleStepIncidentTracker();
+// A step that keeps failing alerts after 30 min, as a crashing cycle did before M87 (R2).
+const workerCycleStepAlerts = new CycleStepAlertWatch();
 
 /**
  * The integration steps of one worker cycle, in the order they always ran. Each one fails on its own
@@ -10488,9 +11066,22 @@ async function recordWorkerCycleStepFailure(step: string, error: unknown): Promi
     // carrying on would only add one connection timeout per remaining step.
     throw error;
   }
+  const failingForMs = workerCycleStepAlerts.recordFailure(step, Date.now());
+  if (failingForMs !== null) {
+    await sendAlert(
+      `Worker step ${step} keeps failing`,
+      `The worker step ${step} has failed on every run for ${Math.round(failingForMs / 60_000)} min (open problem "Worker step ${step} failed"). The rest of the worker cycle keeps running. Last error: ${message}`
+    ).catch((alertError: unknown) => {
+      logRuntimeEvent("alert.delivery.failed", {
+        subject: `Worker step ${step} keeps failing`,
+        error: alertError instanceof Error ? alertError.message : String(alertError)
+      });
+    });
+  }
 }
 
 async function closeWorkerCycleStepIncident(step: string): Promise<void> {
+  workerCycleStepAlerts.recordSuccess(step);
   if (!workerCycleStepIncidents.needsResolve(step)) {
     return;
   }

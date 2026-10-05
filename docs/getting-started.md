@@ -159,12 +159,15 @@ address and a password of at least 10 characters, and store the password: the e-
 changed later, the password only under `Admin → Settings → Security` (with the current one). There is no
 e-mail reset; a lost password is reset on the host with the command in `docs/operations.md`, *Owner
 password lost*. The instance step comes prefilled with the address the wizard is open under and your
-browser's time zone; check both before saving.
+browser's time zone; check both before saving. The zone is only prefilled on a first run: once the
+public URL was saved or the schedule has a block, an empty zone shows as empty and the hint says the
+channel runs on UTC, because a new zone moves every block to that zone's clock.
 
 A new install starts empty: the local media library is its only source, and there is no pool and no
 schedule block until you create them. The readiness checklist counts what can air, not what exists: a
-pool is ready once a schedule block uses it and it holds a ready video, the schedule once every block of
-the coming week has something to play.
+pool is ready once a block of the coming week uses it and it holds a ready video, the schedule once the
+coming week has a block and every one of them has something to play (dated blocks that have ended or
+start after the week do not count).
 
 ### Channel language
 
@@ -248,7 +251,9 @@ is abandoned and the replay plays from Twitch directly for that airing; see `doc
 The quickest start is the wizard's *First programme* step (`/setup`): tick the sources whose videos
 should play (each with its number of ready videos), name the pool and press *Create the pool and fill
 the week*. It creates the pool and applies the *Always-on single pool* template, one block from 00:00
-to 24:00 on every day; with blocks already in the week it asks whether to replace them. The readiness
+to 24:00 on every day. With blocks already in the week it shows *Replace the blocks already in the week*:
+weekly blocks are only replaced with it ticked (after a confirmation), since the new all-day blocks
+would overlap them, and without it the step stops before it creates anything; dated blocks may stay. The readiness
 lines *Program pools* and *Weekly schedule* then turn ready. Everything after that is done here:
 
 `Program → Pools` groups sources for round-robin selection: a pool with several sources takes the next
@@ -272,8 +277,10 @@ every control there carries an (i) that says what it does.
 ## 11. Upgrades and rollback
 
 Production pins exact `v*` image tags. Upgrade by changing the three `STREAM247_*_IMAGE` tags and
-redeploying; roll back by putting the previous tags back. Take a PostgreSQL backup before every
-upgrade. The full flow, including the rehearsal and soak scripts, is in `docs/deployment.md`.
+redeploying; roll back by putting the previous tags back, after reading the release's rollback notes
+first (since 2.3, dated and one-off blocks are deleted before a reverse repin: *Rollback to 2.1.0* in
+`docs/deployment.md`). Take a PostgreSQL backup before every upgrade. The full flow, including the
+rehearsal and soak scripts, is in `docs/deployment.md`.
 
 ## Where things are
 

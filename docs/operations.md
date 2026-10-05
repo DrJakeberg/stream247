@@ -171,7 +171,10 @@ the pool's next item. Under the relay no operator action shows that slate.
   request the cycle read (`decideCycleEndRestartFlag`, `decideCycleEndPendingAction` in
   `apps/worker/src/playout-boundary.ts`); a newer one stays, and without the relay the reconnect window
   keeps its start as before. The same for a skip vote the chat applies meanwhile, and for a Play now
-  pressed while a start fails: the failure drops only the insert it tried to start.
+  pressed while a start fails: the failure drops only the insert it tried to start. A request written
+  while that cycle was already switching to the next item, before the new ffmpeg started, counts as done
+  by that start (since M105): it was aimed at the item the switch took off air, and kept, it restarted
+  the new item from 0 on the next cycle as an operator restart nobody pressed.
 - **Force reconnect** restarts the encoder into the reconnect window without the relay. With the relay
   it is refused: the uplink reconnects by itself (the planned reconnect interval, the encoder-stall and
   destination-stall watchdogs). Since M90 the button is greyed out with the relay on.
@@ -330,7 +333,7 @@ Reading the rows:
 - when relay/HLS is enabled, a fresh `programFeed.updatedAt` now counts as active playout liveness for `running`, `recovering`, and `switching`; do not treat a quiet FFmpeg stderr stream by itself as an outage while `programFeed=fresh` and `uplinkStatus=running`
 - if the playout container accumulates zombie FFmpeg or yt-dlp processes, recreate it: the image runs Node under `tini`, which reaps them, so an accumulation means the container is not running the shipped entrypoint
 - if the soak monitor reports `container-restart-check-failed`, inspect `docker compose ps`, `docker inspect --format '{{.RestartCount}}'`, and recent logs for the service it names (`web`, `worker`, `playout`, `uplink` or `relay`) before restarting the soak
-- `playout.stop.deadline_exceeded` means an FFmpeg did not exit within 20 s of being stopped (a hung mount, uninterruptible I/O) and the playout started its replacement without it. When that process exits later, `playout.process.exit_ignored` is logged and nothing else happens; before M95 that late exit cleared the replacement's state and a third FFmpeg was started onto the same feed
+- `playout.stop.deadline_exceeded` means an FFmpeg did not exit within 20 s of being stopped (a hung mount, uninterruptible I/O) and the playout started its replacement without it. When that process exits later, `playout.process.exit_ignored` is logged and nothing else happens; before M95 that late exit cleared the replacement's state and a third FFmpeg was started onto the same feed. Before M105 it could also mean an FFmpeg that had ended during its own start (a YouTube item refused at once while the database answered slowly): that exit went unhandled, the next cycle bridged the fallback for the item it still called on air and waited the 20 s for an exit that had already happened. Since M105 such an exit is logged and handled like any other (`playout.process.exit`, and the item is tried once more when its input could not be opened), and a stop of a process that has already ended returns at once (`playout.stop.already_exited`)
 - for what aired around the failure, read the as-run log first (*What was on air at a given time?*
   above): it survives the container restart that the logs do not
 
@@ -360,9 +363,12 @@ Reading the rows:
   (size + modification time), so an unchanged file is never probed again; a scan spends at most
   30 s probing (less with a short loop stall timeout), probes nothing while a directory of the library
   cannot be read, and leaves the rest to the next scans, so a large first scan fills in over a few
-  cycles (runtime event `local-library.durations.probed` with `probed`, `failed`, `deferred`). A
-  file ffprobe cannot read stays unknown until it changes and counts as the 30-minute estimate in
-  the schedule preview
+  cycles (runtime event `local-library.durations.probed` with `probed`, `failed`, `deferred`,
+  `unanswered`). A file ffprobe reads but finds no duration in stays unknown until it changes and
+  counts as the 30-minute estimate in the schedule preview. A probe that gets no answer (the 10 s
+  timeout on a busy disk or a slow mount, ffprobe that cannot be started) stores nothing: the file keeps
+  what it had and is probed again after 30 minutes, without holding up the files after it (since M105;
+  before, such a file stayed unknown until it was touched)
 - tuning: `PLAYOUT_DURATION_BOUND_MARGIN_SECONDS` (default 15) — seconds past the known duration
   before the deliberate end; keep it generous, because cutting duplicated last-frame is invisible
   while cutting real content is not. Since M56 part 2 this margin — like every watchdog threshold —
@@ -375,6 +381,10 @@ Reading the rows:
   uplink processes keep running, ffmpeg keeps playing the input it already has, and the next cycle
   after PostgreSQL is back reconnects by itself. The log shows `worker.loop.crashed` followed by
   `worker.loop.database_unreachable` (with `outageMs`) for each cycle that could not reach the database
+- when ffmpeg ends during the outage, the playout writes what that means (nothing on air, a Play now or
+  Insert ended) as soon as the database is back, before the first cycle reads the state
+  (`playout.exit_write.kept`, then `playout.exit_write.reapplied`). Before M105 that write was lost, and
+  an operator insert that had ended during the outage aired again from 0 after it
 - after five minutes of consecutive cycles that could not reach the database, a process gives up
   (`worker.loop.database_outage_exit`) and exits, so the restart policy brings up a fresh one; in the
   playout container that ends the programme until the database is back
@@ -422,14 +432,34 @@ row; the restart policy
   The first reset of a streak happens at once, as before; each further one waits longer: 15 s, 30 s,
   1 min, 2 min, 4 min, then 5 min. The incident says whether playout restarts by itself and at which UTC
   time. Soft restart under Live → Control → If something is stuck skips the wait
-- the uplink watchdog (never encoded, timestamp storm, `out_time` frozen, every destination in error)
-  follows the same sequence per output profile: the first restart is immediate, a repeat holds that
-  profile's process stopped until its pause is over (`uplink.watchdog.backoff` with `attempt` and
-  `backoffMs`; the restart incident names the UTC time). While every profile waits, the uplink status
-  is `failed` with the reason "waiting out its restart backoff after a watchdog restart"
+- the uplink watchdog follows the same sequence per output profile; the first restart is immediate.
+  For a fault that is dark already (never encoded, `out_time` frozen, every destination in error) a
+  repeat holds that profile's process stopped until its pause is over (`uplink.watchdog.backoff` with
+  `fault`, `attempt` and `backoffMs`; the restart incident names the UTC time). While every profile
+  waits, the uplink status is `failed` with the reason "waiting out its restart backoff after a watchdog
+  restart"
+- a timestamp storm is a picture still on air, so its repeat is not held (since M105, review finding
+  R4): the process keeps running through the pause, the incident *Uplink input timeline came apart* says
+  until when (`uplink.discontinuity_storm.restart_waits`), and only a storm that still lasts then is
+  restarted, stopped and started in the same cycle. A storm that ends meanwhile costs no restart; an
+  `out_time` that freezes during the wait is dark and restarted as above
+- the channel's own network outage does not count (since M105, review finding R35). While a running
+  profile has a destination in error, while a profile is held and before every dark-fault restart, the
+  uplink asks whether the hosts it publishes to can be reached (the M82 check: a TCP connection to the
+  output's host and port, at most once in 10 s). A dark-fault restart while none can be reached, or
+  after an outage was seen since the fault began, restarts at once, is not counted and holds nothing
+  (`uplink.watchdog.network_outage` when the outage is first seen, `uplink.watchdog.network_outage.uncounted`
+  per restart; the incident says so; a check that itself fails is no evidence either way and logs
+  `uplink.watchdog.network_check_failed`). When a publish host answers again after such an outage, every hold
+  ends and every streak starts over (`uplink.watchdog.network_back`). Without a public publish host
+  (a local restreamer) there is nothing to ask, and the restarts count as before
+- a hold ends early when that output's destinations, address or stream key change under Studio →
+  Output → Output destinations (`uplink.watchdog.hold_ended`, reason `output-changed`; the restart
+  incident says so), and with a restart of the uplink container (`docker compose restart uplink`)
 - a streak ends after ten minutes without a new trigger since the last restart, and with a new process:
   the backoff lives in the process's memory
-- the cost: a fault that keeps coming back is dark for longer between attempts, up to five minutes
+- the cost: a dark fault that keeps coming back on a working network is dark for longer between
+  attempts, up to five minutes
 
 ### An external service fails or hangs (since M87)
 
@@ -439,6 +469,12 @@ row; the restart policy
   opens, and the next step runs. The heartbeat and the incident sweep follow the steps, so a Twitch or
   source failure no longer turns the worker unhealthy. The next run of that step that succeeds closes
   the incident
+- a step that has failed on every run for 30 minutes also sends an alert to the Discord webhook or
+  e-mail configured under Admin → Settings ("Worker step <step> keeps failing", with the last error),
+  and again every 30 minutes while it goes on failing; a run that succeeds ends the count (since M105,
+  review finding R2: before M87 a crashing cycle alerted, and isolating the steps had taken that away).
+  A shorter failure stays an incident. The count lives in the worker's memory, so a restart starts it
+  again
 - a step failure that cannot be recorded because the database is gone ends the cycle as before, and
   the PostgreSQL outage rules above apply
 - every Twitch request of the worker gives up after 10 s ("… did not answer within 10000 ms."), so a
@@ -453,7 +489,11 @@ row; the restart policy
 - when Twitch refuses the stored refresh token of the bot account (HTTP 400 `invalid_grant` or
   "Invalid refresh token": the grant was revoked, the password changed, or the token is too old), the
   worker sets the connection to error with the text "Twitch refused the stored refresh token…" and opens
-  the critical incidents `twitch.refresh.failed` and `twitch.reconnect.required` ("Reconnect Twitch").
+  the critical incidents `twitch.refresh.failed` and `twitch.reconnect.required` ("Reconnect Twitch"),
+  and sends the alert "Reconnect Twitch" when that entry opens (since M105, review finding R2; the
+  proactive refresh five minutes before the token runs out is where a refusal is usually found). That is
+  the only alert for a refused token: the reconciliation and schedule-sync warnings are sent for their
+  other refresh failures only.
   Title, category, schedule sync and emote-only stay paused, and chat cannot sign in once the access
   token has run out, until the account is reconnected under Admin → Settings → Twitch accounts; the
   first worker cycle after the reconnect closes both incidents. While the connection is in error the
@@ -507,7 +547,9 @@ after-midnight part on Tuesday:
   collides with Monday 23:00-01:00, a Monday 00:00 block does not. A saved schedule that hid such an
   overlap still loads and plays; the schedule editor marks both blocks. A save is refused only for an
   overlap the saved block takes part in, so other blocks stay editable, and an edit of one of the two
-  goes through once it ends the overlap. On air the later start wins at 00:00, as before
+  goes through once it ends the overlap. *Clone day* is checked the same way since M105: an empty
+  target weekday is not enough when a cloned block past midnight meets the next weekday's first block.
+  On air the later start wins at 00:00, as before
 - the week lens counts scheduled and projected minutes on the day they fall on (60 + 60, not 120 + 120)
 - a replay of the block's pool stays cached while the block is on air after midnight, also with a cache
   retention shorter than a day
@@ -522,6 +564,27 @@ zone and bound when the block starts.
   it: weekly 18:00-22:00 with a dated 20:00-21:00 airs 18-20, the dated block, then 21-22. So "the next
   10 days at 20:00" can be saved on a channel filled around the clock. Two weekly blocks, or two dated
   blocks whose dates meet, are still refused as an overlap
+- on air (since M105) the dated block takes the air at its start: the video running then is cut, as-run
+  end reason `switch`, and the dated block's pool starts. At its end the same happens the other way: its
+  own video is cut and the block on air next (the weekly block coming back, or the next block) starts.
+  The cut comes with the first playout cycle after the minute (every 15 s) plus the time the new video
+  takes to prepare; the video on air keeps playing until then, and the worker logs
+  `playout.schedule.takeover`. A first video that cannot be prepared yet (a Twitch archive still
+  downloading with `TWITCH_VOD_CACHE_ALLOW_REMOTE_FALLBACK=0`, a resolve that fails or times out) moves
+  the cut to the cycle where it is prepared; the video on air plays on meanwhile, never a fallback in its
+  place, and if it ends first the block starts as at any boundary. The same holds while the block has no
+  video to pick (its pool empty, or every source held by the breaker). The worker logs
+  `playout.schedule.takeover_deferred` once when the cut starts to wait. Between two weekly blocks nothing
+  changes: the video on air finishes first. A dated block with nothing after it lets its last video finish
+  too. Changing the start or length of the dated block on air (or of its whole series) cuts nothing: the
+  block goes on with its video and gives the air back at its new end. On the night the clock goes back
+  (a channel zone with daylight saving time), the repeated hour cuts nothing: where the wall clock brings
+  back the block a dated one interrupted, and then the dated block, the video on air plays on. A Pin, a Fallback, a Play
+  now or Insert and the Live Bridge keep the air past a dated block's start as they do past any block
+  change; when they end, the schedule goes on as after any override and nothing is cut then. A video
+  started by Move next or Replay previous is cut like a scheduled one, and a queued Move next follows
+  the new block's first video. Before M105 the video on air always finished first, so a one-off under a
+  multi-hour archive could pass without airing while Twitch and `/channel` announced it
 - on air, `/channel`, the week lens and Twitch all read the same air windows: Twitch gets one segment per
   window (the weekly block's second part keyed `<key>@<minute>`), a dated run only on its dates, so a
   10-day run shows days 1-7 at once and days 8-10 as the 7-day window rolls
@@ -534,6 +597,9 @@ zone and bound when the block starts.
   until it is re-dated or deleted (*Hide ended* filters it out); dates that lie entirely in the past are
   refused on save. A block crossing midnight on its last date still runs into the next day
 - changing the channel zone reads every date in the new zone; nothing is converted
+- an image older than M93 (2.1.0, or 2.2.0-rc.1) ignores the dates and airs every such block every week,
+  ended ones included, and its whole-state writes erase the dates. Before a reverse repin, list and delete
+  every dated and one-off block (`docs/deployment.md`, *Upgrading To 2.3*, *Rollback to 2.1.0*)
 
 ### Week view (since M97)
 
@@ -549,7 +615,9 @@ and its scheduled time in hours (*24 h scheduled*).
 - a block past midnight is listed once, on the day it starts, as *23:00 → 01:00 Sun*; the next day still
   counts its hours. The first day keeps a block that started the evening before (*23:00 Sat → 01:00*)
 - a weekly block cut by a dated block is filled only in its air time: the video running when the dated
-  block starts is cut there, and the next one starts when the weekly block comes back
+  block starts is cut there, and the next one starts when the weekly block comes back. The dated block's
+  own last video is cut at its end when another block takes the air there (since M105, as on air), so
+  it no longer reads *Ends 20m late*; a block followed by a weekly block, or by nothing, still may
 - *Repeats inside block* says why, with numbers: *6 min of video for a 24 h block: plays ≈ 240 times. Add
   videos to Abendprogramm.* A pool that alternates between sources says when one source runs out first
 - *Edit block* (in an opened block) opens the day lens at that block's form; *Add block* (above the days)
@@ -575,6 +643,9 @@ The public page shows, in the channel language:
   event per block, in UTC) that calendar apps can subscribe to; it is public like the page
 
 The operator's queue (*Play now*, *Insert*) is not shown in *Up next*; the projection is the schedule's.
+A pool's own inserts (an ident every N items) are not listed or counted as videos either (since M105,
+review finding R24), but the time they take is kept: the video after one starts when it ends. The *Now*
+card still names an insert while it is on air.
 On air, the next card adds how soon the next block starts: `20:00-22:00 · in 25 min` under an hour,
 `· in 3 h` under a day.
 
@@ -591,7 +662,9 @@ What counts time counts real time:
 - cuepoints count real seconds from the block's start: a block from 01:00 is 90 minutes in at 03:30 on
   the spring-forward day, and its cuepoint at `1:40:00` fires 1 h 40 min after 01:00, not an hour early.
   In October a block from 01:00 is 90 minutes in at the first 02:30 and 150 at the second; a cuepoint
-  fires once per run
+  fires once per run, also when the block comes back on the wall clock after the block that followed it
+  (00:00-02:30, then 02:30-06:00: the first block airs again from the second 02:00 and fires nothing
+  again; before M105 it fired every cuepoint a second time)
 - the Twitch schedule posts each segment for the real minutes it airs: Sunday 01:00-04:00 is 2 hours in
   March and 4 hours in October; a block in 02:00-03:00 gets no segment in March (it does not air) and
   2 hours from the first 02:00 in October. `/channel` and `/channel.ics` show the same times
@@ -677,7 +750,10 @@ pair. To see what happened to one item:
   clean trial brings the item back into rotation and closes the incident when it was the source's last
   one; a failed trial changes nothing but the time of the try, and the source breaker hears neither.
   Log events: `playout.asset.reprobe.cleared` and `playout.asset.reprobe.failed` (`assetId`,
-  `sourceId`, `error`).
+  `sourceId`, `error`). A Twitch archive whose file is not in the cache is only asked whether it still
+  resolves on Twitch (`playout.asset.reprobe.availability`): nothing is downloaded for the trial, and
+  a cleared archive is downloaded when the pool's queue reaches it (since M105; before, every such trial
+  queued the full download ahead of the archives the programme needed).
 - When probes fail on three different items of one source, the whole source is held out instead; see
   *A source is held out of programming* below.
 
@@ -688,13 +764,21 @@ YouTube or Twitch source:
 
 - The insert that is due next is prepared ahead, with the pool's next items: the pool's insert once it
   is the item after the one on air, a cuepoint's item from five minutes before its cuepoint until it
-  airs. Its probe counts towards quarantine and the source breaker like theirs.
+  airs. Its probe counts towards quarantine and the source breaker like theirs. While it waits, its
+  prepared address is renewed in the last minute of each five, so it is never cold when its boundary
+  comes (since M105; before, a boundary in that gap skipped a healthy insert)
+- An insert plays to its end (or its duration bound), also when its item is not from one of the
+  block pool's sources (since M105; before, such an insert was cut at the next playout cycle, 15 s in,
+  for the pool's next item). Skip, Remove next, every operator action and a dated block's start or end
+  still end it.
 - An insert whose item is quarantined, cooling down (Twitch VOD) or from a source the breaker holds is
   not picked; it airs again once that ends. The week view leaves out a quarantined item or a held
   source's item the same way (it does not know the Twitch cache cooldown).
 - When the insert is due and still not ready (the local fallback covers the resolve) or cannot be
   prepared, it is skipped once and counts as played: the pool's counter starts again, the cuepoint is
-  fired. The same holds when ffmpeg cannot be started for it. The incident *Scheduled insert skipped* (`playout.insert.skipped`, a warning) names the insert
+  fired. The same holds when ffmpeg cannot be started for it, and (since M105) when it starts but its
+  input cannot be opened twice in a row: the second start uses the next format candidate, as for
+  programme items (reason `open-failed`). The incident *Scheduled insert skipped* (`playout.insert.skipped`, a warning) names the insert
   and why; the same text is in the audit trail as `playout.insert.skipped`. It closes by itself once
   playout has been healthy for a while. Before M94 a remote insert never aired: it was due again at
   every boundary, and the fallback flashed each time.
@@ -865,10 +949,19 @@ bot answers none of them):
 
 How often: one answer to `!commands`, `!now` or `!next` per viewer a minute and one in the chat every ten
 seconds; questions inside those windows get no answer. A refused request is explained to each viewer
-once a minute; an accepted one is always confirmed (the request cooldown and the queue cap already bound
-those). Behind all of it, the bot writes at most 15 lines in any 30 seconds (Twitch allows a
-non-moderator account 20); a line past that is dropped with the runtime event `chat.say.dropped`. The
-words come from the worker's last cycle, so a change of what plays reaches `!now` within about 30 s.
+once a minute and to the chat at most five times in 30 seconds (since M105, review finding R23: a raid
+typing `!request` with nonsense could otherwise fill the bot's lines); an accepted one is always
+confirmed (the request cooldown and the queue cap already bound those). Behind all of it, the bot writes
+at most 15 lines in any 30 seconds (Twitch allows a non-moderator account 20); a line past that is
+dropped with the runtime event `chat.say.dropped`. A refusal also leaves the last 5 of those 15 to the
+other lines (moderator check-ins, accepted requests, `!game`, the answers): it is dropped with
+`chat.say.dropped` reason `send-budget-reserve` once 10 lines went out in the window.
+
+`!now` and `!next` read what the playout runs at the moment they are asked (since M105, review finding
+R22), so an answer right after a change of item names the new one. Before, the words came from the
+worker's last cycle and lagged a whole cycle (over two minutes with source syncs) plus 30 s. When the
+database does not answer within 2 s, the bot answers from the last cycle as before; the next schedule
+block, for when nothing plays, comes from the blocks the last cycle read.
 
 ### Owner password lost (since M91)
 
@@ -994,9 +1087,12 @@ Minimum expectation:
 
 ### Restore Flow
 
-1. Stop the stack.
+1. Stop everything that writes (`docker compose stop web worker playout uplink`); PostgreSQL keeps running
+   for the restore.
 2. Restore the active env file.
-3. Restore the PostgreSQL dump.
+3. Restore the PostgreSQL dump into an empty database: a `pg_dump -Fc` archive goes through `pg_restore`,
+   and a restore over the newer database leaves the tables only the newer version has. The commands are
+   under *Rollback to 2.1.0* in `docs/deployment.md`.
 4. Restore `data/media` if needed.
 5. Start the previously known-good image tags.
 6. Confirm:

@@ -102,9 +102,11 @@ function evaluateCuepoints(args: CuepointArgs) {
   }
 
   // Keyed by the run, not the day's occurrence: after 00:00 a block crossing midnight is the next day's
-  // carry-over with a new key, and the cuepoints it fired before midnight must stay fired.
+  // carry-over with a new key, and the cuepoints it fired before midnight must stay fired. Every stored key
+  // names its run, so the whole list is read: since R8 it also holds the run before the last change, which
+  // is what a block coming back after another one (the October fall-back night) finds its keys in.
   const runKey = getScheduleOccurrenceRunKey(currentScheduleItem);
-  const firedCuepointKeys = args.state.playout.cuepointWindowKey === runKey ? args.state.playout.cuepointFiredKeys : [];
+  const firedCuepointKeys = args.state.playout.cuepointFiredKeys;
   // Real seconds, not wall-clock minutes (M101): on the spring-forward day a cuepoint fired an hour early.
   const elapsedSeconds = getScheduleRunElapsedSeconds({ occurrence: currentScheduleItem, now, timeZone });
   const progress = getCuepointProgress({

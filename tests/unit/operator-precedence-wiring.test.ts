@@ -32,7 +32,7 @@ describe("a Live Bridge takeover ends the insert", () => {
 
   it("decides on the live selection, before anything starts or switches", () => {
     const decide = cycle.indexOf("const insertAfterSelection = decideInsertAfterSelection({");
-    expect(decide).toBeGreaterThan(cycle.indexOf("let selection: SelectionResult = choosePlaybackCandidate(state);"));
+    expect(decide).toBeGreaterThan(cycle.indexOf("let selection: SelectionResult = choosePlaybackCandidate(state, scheduleNow);"));
     expect(decide).toBeLessThan(cycle.indexOf("await startOrSwitchPlayout("));
     // No exception for a live selection any more: it used to leave the insert in place, and the insert on
     // air at the takeover started again from 0 after the release.
@@ -40,7 +40,7 @@ describe("a Live Bridge takeover ends the insert", () => {
   });
 
   it("logs an insert on air that the takeover cut, and drops a pending one through recordDroppedInsert", () => {
-    const clear = between(cycle, "if (insertAfterSelection.clear) {", "selection = choosePlaybackCandidate(state);");
+    const clear = between(cycle, "if (insertAfterSelection.clear) {", "selection = choosePlaybackCandidate(state, scheduleNow);");
     expect(clear).toContain(
       '} else if (selection.queueKind === "live") { // It aired, so it is not a drop; the takeover that cut it is worth a line all the same. logRuntimeEvent("playout.insert.ended", { assetId: state.playout.insertAssetId, reason: "live-bridge" }); }'
     );
@@ -51,7 +51,7 @@ describe("a Live Bridge takeover ends the insert", () => {
   it("empties the insert in the takeover cycle, so the cycle after the release has none to bring back", () => {
     // The live rows of decideInsertAfterSelection (playout-boundary.test.ts) say clear; this is the write
     // that makes the release a plain schedule cycle: the insert arm needs an insert id and a status.
-    const clear = between(cycle, "if (insertAfterSelection.clear) {", "selection = choosePlaybackCandidate(state);");
+    const clear = between(cycle, "if (insertAfterSelection.clear) {", "selection = choosePlaybackCandidate(state, scheduleNow);");
     expect(clear).toContain('insertAssetId: "", insertRequestedAt: "", insertStatus: "",');
     expect(clear).toContain("state = await readAppState();");
     expect(cycle.indexOf("if (insertAfterSelection.clear) {")).toBeLessThan(cycle.indexOf("await startOrSwitchPlayout("));
@@ -62,9 +62,9 @@ describe("viewers never override the operator", () => {
   it("hands the IRC handler the hold and answers a paused vote once", () => {
     const handler = flat(between(workerSource, "onChatMessage(message) {", "onChatGameCommand:"));
     expect(handler).toContain("config: latestChatInteractionConfig, operatorHold: latestOperatorHold });");
-    expect(handler).toContain(
-      'if (effect.kind === "skip-paused" && effect.announce) { twitchChatBridge.say(formatChatSkipPausedReply(effect.hold, viewerLanguage())); }'
-    );
+    // Since M105 the answer is chat-answers.ts's answerChatEffect, driven with the runtime's effects in
+    // tests/unit/chat-answers.test.ts (one refusal line while announce is set, none after).
+    expect(handler).toContain("void answerChatEffect({ effect, say: twitchChatBridge.say.bind(twitchChatBridge),");
   });
 
   it("refreshes the hold every cycle, ends a running campaign under it, before the effects are applied", () => {
@@ -100,7 +100,9 @@ describe("viewers never override the operator", () => {
   });
 
   it("speaks through the bridge's own socket write", () => {
-    expect(flat(bridgeSource)).toContain("say(message: string): void { this.sendChatMessage(message); }");
+    expect(flat(bridgeSource)).toContain(
+      'say(message: string, priority: ChatLinePriority = "normal"): void { this.sendChatMessage(message, priority); }'
+    );
   });
 });
 
@@ -129,9 +131,10 @@ describe("viewers never skip the operator's insert", () => {
     expect(workerSource).not.toContain('insertStatus: "pending"');
     expect(workerSource).not.toContain('insertStatus: "active"');
     expect(flat(functionBody("runPlayoutCycle"))).toContain('selectionIsOperatorInsert: selection.reasonCode === "operator_insert",');
-    // The pool-interval and cue point arms select as scheduled_insert, the insert arm alone as operator_insert.
+    // The pool-interval and cue point arms select as scheduled_insert, and since M105 (R11) the arm that
+    // holds a scheduled insert on air to its end; the insert arm alone as operator_insert.
     const choose = flat(functionBody("choosePlaybackCandidate"));
     expect(choose.split('reasonCode: "operator_insert" as const').length - 1).toBe(1);
-    expect(choose.split('reasonCode: "scheduled_insert" as const').length - 1).toBe(2);
+    expect(choose.split('reasonCode: "scheduled_insert" as const').length - 1).toBe(3);
   });
 });

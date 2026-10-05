@@ -3,6 +3,7 @@ export const dynamic = "force-dynamic";
 import Link from "next/link";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { isScheduleBlockDated } from "@stream247/core";
 import { DEV_FALLBACK_APP_SECRET, resolveAppBaseUrl, resolveAppSecret } from "@stream247/db";
 import { GoLiveChecklist } from "@/components/go-live-checklist";
 import { InsecureHttpNotice } from "@/components/insecure-http-notice";
@@ -156,6 +157,7 @@ export default async function SetupPage(props: { searchParams?: Promise<{ step?:
               initialAppUrl={state.managedConfig.appUrl}
               initialLanguage={state.managedConfig.channelLanguage ?? ""}
               initialTimezone={state.managedConfig.channelTimezone}
+              zoneInUse={Boolean(state.managedConfig.appUrl) || state.scheduleBlocks.length > 0}
             />
             <SkipLink from="instance" />
           </Panel>
@@ -266,7 +268,11 @@ export default async function SetupPage(props: { searchParams?: Promise<{ step?:
               </div>
             ) : null}
             {hasPlayableMedia ? (
-              <SetupProgrammeForm scheduleBlockCount={state.scheduleBlocks.length} sources={programmeSources} />
+              <SetupProgrammeForm
+                scheduleBlockCount={state.scheduleBlocks.length}
+                sources={programmeSources}
+                weeklyBlockCount={state.scheduleBlocks.filter((block) => !isScheduleBlockDated(block)).length}
+              />
             ) : (
               <div className="stack-form">
                 <div className="item">

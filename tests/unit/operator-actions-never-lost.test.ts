@@ -46,6 +46,22 @@ describe("decideCycleEndRestartFlag", () => {
   ])("%s", (_case, consumed, row, keepReconnectWindow, expected) => {
     expect(decideCycleEndRestartFlag({ consumed, row, keepReconnectWindow })).toBe(expected);
   });
+
+  // Review finding R1 (2026-10-05): a flag written after the cycle's read but before the spawn of the item
+  // now on air was aimed at the item that spawn replaced (a Skip or chat vote on B while the cycle resolved
+  // C); kept, the next cycle restarted C from 0 as an operator restart nobody pressed.
+  const spawnedAtMs = Date.parse("2026-10-02T18:00:03.000Z");
+  it.each([
+    ["newer than the read but older than the spawn: satisfied by the spawn, cleared", "", T0, false, spawnedAtMs, ""],
+    ["newer than the read and than the spawn: pressed after the item started, kept", "", T1, false, spawnedAtMs, T1],
+    ["written in the spawn's millisecond: cleared", "", "2026-10-02T18:00:03.000Z", false, spawnedAtMs, ""],
+    ["no process on air (0): the old rule, kept", "", T0, false, 0, T0],
+    ["the reconnect window keeps the row whatever the spawn", "", T0, true, spawnedAtMs, T0],
+    ["the value the cycle read is cleared as before", T0, T0, false, spawnedAtMs, ""],
+    ["an unreadable value is kept rather than guessed", "", "not-a-time", false, spawnedAtMs, "not-a-time"]
+  ])("%s", (_case, consumed, row, keepReconnectWindow, spawned, expected) => {
+    expect(decideCycleEndRestartFlag({ consumed, row, keepReconnectWindow, spawnedAtMs: spawned })).toBe(expected);
+  });
 });
 
 describe("decideCycleEndPendingAction", () => {
@@ -157,12 +173,13 @@ describe("the playout cycle's writes use the decisions", () => {
       'restartRequestedAt: decideCycleEndRestartFlag({ consumed: consumedRequests.restartRequestedAt, row: playout.restartRequestedAt, keepReconnectWindow: reconnectActive || selection.reasonCode === "scheduled_reconnect" })'
     );
     expect(flat).toContain(
-      'restartRequestedAt: decideCycleEndRestartFlag({ consumed: consumedRequests.restartRequestedAt, row: playout.restartRequestedAt, keepReconnectWindow: selection.reasonCode === "scheduled_reconnect" })'
+      'restartRequestedAt: decideCycleEndRestartFlag({ consumed: consumedRequests.restartRequestedAt, row: playout.restartRequestedAt, keepReconnectWindow: selection.reasonCode === "scheduled_reconnect", spawnedAtMs: playoutProcessStartedAtMs })'
     );
-    // The start write.
+    // The start write, which also clears a flag its own spawn satisfied (R1).
     expect(flat).toContain(
-      "restartRequestedAt: decideCycleEndRestartFlag({ consumed: args.consumed.restartRequestedAt, row: playout.restartRequestedAt, keepReconnectWindow: false })"
+      "restartRequestedAt: decideCycleEndRestartFlag({ consumed: args.consumed.restartRequestedAt, row: playout.restartRequestedAt, keepReconnectWindow: false, spawnedAtMs: asRunStartedAtMs })"
     );
+    expect(flat).toContain("const asRunStartedAtMs = playoutProcessStartedAtMs;");
     expect(flat).toContain("...decideCycleEndPendingAction({ consumed: args.consumed, row: playout }),");
     expect(flat.match(/consumed: consumedRequests \}\);/g)?.length).toBe(2);
     expect(flat.match(/\.\.\.decideCycleEndPendingAction\(\{ consumed: consumedPendingAction, row: playout \}\),/g)?.length).toBe(2);

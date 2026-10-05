@@ -1,9 +1,12 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CHAT_REPLY_GLOBAL_COOLDOWN_MS,
   CHAT_REPLY_VIEWER_COOLDOWN_MS,
+  CHAT_REFUSAL_ROOM_LINES,
+  CHAT_REFUSAL_ROOM_WINDOW_MS,
   CHAT_SEND_BUDGET_LINES,
+  CHAT_SEND_BUDGET_RESERVED_LINES,
   CHAT_SEND_BUDGET_WINDOW_MS,
   ChatReplyCooldown,
   ChatSendBudget,
@@ -20,7 +23,9 @@ import {
   type RequestVerdict
 } from "@stream247/core";
 import { ChatControlRuntime } from "../../apps/worker/src/chat-control.js";
-import { buildChatProgrammeInfo } from "../../apps/worker/src/chat-programme-info.js";
+import { answerChatEffect, replyToChatRequest } from "../../apps/worker/src/chat-answers.js";
+import { buildChatProgrammeInfo, readChatProgrammeInfoNow } from "../../apps/worker/src/chat-programme-info.js";
+import { TwitchChatBridge } from "../../apps/worker/src/twitch-engagement.js";
 
 // M104 V5/V6 (owner decision 5.1 Q7): viewers can ask the bot !commands, !now and !next, and every
 // !request gets one answer -- each with its own switch, 60 s per viewer and 10 s in the room, en + de.
@@ -186,12 +191,21 @@ describe("the cooldowns: 60 s per viewer, 10 s in the room", () => {
     expect(cooldown.claimInfo("bob", CHAT_REPLY_GLOBAL_COOLDOWN_MS)).toBe(true);
   });
 
-  it("explains a refused request to each viewer once a minute, not bound by the room", () => {
+  it("explains a refused request to each viewer once a minute, not bound by the answers' ten seconds", () => {
     const cooldown = new ChatReplyCooldown();
-    expect(cooldown.claimViewer("ada", 0)).toBe(true);
-    expect(cooldown.claimViewer("bob", 1)).toBe(true);
-    expect(cooldown.claimViewer("ada", CHAT_REPLY_VIEWER_COOLDOWN_MS - 1)).toBe(false);
-    expect(cooldown.claimViewer("ada", CHAT_REPLY_VIEWER_COOLDOWN_MS)).toBe(true);
+    expect(cooldown.claimRefusal("ada", 0)).toBe(true);
+    expect(cooldown.claimRefusal("bob", 1)).toBe(true);
+    expect(cooldown.claimRefusal("ada", CHAT_REPLY_VIEWER_COOLDOWN_MS - 1)).toBe(false);
+    expect(cooldown.claimRefusal("ada", CHAT_REPLY_VIEWER_COOLDOWN_MS)).toBe(true);
+  });
+
+  it("explains at most five refusals in the room every 30 seconds, whoever is refused (R23)", () => {
+    const cooldown = new ChatReplyCooldown();
+    const granted = Array.from({ length: 20 }, (_, index) => cooldown.claimRefusal(`raider${index}`, index * 10)).filter(Boolean);
+    expect(granted).toHaveLength(CHAT_REFUSAL_ROOM_LINES);
+    // A refusal the room turned down took nothing from that viewer: heard once the window moves on.
+    expect(cooldown.claimRefusal("raider7", CHAT_REFUSAL_ROOM_WINDOW_MS - 1)).toBe(false);
+    expect(cooldown.claimRefusal("raider7", CHAT_REFUSAL_ROOM_WINDOW_MS)).toBe(true);
   });
 
   it("is what the chat runtime hands the worker with each answer command", () => {
@@ -281,28 +295,205 @@ describe("the bot cannot flood chat or break its own line", () => {
   });
 });
 
-describe("the worker wiring", () => {
-  const worker = readFileSync(new URL("../../apps/worker/src/index.ts", import.meta.url), "utf8");
-  const bridge = readFileSync(new URL("../../apps/worker/src/twitch-engagement.ts", import.meta.url), "utf8");
-  const flat = (text: string) => text.replace(/\s+/g, " ");
+// R27: the wiring used to be proven by finding strings in index.ts. The answers are now decided by
+// chat-answers.ts with the runtime's effects, and the bridge is driven with a fake socket, so a second
+// path that ignores the cooldown or a line that skips the budget fails here.
+const HERE = "@display-name=3JakeC;id=chat-9;mod=1 :3jakec!3jakec@3jakec.tmi.twitch.tv PRIVMSG #jimpanse247 :!here 30\r\n";
 
-  it("answers the three commands only when the runtime grants the cooldown", () => {
-    expect(flat(worker)).toContain('if (effect.kind === "info" && effect.answer) {');
+function fakeBridge() {
+  const write = vi.fn();
+  const bridge = new TwitchChatBridge({ onModeratorPresenceCheckIn: async () => undefined });
+  bridge["socket"] = { write, destroyed: false } as never;
+  bridge["channel"] = "jimpanse247";
+  const lines = () => write.mock.calls.map((call) => String(call[0]));
+  return { bridge, write, lines };
+}
+
+describe("the bridge writes every line through the budget and the sanitiser", () => {
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
-  it("confirms every accepted request and explains a refusal once a minute, both behind the request switch", () => {
-    expect(flat(worker)).toContain("if (config.requestRepliesEnabled) { // Formatted before the claim");
-    expect(flat(worker)).toContain("const refusal = formatChatRequestReply({ actor: effect.actor, verdict, position: 0, locale: viewerLanguage() });");
-    expect(flat(worker)).toContain("if (refusal && chatControl.claimRequestRefusalReply(effect.actor)) {");
-    expect(flat(worker)).toMatch(/position = queuedAssetIds\.length;[\s\S]*if \(config\.requestRepliesEnabled\) \{ const reply = formatChatRequestReply\(\{ actor: effect\.actor, verdict, position,/);
+  it("writes at most the budget's PRIVMSG lines in any 30 seconds, each a single IRC line", () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.parse("2026-10-05T20:00:00.000Z") });
+    const { bridge, lines } = fakeBridge();
+    for (let index = 0; index < 40; index += 1) {
+      bridge.say(`Now on air: Evil ${index}\r\nPRIVMSG #other :hi`);
+      vi.advanceTimersByTime(500);
+    }
+    expect(lines()).toHaveLength(CHAT_SEND_BUDGET_LINES);
+    for (const line of lines()) {
+      expect(line).toMatch(/^PRIVMSG #jimpanse247 :[^\r\n]*\r\n$/);
+    }
+    vi.advanceTimersByTime(CHAT_SEND_BUDGET_WINDOW_MS);
+    bridge.say("later");
+    expect(lines().at(-1)).toBe("PRIVMSG #jimpanse247 :later\r\n");
   });
 
-  it("rebuilds what !now and !next answer from on every chat cycle", () => {
-    expect(flat(worker)).toContain("latestChatProgrammeInfo = buildChatProgrammeInfo({");
+  it("leaves the reserve to everything else: a low line is dropped while a normal one still goes out", () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.parse("2026-10-05T20:00:00.000Z") });
+    const { bridge, lines } = fakeBridge();
+    for (let index = 0; index < CHAT_SEND_BUDGET_LINES - CHAT_SEND_BUDGET_RESERVED_LINES; index += 1) {
+      bridge.say(`answer ${index}`);
+    }
+    bridge.say("refusal", "low");
+    expect(lines()).toHaveLength(CHAT_SEND_BUDGET_LINES - CHAT_SEND_BUDGET_RESERVED_LINES);
+    for (let index = 0; index < CHAT_SEND_BUDGET_RESERVED_LINES; index += 1) {
+      bridge.say(`moderator ${index}`);
+    }
+    expect(lines()).toHaveLength(CHAT_SEND_BUDGET_LINES);
+    expect(lines().some((line) => line.includes("refusal"))).toBe(false);
+  });
+});
+
+describe("a flood of refused requests cannot crowd out the bot's other lines (R23)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
-  it("passes every line through the send budget and the line sanitiser before the socket", () => {
-    expect(flat(bridge)).toContain("message = sanitizeChatLine(message);");
-    expect(flat(bridge)).toContain("if (!this.sendBudget.claim(Date.now())) {");
+  it("says five refusals, then every confirmation, the moderator's check-in and a game answer", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.parse("2026-10-05T20:00:00.000Z") });
+    const { bridge, lines } = fakeBridge();
+    const runtime = new ChatControlRuntime({ now: () => new Date() });
+    const reply = (actor: string, requestVerdict: RequestVerdict, position: number) =>
+      replyToChatRequest({
+        actor,
+        verdict: requestVerdict,
+        position,
+        config: config({ requestsEnabled: true }),
+        locale: "en",
+        claimRefusal: (who) => runtime.claimRequestRefusalReply(who),
+        say: bridge.say.bind(bridge)
+      });
+    // A raid typing "!request zz", drained in one cycle: before M105 fifteen of these filled the budget.
+    for (let index = 0; index < 30; index += 1) {
+      reply(`raider${index}`, verdict({ reason: "no-match" }), 0);
+    }
+    expect(lines()).toHaveLength(CHAT_REFUSAL_ROOM_LINES);
+    for (let index = 0; index < 8; index += 1) {
+      reply(`fan${index}`, verdict({ accepted: true, assetId: `a${index}`, title: `Item ${index}` }), index + 1);
+    }
+    bridge["handleChunk"](HERE);
+    await new Promise((resolve) => setImmediate(resolve));
+    bridge.say("game answer");
+    expect(lines()).toHaveLength(CHAT_REFUSAL_ROOM_LINES + 8 + 2);
+    expect(lines().filter((line) => /Item \d/.test(line))).toHaveLength(8);
+    expect(lines().some((line) => /presence window/i.test(line))).toBe(true);
+    expect(lines().at(-1)).toContain("game answer");
+  });
+
+  it("says nothing with the request replies switched off, and never a refusal without the claim", () => {
+    const said: string[] = [];
+    const base = { actor: "ada", position: 0, locale: "en" as const, say: (line: string) => said.push(line) };
+    replyToChatRequest({ ...base, verdict: verdict({ reason: "no-match" }), config: config({ requestRepliesEnabled: false }), claimRefusal: () => true });
+    replyToChatRequest({ ...base, verdict: verdict({ reason: "no-match" }), config: config(), claimRefusal: () => false });
+    expect(said).toEqual([]);
+    // A verdict with nothing to say does not ask for the claim at all.
+    const claim = vi.fn(() => true);
+    replyToChatRequest({ ...base, verdict: verdict({ reason: "disabled" }), config: config(), claimRefusal: claim });
+    expect(claim).not.toHaveBeenCalled();
+  });
+});
+
+describe("the IRC handler's answers (chat-answers.ts)", () => {
+  const nowPlaying = programme({ nowTitle: "Retro Night", nextTitle: "Coding Marathon" });
+
+  function answerer() {
+    let nowMs = Date.parse("2026-10-05T20:00:00.000Z");
+    const runtime = new ChatControlRuntime({ now: () => new Date(nowMs) });
+    const said: string[] = [];
+    const ask = async (actor: string, message: string, read: () => Promise<ChatProgrammeInfo> = async () => nowPlaying) => {
+      const effect = runtime.handleMessage({ actor, message, currentAssetId: "a1", config: config() });
+      await answerChatEffect({ effect, say: (line) => said.push(line), config: config(), locale: "en", programme: read });
+    };
+    return { ask, said, advance: (ms: number) => (nowMs += ms), runtime };
+  }
+
+  it("answers !now twice from one viewer exactly once, and the room once in ten seconds", async () => {
+    const { ask, said, advance } = answerer();
+    await ask("ada", "!now");
+    await ask("ada", "!now");
+    advance(5_000);
+    await ask("bob", "!next");
+    expect(said).toEqual([formatChatNowReply("ada", nowPlaying, "en")]);
+    advance(5_000);
+    await ask("bob", "!next");
+    expect(said).toHaveLength(2);
+    expect(said[1]).toBe(formatChatNextReply("bob", nowPlaying, "en"));
+  });
+
+  it("lists the commands without reading the programme", async () => {
+    const { ask, said } = answerer();
+    const read = vi.fn(async () => nowPlaying);
+    await ask("ada", "!commands", read);
+    expect(read).not.toHaveBeenCalled();
+    expect(said).toEqual([formatChatCommandsReply({ actor: "ada", config: config(), gameCommand: true, locale: "en" })]);
+  });
+
+  it("names the item on air when asked, not the one the last cycle read (R22)", async () => {
+    // The cycle read "Retro Night"; the playout has since started "Coding Marathon".
+    const cycleRead = buildChatProgrammeInfo({
+      playout: { status: "running", currentTitle: "Retro Night", nextTitle: "Coding Marathon" },
+      nextScheduleItem: null,
+      appUrl: "",
+      locale: "en"
+    });
+    const { ask, said } = answerer();
+    await ask("ada", "!now", () =>
+      readChatProgrammeInfoNow({
+        readTitles: async () => ({ status: "running", currentTitle: "Coding Marathon", nextTitle: "Late Show" }),
+        nextScheduleItem: () => null,
+        appUrl: "",
+        locale: "en",
+        fallback: cycleRead
+      })
+    );
+    expect(said).toHaveLength(1);
+    expect(said[0]).toContain("Coding Marathon");
+    expect(said[0]).not.toContain("Retro Night");
+  });
+
+  it("answers from what the cycle read when the row cannot be read in time", async () => {
+    const fallback = programme({ nowTitle: "Retro Night" });
+    const failing = await readChatProgrammeInfoNow({
+      readTitles: async () => {
+        throw new Error("connection refused");
+      },
+      nextScheduleItem: () => null,
+      appUrl: "",
+      locale: "en",
+      fallback
+    });
+    expect(failing).toBe(fallback);
+    const hanging = await readChatProgrammeInfoNow({
+      readTitles: () => new Promise(() => undefined),
+      nextScheduleItem: () => null,
+      appUrl: "",
+      locale: "en",
+      fallback,
+      timeoutMs: 20
+    });
+    expect(hanging).toBe(fallback);
+  });
+
+  it("tells the room once why its skip vote did nothing", async () => {
+    const said: string[] = [];
+    const say = (line: string) => said.push(line);
+    await answerChatEffect({ effect: { kind: "skip-paused", hold: "pin", announce: true }, say, config: config(), locale: "en", programme: async () => nowPlaying });
+    await answerChatEffect({ effect: { kind: "skip-paused", hold: "pin", announce: false }, say, config: config(), locale: "en", programme: async () => nowPlaying });
+    await answerChatEffect({ effect: { kind: "info", info: "now", actor: "ada", answer: false }, say, config: config(), locale: "en", programme: async () => nowPlaying });
+    expect(said).toHaveLength(1);
+  });
+});
+
+describe("the worker hands its effects to these answers", () => {
+  // What is left as source text: index.ts starts the worker when imported, so only its calls are pinned.
+  const worker = readFileSync(new URL("../../apps/worker/src/index.ts", import.meta.url), "utf8").replace(/\s+/g, " ");
+
+  it("answers every message's effect, and every request's verdict, through chat-answers.ts", () => {
+    expect(worker).toContain("void answerChatEffect({ effect, say: twitchChatBridge.say.bind(twitchChatBridge), config: latestChatInteractionConfig, locale: viewerLanguage(), programme: readChatProgrammeForAnswer })");
+    expect(worker.match(/replyToChatRequest\(\{/g)).toHaveLength(2);
+    expect(worker).toContain("claimRefusal: (actor) => chatControl.claimRequestRefusalReply(actor),");
+    expect(worker).toContain("readTitles: readPlayoutProgrammeTitles,");
   });
 });

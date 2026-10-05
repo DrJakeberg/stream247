@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
@@ -13,6 +14,12 @@ import path from "node:path";
  * Checked: `AGENTS.md`, `PLANS.md`, `README.md`, `CONTRIBUTING.md` and `docs/*.md`. Not checked: the
  * archive under `planning/archive/`, which records history as it was, and `CHANGELOG.md`, whose
  * release sections describe the tree of their release.
+ *
+ * A path exists when git knows it (tracked, or new and not ignored) and it is on disk. Until the
+ * 2026-10-05 review the test asked the disk alone, so it depended on gitignored build output: a
+ * reference to `apps/worker/dist/reset-owner-password.js` was red on any checkout whose worker build
+ * predated M91 and green only because `pnpm validate` builds before it tests, and a stale ignored copy
+ * could hide a deleted tracked file. Build output is now checked through its source file.
  */
 
 const ROOT = process.cwd();
@@ -62,14 +69,54 @@ function backtickedRepoPaths(markdown: string) {
   return found;
 }
 
-function missingReferences(relativeFile: string) {
+/** Every file git knows (tracked, or untracked and not ignored) and every directory above one. */
+function repoIndex(files: string[]): Set<string> {
+  const index = new Set<string>();
+  for (const file of files) {
+    index.add(file);
+    for (let dir = path.posix.dirname(file); dir !== "."; dir = path.posix.dirname(dir)) {
+      index.add(dir);
+    }
+  }
+  return index;
+}
+
+function gitRepoIndex(): Set<string> {
+  const listed = execFileSync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], {
+    cwd: ROOT,
+    encoding: "utf8"
+  });
+  // `--cached` still lists a tracked file deleted from the working tree, so the disk has the last word.
+  return repoIndex(listed.split("\0").filter((file) => file !== "" && existsSync(path.join(ROOT, file))));
+}
+
+/**
+ * Whether a reference names something in the repo. Build output (`apps/<x>/dist`, `apps/<x>/dist/<name>.js`)
+ * is not in git; it counts when the source it is built from (`apps/<x>/src`, `apps/<x>/src/<name>.ts`) is.
+ */
+function resolvesInRepo(reference: string, index: Set<string>): boolean {
+  const normalized = path.posix.normalize(reference).replace(/\/$/, "");
+  if (index.has(normalized)) {
+    return true;
+  }
+  const built = normalized.match(/^((?:apps|packages)\/[^/]+)\/dist(?:\/(.+)\.js)?$/);
+  if (built === null) {
+    return false;
+  }
+  if (built[2] === undefined) {
+    return index.has(`${built[1]}/src`);
+  }
+  return [".ts", ".tsx", ".mts"].some((extension) => index.has(`${built[1]}/src/${built[2]}${extension}`));
+}
+
+function missingReferences(relativeFile: string, index: Set<string>) {
   const markdown = readFileSync(path.join(ROOT, relativeFile), "utf8");
   return backtickedRepoPaths(markdown)
     .filter(({ path: reference }) => !RUNTIME_PATHS.has(reference))
     .filter(
       ({ path: reference }) =>
-        !existsSync(path.join(ROOT, reference)) &&
-        !existsSync(path.join(ROOT, path.dirname(relativeFile), reference))
+        !resolvesInRepo(reference, index) &&
+        !resolvesInRepo(path.posix.join(path.posix.dirname(relativeFile), reference), index)
     )
     .map(({ line, path: reference }) => `${relativeFile}:${line} \`${reference}\``);
 }
@@ -94,7 +141,21 @@ describe("doc references", () => {
     expect(backtickedRepoPaths("one\nsee `docs/nope.md`")).toEqual([{ line: 2, path: "docs/nope.md" }]);
   });
 
+  it("counts what git knows, not what lies on disk, and build output through its source", () => {
+    const index = repoIndex(["apps/worker/src/reset-owner-password.ts", "docs/operations.md"]);
+
+    expect(resolvesInRepo("apps/worker", index)).toBe(true);
+    expect(resolvesInRepo("docs/operations.md", index)).toBe(true);
+    expect(resolvesInRepo("apps/worker/dist/reset-owner-password.js", index)).toBe(true);
+    expect(resolvesInRepo("apps/worker/dist", index)).toBe(true);
+    expect(resolvesInRepo("apps/web/dist", index)).toBe(false);
+    // Built (or left over from an old build) on this disk, but from no source in the repo.
+    expect(resolvesInRepo("apps/worker/dist/index.js", index)).toBe(false);
+    expect(resolvesInRepo("docs/deployment.md", index)).toBe(false);
+  });
+
+  const index = gitRepoIndex();
   it.each(checkedFiles())("%s names only files that exist", (relativeFile) => {
-    expect(missingReferences(relativeFile)).toEqual([]);
+    expect(missingReferences(relativeFile, index)).toEqual([]);
   });
 });

@@ -7,8 +7,8 @@
 // Volume is the risk: Twitch drops a bot's lines, or holds the account back, when it writes too
 // much. So the answers to !commands, !now and !next share two cooldowns (one answer per viewer a
 // minute, one answer in the room every ten seconds), a request's refusal is said to a viewer at most
-// once a minute, and only an accepted request is always confirmed: requests are already throttled
-// by their own cooldown and the queue cap.
+// once a minute and to the room at most five times in 30 seconds, and only an accepted request is
+// always confirmed: requests are already throttled by their own cooldown and the queue cap.
 
 import type { ChatInteractionConfig, RequestVerdict } from "./chat-interaction.js";
 import { CHAT_INFO_COMMANDS } from "./chat-interaction.js";
@@ -18,18 +18,27 @@ import { viewerText } from "./viewer-messages/index.js";
 export const CHAT_REPLY_VIEWER_COOLDOWN_MS = 60_000;
 /** At most one answer to !commands, !now or !next in the room every ten seconds. */
 export const CHAT_REPLY_GLOBAL_COOLDOWN_MS = 10_000;
+/**
+ * At most this many request refusals in the room per window (review finding R23). The per-viewer minute
+ * alone let fifteen accounts typing "!request zz" fill the bot's whole send budget with refusals, which
+ * then dropped accepted requests, moderator check-ins and !game for the rest of the 30 seconds.
+ */
+export const CHAT_REFUSAL_ROOM_LINES = 5;
+export const CHAT_REFUSAL_ROOM_WINDOW_MS = 30_000;
 
 /**
  * The two cooldowns of the bot's answers.
  *
  * `claimInfo` is for !commands, !now and !next: it takes the viewer's minute and the room's ten
- * seconds together, or neither. `claimViewer` is for a request's refusal: the viewer's minute only,
- * so one viewer typing a wrong title ten times hears it once, and other viewers' refusals are not
- * swallowed by the room cooldown.
+ * seconds together, or neither. `claimRefusal` is for a request's refusal: the viewer's minute and one
+ * of the room's five refusals in 30 seconds, together or neither. One viewer typing a wrong title ten
+ * times hears it once; other viewers' refusals are not swallowed by the info answers' ten seconds, and
+ * a flood of them cannot take the lines other answers need (R23).
  */
 export class ChatReplyCooldown {
   private readonly lastInfoByViewer = new Map<string, number>();
   private readonly lastRefusalByViewer = new Map<string, number>();
+  private readonly roomRefusalsAtMs: number[] = [];
   private lastInfoAtMs = Number.NEGATIVE_INFINITY;
 
   claimInfo(actor: string, nowMs: number): boolean {
@@ -46,11 +55,18 @@ export class ChatReplyCooldown {
     return true;
   }
 
-  claimViewer(actor: string, nowMs: number): boolean {
+  claimRefusal(actor: string, nowMs: number): boolean {
     const viewer = normalizeViewer(actor);
+    while (this.roomRefusalsAtMs.length > 0 && nowMs - this.roomRefusalsAtMs[0]! >= CHAT_REFUSAL_ROOM_WINDOW_MS) {
+      this.roomRefusalsAtMs.shift();
+    }
+    if (this.roomRefusalsAtMs.length >= CHAT_REFUSAL_ROOM_LINES) {
+      return false;
+    }
     if (nowMs - (this.lastRefusalByViewer.get(viewer) ?? Number.NEGATIVE_INFINITY) < CHAT_REPLY_VIEWER_COOLDOWN_MS) {
       return false;
     }
+    this.roomRefusalsAtMs.push(nowMs);
     this.lastRefusalByViewer.set(viewer, nowMs);
     this.prune(this.lastRefusalByViewer, nowMs);
     return true;
@@ -182,11 +198,20 @@ export function formatChatRequestReply(args: {
 /** Lines the bot may write in any 30 seconds; Twitch allows a non-moderator account 20 and holds back more. */
 export const CHAT_SEND_BUDGET_LINES = 15;
 export const CHAT_SEND_BUDGET_WINDOW_MS = 30_000;
+/**
+ * Slots a low-priority line (a request refusal) must leave free, so moderator check-ins, accepted
+ * requests and the other answers still go out when refusals are many (R23).
+ */
+export const CHAT_SEND_BUDGET_RESERVED_LINES = 5;
+
+/** "low": a line that must leave the reserve free (a request refusal); everything else is "normal". */
+export type ChatLinePriority = "normal" | "low";
 
 /**
  * The last guard before the socket: every line the bot writes (answers, game replies, check-ins)
  * takes one slot of a sliding 30-second window, and a line past the budget is dropped rather than
- * risking the account's chat access. The cooldowns above keep the bot far below it in normal use.
+ * risking the account's chat access. The cooldowns above keep the bot far below it in normal use. A
+ * line claimed with a `reserve` is dropped once fewer than that many slots would be left after it.
  */
 export class ChatSendBudget {
   private readonly sentAtMs: number[] = [];
@@ -196,11 +221,11 @@ export class ChatSendBudget {
     private readonly windowMs = CHAT_SEND_BUDGET_WINDOW_MS
   ) {}
 
-  claim(nowMs: number): boolean {
+  claim(nowMs: number, reserve = 0): boolean {
     while (this.sentAtMs.length > 0 && nowMs - this.sentAtMs[0]! >= this.windowMs) {
       this.sentAtMs.shift();
     }
-    if (this.sentAtMs.length >= this.lines) {
+    if (this.sentAtMs.length >= this.lines - Math.max(0, reserve)) {
       return false;
     }
     this.sentAtMs.push(nowMs);

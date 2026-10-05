@@ -14,7 +14,6 @@ import {
 import { getAuthenticatedUser, requireApiRoles } from "@/lib/server/auth";
 import {
   appendAuditEvent,
-  createScheduleBlocks,
   createScheduleBlocksChecked,
   deleteScheduleBlockRecord,
   getWorkspaceTimeZone,
@@ -279,7 +278,17 @@ export async function POST(request: NextRequest) {
         }))
       );
 
-      await createScheduleBlocks(clonedBlocks);
+      // Checked like create, duplicate, edit and a template (M88): an empty target weekday is not enough on
+      // the 7-day minute line, where a cloned block crossing midnight meets the next weekday's first block and
+      // the previous weekday's late block reaches into the cloned morning (review finding R10). Saved, the
+      // overlap locked every edit of either block until it was ended by hand.
+      await createScheduleBlocksChecked(clonedBlocks, (existing, incoming) => {
+        if (findScheduleConflictsInvolving([...existing, ...incoming], incoming.map((block) => block.id)).length > 0) {
+          throw new Error(
+            "Cloned blocks would overlap the blocks around them: a block past midnight meets the next weekday. Adjust the schedule or choose other weekdays."
+          );
+        }
+      });
       const nextState = await readAppState();
 
       await appendAuditEvent(

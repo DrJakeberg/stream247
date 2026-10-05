@@ -108,6 +108,7 @@ import SetupPage from "../../apps/web/app/setup/page";
 import { AssetLibraryBrowser, LibraryEmptyState } from "../../apps/web/components/asset-library-browser";
 import { ToastProvider } from "../../apps/web/components/ui/Toast";
 import { getGoLiveChecklist } from "../../apps/web/lib/server/onboarding";
+import { createFirstProgramme, describeWeeklyBlocksInTheWay } from "../../apps/web/lib/setup-first-programme";
 import { TWITCH_INGEST_URL } from "../../apps/web/lib/destination-wording";
 
 (globalThis as { React?: unknown }).React = React;
@@ -294,6 +295,100 @@ describe("U2: First programme", () => {
     const html = await renderSetup("programme");
     expect(html).toContain("Replace the blocks already in the week");
     expect(html).toContain("The week has 1 block.");
+    // R17: without Replace a weekly block can never take the all-day blocks, and the step says so.
+    expect(html).toContain("The new all-day blocks overlap its weekly blocks, so the week is filled only with this ticked.");
+  });
+});
+
+describe("R17: First programme on a week that already has weekly blocks", () => {
+  const weeklyBlock = {
+    id: "schedule_old",
+    title: "Old",
+    categoryName: "Replay",
+    dayOfWeek: 1,
+    startMinuteOfDay: 0,
+    durationMinutes: 60,
+    poolId: "pool_missing",
+    sourceName: "",
+    repeatMode: "single",
+    repeatGroupId: ""
+  } as AppState["scheduleBlocks"][number];
+
+  // The form's fetch, answered by the real routes against the in-memory state.
+  const routeFetch = vi.fn(async (url: string, init: { method: string; body: string }) => {
+    const request = jsonRequest(`http://localhost${url}`, init.method, JSON.parse(init.body) as Record<string, unknown>);
+    return url === "/api/pools" ? postPool(request) : postTemplate(request);
+  });
+  const programmePools = () => (page.state as AppState).pools.filter((entry) => entry.name === "Programme");
+
+  beforeEach(() => {
+    routeFetch.mockClear();
+  });
+
+  it("stops before writing anything when Replace is not ticked, and says why", async () => {
+    page.state = twitchDoneState({ assets: [readyAsset("a1")], scheduleBlocks: [weeklyBlock] });
+    const poolsBefore = (page.state as AppState).pools.length;
+    for (let press = 0; press < 3; press += 1) {
+      const result = await createFirstProgramme({
+        name: "Programme",
+        sourceIds: ["source-local-library"],
+        replaceWeek: false,
+        weeklyBlockCount: 1,
+        createdPool: null,
+        fetch: routeFetch
+      });
+      expect(result).toEqual({ status: "error", message: describeWeeklyBlocksInTheWay(1), pool: null });
+    }
+    expect(routeFetch).not.toHaveBeenCalled();
+    expect((page.state as AppState).pools).toHaveLength(poolsBefore);
+    expect((page.state as AppState).scheduleBlocks).toEqual([weeklyBlock]);
+  });
+
+  it("uses the pool of a failed press again, so the week is filled with one pool, not two", async () => {
+    // A weekly block another editor saved after the page was drawn: the step counted none, the route refuses.
+    page.state = twitchDoneState({ assets: [readyAsset("a1")], scheduleBlocks: [weeklyBlock] });
+    const first = await createFirstProgramme({
+      name: "Programme",
+      sourceIds: ["source-local-library"],
+      replaceWeek: false,
+      weeklyBlockCount: 0,
+      createdPool: null,
+      fetch: routeFetch
+    });
+    expect(first.status).toBe("error");
+    expect(first.pool).not.toBeNull();
+    expect(programmePools()).toHaveLength(1);
+
+    const second = await createFirstProgramme({
+      name: "Programme",
+      sourceIds: ["source-local-library"],
+      replaceWeek: true,
+      weeklyBlockCount: 1,
+      createdPool: first.pool,
+      fetch: routeFetch
+    });
+    expect(second).toEqual({ status: "done", pool: first.pool });
+    expect(programmePools()).toHaveLength(1);
+    const state = page.state as AppState;
+    expect(state.scheduleBlocks).toHaveLength(7);
+    expect(state.scheduleBlocks.every((entry) => entry.poolId === first.pool?.id)).toBe(true);
+  });
+
+  it("fills a week of dated blocks only without Replace, since they sit over the new weekly blocks", async () => {
+    const dated = { ...weeklyBlock, id: "schedule_special", validFrom: "2026-10-12", validUntil: "2026-10-12" };
+    page.state = twitchDoneState({ assets: [readyAsset("a1")], scheduleBlocks: [dated] });
+    const html = await renderSetup("programme");
+    expect(html).toContain("Without this its dated blocks stay and take the air at their times.");
+    const result = await createFirstProgramme({
+      name: "Programme",
+      sourceIds: ["source-local-library"],
+      replaceWeek: false,
+      weeklyBlockCount: 0,
+      createdPool: null,
+      fetch: routeFetch
+    });
+    expect(result.status).toBe("done");
+    expect((page.state as AppState).scheduleBlocks).toHaveLength(8);
   });
 });
 

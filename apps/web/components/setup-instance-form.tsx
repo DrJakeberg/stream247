@@ -28,16 +28,24 @@ export function SetupInstanceForm(props: {
   envAppUrl: string;
   envTimezone: string;
   envLanguage: string;
+  /**
+   * The channel already runs on the saved zone: the basics were saved once (a stored public URL) or the
+   * schedule has blocks. An empty saved zone is UTC then, not "nothing saved" (review finding R16).
+   */
+  zoneInUse?: boolean;
 }) {
   // Prefilled rather than empty (M91, I6): the address this wizard is open under and the browser's zone
   // are right for most installs, and both say so in their hint until they are saved.
   const urlDetected = !props.initialAppUrl && !props.envAppUrl && Boolean(props.detectedAppUrl);
   const [appUrl, setAppUrl] = useState(urlDetected ? props.detectedAppUrl ?? "" : props.initialAppUrl);
   // The browser's zone is read on the client only (the server's zone is not the viewer's); until the
-  // field is typed in, an unsaved and unpinned zone shows it.
+  // field is typed in, an unsaved and unpinned zone shows it. Only on a first run: on an install that runs
+  // on UTC because its zone was left empty, the prefilled zone moved every block by an hour or two the moment
+  // the operator saved the step to fix the URL (R16).
   const browserTimeZone = useSyncExternalStore(subscribeToNothing, detectBrowserTimeZone, () => "");
   const [typedTimezone, setTypedTimezone] = useState<string | null>(null);
-  const zoneDetected = typedTimezone === null && !props.initialTimezone && !props.envTimezone && browserTimeZone !== "";
+  const zoneDetected =
+    typedTimezone === null && !props.initialTimezone && !props.envTimezone && !props.zoneInUse && browserTimeZone !== "";
   const timezone = typedTimezone ?? (zoneDetected ? browserTimeZone : props.initialTimezone);
   // New installs speak English to viewers; an empty stored value is English too.
   const [language, setLanguage] = useState(props.initialLanguage || "en");
@@ -94,7 +102,9 @@ export function SetupInstanceForm(props: {
             ? `CHANNEL_TIMEZONE is set to ${props.envTimezone} in the environment and overrides whatever is saved here.`
             : zoneDetected
               ? "Your browser's time zone; check it. IANA name like Europe/Berlin. The schedule grid and every on-air clock use it."
-              : "IANA name like Europe/Berlin. The schedule grid and every on-air clock use it. Empty means UTC."
+              : props.zoneInUse && !props.initialTimezone && typedTimezone === null
+                ? "Empty means UTC, and the channel runs on UTC now. IANA name like Europe/Berlin; another zone keeps each block's clock times, so every block moves."
+                : "IANA name like Europe/Berlin. The schedule grid and every on-air clock use it. Empty means UTC."
         }
         label="Channel timezone"
         onChange={setTypedTimezone}

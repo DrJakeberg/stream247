@@ -217,7 +217,8 @@ describe("as-run wiring", () => {
     expect(spawned).toBeGreaterThan(-1);
     expect(queued).toBeGreaterThan(spawned);
     // Before the first await that follows the spawn: no runtime write or incident delays the row.
-    expect(queued).toBeLessThan(start.indexOf("await updatePlayoutRuntime((playout) => ({", spawned));
+    // (Since M105 the start write leaves the row to the exit write of a child that has already ended.)
+    expect(queued).toBeLessThan(start.indexOf("await updatePlayoutRuntime((playout) => (hasChildExited(child) ? playout : {", spawned));
     expect(flat(start)).toContain("const asRunStartedAtMs = playoutProcessStartedAtMs;");
     expect(flat(start)).toContain("blockId: args.asRun.blockId, poolId: args.asRun.poolId,");
     expect(workerSource).not.toMatch(/await asRunLog|asRunLog\.settled/);

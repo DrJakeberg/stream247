@@ -87,7 +87,9 @@ are not retroactively revoked.
     item on air until then, and never show the reconnect slate (after the insert the pool continues
     with its next item; the interrupted item is not resumed); a move next or replay previous item plays
     to its end
-  - graceful schedule handoff so running scheduled items can finish before the next block takes over
+  - graceful schedule handoff so running scheduled items can finish before the next weekly block takes
+    over; a dated or one-off block cuts the item on air at its start, and its own item at its end when a
+    block follows
   - safe-boundary cuepoint inserts inside schedule blocks using either pool insert assets or block-specific insert assets
   - fallback asset selection
   - manual restart (with the relay the item on air starts again from its beginning; without it the

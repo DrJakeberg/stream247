@@ -78,3 +78,11 @@ export class AlertDeduper {
     this.lastSentAt.delete(key);
   }
 }
+
+/**
+ * Whether writing `fingerprint` now opens it: no open incident of it is among `incidents`. For an alert
+ * that belongs to the moment a condition begins (R2: `twitch.reconnect.required`), not to each write.
+ */
+export function opensIncident(incidents: ReadonlyArray<{ fingerprint: string; status: string }>, fingerprint: string): boolean {
+  return !incidents.some((incident) => incident.fingerprint === fingerprint && incident.status === "open");
+}

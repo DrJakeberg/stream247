@@ -1054,6 +1054,11 @@ export type MaterializedProgrammingBlock = {
   repeatReason?: string;
   /** It ended before now on the first day of the week: it took nothing from its pool's rotation. */
   aired?: boolean;
+  /**
+   * R7: another block takes the air at this block's end with a cut (a dated block's end, or a dated block
+   * starting where this one ends), so its last item is cut there rather than running over.
+   */
+  cutAtEnd?: boolean;
 };
 
 export type MaterializedProgrammingDay = {
@@ -3003,6 +3008,29 @@ export function buildCuepointKey(occurrenceKey: string, offsetSeconds: number): 
   return `${occurrenceKey}@${Math.max(0, Math.floor(offsetSeconds))}`;
 }
 
+/**
+ * The fired cuepoint keys the playout keeps when the run on air changes from `previousRunKey` (the stored
+ * `cuepointWindowKey`) to `runKey`: those of both runs, not only the new one's. Each key carries its run
+ * (`buildCuepointKey`), so a run's keys never count for another and readers can pass the whole list.
+ *
+ * Before M105 the list was emptied whenever the run changed. On the October fall-back night a block ending
+ * in 02:00-03:00 comes back on the wall clock after the block that followed it (owner rule, M101), and it
+ * fired every cuepoint a second time (review finding R8: 00:00-02:30 with cuepoints at 30, 60 and 90 min,
+ * then 02:30-06:00; at the second 02:05 all three were due again). With no block on air the last run's keys
+ * stay, so a block coming back after a gap keeps its keys too. Two runs are enough: a run comes back
+ * only right after the one that interrupted it.
+ */
+export function carryCuepointFiredKeys(args: { previousRunKey: string; firedKeys: readonly string[]; runKey: string }): string[] {
+  if (args.runKey === args.previousRunKey) {
+    return [...args.firedKeys];
+  }
+  const runs = new Set([args.previousRunKey, args.runKey].filter(Boolean));
+  return args.firedKeys.filter((key) => {
+    const at = key.lastIndexOf("@");
+    return at > 0 && runs.has(key.slice(0, at));
+  });
+}
+
 export function getScheduleElapsedSeconds(args: {
   startMinuteOfDay: number;
   currentTime: string;
@@ -3165,6 +3193,12 @@ function materializePoolWindow(args: {
   fromMinute?: number;
   /** How many items are listed; the rest is projected but not listed. */
   maxListedItems?: number;
+  /**
+   * The block's last air window ends where another block takes the air with a cut (a dated block's start or
+   * end, as `buildMaterializedProgrammingWeek` finds it): its item stops there, as the worker cuts it,
+   * instead of running over.
+   */
+  cutAtEnd?: boolean;
 }): {
   block: MaterializedProgrammingBlock;
   endState: PoolProjectionState;
@@ -3278,7 +3312,10 @@ function materializePoolWindow(args: {
   let projectedItemCount = 0;
   const firedCuepointOffsets = new Set<number>(cuepointOffsetsSeconds.filter((offset) => offset < firstWindowStart));
   // The air windows are filled one after the other. An item still running when a dated block takes over
-  // is cut there, and the next item starts when the weekly block comes back; the last window may overflow.
+  // is cut there, and the next item starts when the weekly block comes back; the last window may overflow,
+  // unless the block is cut at its end too (`cutAtEnd`: a dated block's end, or a dated block starting where
+  // this one ends), as the worker cuts it (R7).
+  const overrunsEnd = !args.cutAtEnd;
   let windowIndex = 0;
   let cursor = firstWindowStart;
   const windowFillEnds = windowsSeconds.map((window) => window.start);
@@ -3310,7 +3347,7 @@ function materializePoolWindow(args: {
 
     const { durationSeconds, estimated } = getMaterializedAssetDurationSeconds(nextAsset);
     const window = windowsSeconds[windowIndex] as ScheduleAirWindow;
-    const lastWindow = windowIndex === windowsSeconds.length - 1;
+    const lastWindow = overrunsEnd && windowIndex === windowsSeconds.length - 1;
     const itemStartSeconds = cursor;
     const itemEndSeconds = cursor + durationSeconds;
     const shownEndSeconds = lastWindow ? itemEndSeconds : Math.min(itemEndSeconds, window.end);
@@ -3398,7 +3435,7 @@ function materializePoolWindow(args: {
   }
 
   const lastWindowEnd = windowsSeconds.at(-1)?.end ?? 0;
-  const overflowSeconds = windowIndex >= windowsSeconds.length ? Math.max(0, cursor - lastWindowEnd) : 0;
+  const overflowSeconds = overrunsEnd && windowIndex >= windowsSeconds.length ? Math.max(0, cursor - lastWindowEnd) : 0;
   const fillStatus =
     projectedItemCount === 0
       ? "empty"
@@ -3478,7 +3515,8 @@ function materializePoolWindow(args: {
       durationLabel: formatScheduleHours(fullAirSeconds / 60),
       timeLabel,
       repeatReason,
-      aired: false
+      aired: false,
+      cutAtEnd: Boolean(args.cutAtEnd)
     },
     endState: { rotation: rotationState, itemsSinceInsert },
     spans
@@ -3530,6 +3568,33 @@ export function buildMaterializedProgrammingWeek(args: {
     }
   });
 
+  // Where a block's last window ends, the block on air next takes over with a cut when one of the two is
+  // dated, as the worker's takeover (apps/worker/src/schedule-takeover.ts, R7): the dated block starts, or
+  // it ends and another block takes the air back. Between two weekly blocks the item finishes first, so the
+  // last window overruns; a block followed by nothing overruns too. The block on air next is the one
+  // findCurrentScheduleOccurrence would pick: dated first, then the latest start.
+  const absoluteWindows = (entry: Entry) =>
+    getScheduleOccurrenceAirWindows(entry.occurrence).map((window) => ({
+      start: entry.dayIndex * MINUTES_PER_DAY + window.start,
+      end: entry.dayIndex * MINUTES_PER_DAY + window.end
+    }));
+  const isCutAtEnd = (entry: Entry): boolean => {
+    const end = entry.absoluteEnd;
+    const next = entries
+      .filter((other) => other !== entry && absoluteWindows(other).some((window) => window.start <= end && end < window.end))
+      .reduce<Entry | null>((best, other) => {
+        if (!best) {
+          return other;
+        }
+        if (Boolean(other.occurrence.dated) !== Boolean(best.occurrence.dated)) {
+          return other.occurrence.dated ? other : best;
+        }
+        const start = (candidate: Entry) => candidate.dayIndex * MINUTES_PER_DAY + candidate.occurrence.effectiveStartMinuteOfDay;
+        return start(other) > start(best) ? other : best;
+      }, null);
+    return Boolean(next && (entry.occurrence.dated || next.occurrence.dated));
+  };
+
   // Each pool's rotation is carried across its blocks in time order with the worker's rotation
   // (createPoolRotation, shared, not copied): the second block of a pool starts with the item after the
   // first block's last one, not with the pool's stored position again (U5).
@@ -3548,7 +3613,8 @@ export function buildMaterializedProgrammingWeek(args: {
       sourceGate: args.sourceGate,
       startState: pool ? poolStates.get(pool.id) : undefined,
       fromMinute: onAir ? (now as number) - entry.dayIndex * MINUTES_PER_DAY : undefined,
-      maxListedItems: args.maxListedItemsPerBlock
+      maxListedItems: args.maxListedItemsPerBlock,
+      cutAtEnd: isCutAtEnd(entry)
     });
     if (pool && !aired) {
       poolStates.set(pool.id, result.endState);
