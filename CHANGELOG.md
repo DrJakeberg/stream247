@@ -1,5 +1,65 @@
 # Changelog
 
+## 2.3.0-rc.1 - 2026-10-05
+
+The candidate for 2.3.0. It carries everything of `2.2.0-rc.1` (below; tagged but never deployed - source
+circuit breaker, as-run log, operator precedence, viewer language, network outages not counted as source
+faults) and the milestones M84-M105. Upgrading from 2.1.0 is one step: read `docs/deployment.md` →
+*Upgrading To 2.3* first. Back up PostgreSQL before the repin (seven additive migrations), set
+`Admin → Settings → Channel language` afterwards (a channel speaks English until it is set), and note the
+rollback step: dated and one-off blocks must be deleted, or the pre-upgrade dump restored, before an older
+image is pinned again - an older image airs them every week and erases their dates.
+
+### Added
+
+- Dated and one-off schedule blocks: "the next 10 days at 20:00 this playlist" and "once on 10 Oct" can be
+  saved on a 24/7 grid. A dated block takes the air at its start and gives it back at its end, cutting the
+  item on air; the weekly block continues around it. The cut waits for the new block's first pick instead of
+  airing the fallback, and editing the block while it is on air is not a boundary. Ended blocks stay listed,
+  greyed and reusable.
+- A public programme for viewers on `/channel`: what comes next and the coming week, in the viewer's own
+  time, with pool inserts left out of the list, and the same programme as a calendar feed (`/channel.ics`).
+- The bot answers `!commands`, `!now` and `!next`, and every `!request` gets an answer; refusals share a
+  room-wide limit so they cannot crowd out other bot lines.
+- The setup wizard ends with a stream key and a playing week (`/setup` → *First programme*).
+- Incident cards say what is wrong and what to press first ("the 3 a.m. answer").
+- A smoke test for the production path in CI: playout → HLS → uplink with the relay on, including a
+  simulated network outage that neither opens a breaker nor counts towards quarantine.
+
+### Changed
+
+- A Postgres restart or short outage leaves ffmpeg and the uplink running; the programme resumes on its own
+  once the database answers, and an exit written during the outage is applied afterwards.
+- An external failure (a refused Twitch token, a hanging call) costs one step of the cycle, not the cycle:
+  heartbeat, sweep, live status and chat keep running. A refused token and a step that keeps failing send a
+  Discord or e-mail alert again.
+- Operator actions are never lost: Restart, Hard reload, Recover outputs, Refresh and Remove next do what was
+  pressed, also while a cycle is running, and a restart pressed before the new item started does not restart
+  it again.
+- Repeated restarts back off, and a worker or uplink that fails its own health check restarts itself. The
+  uplink's backoff knows the nightly network outage and clears as soon as a destination is ready again.
+- The standby and reconnect slate shows standby, never the previous item's title.
+- A YouTube or Twitch insert airs, or is skipped once with an incident; a scheduled insert from a source
+  outside the block's pool plays to its end.
+- Schedule maths: a block past midnight behaves like one block everywhere; twice a year at the clock change
+  the counts follow real time while blocks keep their wall-clock times; the week view shows what will play,
+  with dates, overnight blocks once and why a block repeats.
+- Local-library files carry their real duration.
+- Self-healing fills the gaps: no stale incident, no orphan encoder, no item lost for good; a quarantined
+  Twitch archive is re-probed once a day without queueing a full download ahead of the programme.
+- A stream key never stays in the audit log, and a time-zone typo never breaks the schedule.
+- A fresh install starts empty, readiness counts only what can air, and plain HTTP is explained; the
+  getting-started guide leads a stranger from an empty host to air.
+- The plan is one short file with its history archived, and a reference check fails when a document points
+  at a file that does not exist.
+
+### Fixed
+
+- The 35 findings of the 2026-10-05 review of M84-M104 (five of them major), one line each in
+  `planning/review-2026-10-05.md`.
+- The repository advertised a 2.2.0 that was never released: compose and env defaults pin `v2.1.0` again
+  until 2.3.0, and the CHANGELOG has no 2.2.0 section.
+
 ## 2.2.0-rc.1 - 2026-10-02
 
 ### Fixed
