@@ -1,118 +1,82 @@
-# Handoff — 2026-10-01
+# Handoff - 2026-10-05
 
-Written for a session that continues this work without access to the production host. Delete this file
-when the two releases below are out.
+State of the work for a session that continues it, local or cloud. Read `AGENTS.md` and `PLANS.md`
+first. Delete this file when v2.2.0 is tagged, released and repinned (milestone M83).
 
-## Goal
+## Where things stand
 
-1. Ship **v2.1.0**: exactly the code that soaks as `v2.1.0-rc.2` (`main`, commit `0cf66a6` plus docs and
-   the release-workflow change).
-2. Then ship **v2.2.0** from pull request `DrJakeberg/stream247#3` (branch `m75-source-breaker`): candidate
-   `v2.2.0-rc.1`, a 24-hour soak, then the final.
+| What | State |
+| --- | --- |
+| v2.1.0 | Released 2026-10-02 (commit `799ff8b`), GitHub release published, DUT repinned to it. Soak of rc.2: passed with one outage (220 s, the nightly network blip). |
+| v2.2.0-rc.1 | Tagged and released as a prerelease on 2026-10-02 (commit `a0fb063`). **Not yet on the DUT**: backup, repin and soak are the owner's next step (below). |
+| v2.2.0 | Release commit `e81b6f4` (`release: v2.2.0`) is on `main`, push CI green. **Not tagged**: the tag waits for a passed rc.1 soak (owner decision 2026-10-02, "with soak"). |
+| M84-M104 | All 21 merged to `main` after `e81b6f4` (pull requests #10 to #30, last merge `5529679`). They ship with the version after 2.2.0. New migrations in M85, M89, M93, M96 and M104. |
+| Open pull requests | None. |
 
-## What a session without the home network cannot do
+`package.json` on `main` says 2.2.0 and `CHANGELOG.md` has no section for M84-M104 yet: the next release
+commit writes it from the milestone notes in `PLANS.md`. Never edit the `2.2.0` section for later work.
 
-The production host ("DUT", `ssh dut`) and the Portainer host (`ssh dt`) are on the owner's LAN behind a
-short-lived SSH certificate. From anywhere else there is **no** way to read the soak log, repin the stack,
-or run a DUT check. Ask the owner to run the command and paste the output; never guess a result.
+## The v2.2.0 tag goes on `e81b6f4`, not on the newest `main`
 
-| Needs the owner (or a local session) | Command |
-|---|---|
-| Soak result | `ssh dut 'grep -E "outage\|complete" ~/logs/soak-20261001-034108.log; grep -c " status=ok " ~/logs/soak-20261001-034108.log'` |
-| Repin the DUT (dry run first) | `ssh dt '~/repin.sh v2.1.0 --dry-run'`, then without `--dry-run` |
-| Database backup before a schema change | `ssh dut 'umask 077; docker exec stream247-postgres-1 pg_dump -U stream247 -d stream247 -Fc > ~/backups/stream247-pre-<tag>.dump'` |
-| Start a soak | `ssh dut 'cd ~ && ~/scripts/start-soak.sh 24; tmux ls'` |
-| Is the channel live | `ssh dut 'docker exec stream247-playout-1 yt-dlp --simulate --print "%(is_live)s" https://www.twitch.tv/jimpanse247'` |
+`main` now carries M84-M104, which the rc.1 soak does not test. v2.2.0 must stay the soaked code, so the
+tag names the release commit explicitly:
 
-The broadcast channel is `jimpanse247`; the bot account is `3JakeC`. Check live status on the channel,
-never on the bot.
-
-## State on 2026-10-01
-
-- **DUT**: `v2.1.0-rc.2` live since 03:35 UTC. Soak started 03:41:08 UTC, ends 2026-10-02 03:41 UTC
-  (`tmux` session `soak`). At 21:40 UTC: 1075 of 1075 samples `status=ok`, no outage, no unplanned uplink
-  restart. The nightly network blip (about 23:58 UTC) is still ahead; the soak tolerates one outage of up
-  to 300 s and reports it as `outages=N`.
-- **On air under rc.2, proven**: Play now of a YouTube video+audio pair (`299+140`, 264 s, no slate); the
-  TwitchYoutube pool alternating by itself at 12:57 UTC (Twitch → YouTube → Twitch). See `PLANS.md`, M71.
-- **Two read-only measurements run on the DUT tonight** and stop by themselves after 16 h (`tmux`
-  sessions `probewatch`, `sigwatch`; logs `~/logs/probe-watch-*.log`, `~/logs/outage-signal-*.log`). They
-  answer the M82 question: during the blip, do probes of the Twitch source fail, and does a DNS + TCP check
-  of `live.twitch.tv:1935` from the playout container see the outage (`connect=timeout` or a DNS error
-  other than ENOTFOUND)? Record the answer in the M82 section of `PLANS.md`.
-- **GitHub releases**: backfilled for every tag with images (39 releases, `v2.0.0` is "Latest").
-  `release.yml` now creates the release as its last step from the tag's `CHANGELOG.md` section. v2.1.0 is
-  the first tag to use it: after tagging, check `gh release view v2.1.0`.
-- **Pull request #3** (draft, branch head `ab42e11`): M75 source circuit breaker, M76 as-run log, M78 operator precedence, M79
-  chat never skips an operator insert, M80 viewer language (de/en), M82 a network outage is not a source
-  fault, the combination review, and M64 (the fresh-install smoke follows the getting-started guide). Each
-  milestone was implemented, reviewed, fixed and gated; `pnpm validate`, the design and wording baselines
-  (76/76) and the five docker smokes were green on images built from the branch. Its `CHANGELOG.md` already
-  carries the `2.2.0-rc.1` section; set its date when the candidate is cut.
-
-## Next steps, in order
-
-1. **Soak result.** Passed means `soak-monitor-complete` in the log. Report `outages`, `outageSecondsMax`
-   and the uplink restart delta with it; a pass with an outage is never called clean.
-2. **Release v2.1.0** (only if the soak passed). One commit `release: v2.1.0` on `main` that changes:
-   - `package.json`: `"version": "2.1.0"`;
-   - `docker-compose.yml`: the four image defaults `v2.0.0` → `v2.1.0` (lines 39, 79, 118, 143);
-   - `.env.production.example`: the three pins `v2.0.0` → `v2.1.0`;
-   - `docs/deployment.md` line 171: "pins `v2.0.0`" → "pins `v2.1.0`";
-   - `CHANGELOG.md`: a new top section `## 2.1.0 - <date>` (text below, fill in the soak numbers).
-   Push, wait for CI on that commit (the `push` run publishes `main-<sha>` images), then
-   `git tag v2.1.0 <sha> && git push origin v2.1.0`. The release workflow retags the images and creates
-   the GitHub release. The owner then backs up PostgreSQL (not required for 2.1.0 over rc.2, the code is
-   the same) and repins the DUT.
-3. **Merge pull request #3** after the v2.1.0 tag, with a `Merge: …` commit as the repository does it.
-   Expect small conflicts in `package.json`, `CHANGELOG.md` and `PLANS.md`; never deduplicate identical
-   lines when resolving.
-4. **Release v2.2.0-rc.1**: `release: v2.2.0-rc.1` commit (`package.json`, the date in the `2.2.0-rc.1`
-   CHANGELOG heading), CI, tag. The owner backs up PostgreSQL (two new tables), repins, sets
-   **Admin → Settings → Channel language** to German (the default is English: the poll and the skip bar
-   turn English until then), and starts a 24-hour soak. DUT checks are listed per milestone at the end of
-   `PLANS.md` (M75, M76, M78, M79, M80, M82).
-5. **v2.2.0** after that soak, the same way as step 2.
-
-### CHANGELOG text for 2.1.0
-
-```markdown
-## 2.1.0 - <date>
-
-The release the two candidates were for. YouTube plays again (format candidates, a programme on air is
-never re-resolved), the two Twitch accounts are named by their role, a pool with several sources
-alternates between them in a stable chronological order, and Play now and Insert reach the air without
-a standby slate. Upgrading from 2.0 adds one column (`pools.source_cursors`); back up PostgreSQL before
-the repin. The rollback is the reverse repin; an older image ignores the column.
-
-Measured before tagging: 24 h on the device under test, 2026-10-01 03:41 to 2026-10-02 03:41 UTC,
-<samples> readiness samples, <outages and uplink restarts>. On air on rc.2: a YouTube video+audio pair
-through Play now (`299+140`, candidate `split-h264-aac`, 264 s to its natural end, no slate); the Twitch
-archives in VOD-id order; and at 12:57 UTC the TwitchYoutube pool alternating by itself - a Twitch archive
-ended at its duration bound, the pool picked the oldest playable YouTube item with no fallback bridge,
-and 264 s later it picked Twitch again at the position that source had kept.
+```sh
+git fetch origin && git tag v2.2.0 e81b6f4d7ad25fd8fa57fb4010690c334763fdd2 && git push origin v2.2.0
 ```
 
-## Owner-gated and deferred
+Tags in this repository are lightweight. The release workflow retags the `main-e81b6f4…` images and
+creates the GitHub release from the `2.2.0` section of `CHANGELOG.md`; check it with
+`gh api repos/DrJakeberg/stream247/releases/tags/v2.2.0` (draft and prerelease both false). If the soak
+fails, `e81b6f4` is never tagged; a `v2.2.0-rc.2` follows instead.
 
-- **M66 Live Bridge rehearsal** and the soak part of **M57 embedded video sources**: need a live source
-  pushed by the owner and replace or overlay the programme on air. Never start them without the owner.
-- **M77 resume an interrupted item** and **M81 admin interface language**: deferred by the owner; start
-  only when asked.
+## Owner steps, in order (only the owner reaches the DUT and the Portainer host)
 
-## Known follow-ups (recorded in `PLANS.md`, not milestones)
+The DUT (`ssh dut`) and the Portainer host (`ssh dt`) are on the owner's LAN. A session without that
+network never guesses a result: it names the command and waits for the output.
 
-- A Restart or Hard reload written while a playout cycle runs is swallowed by the cycle's end write.
-- Two pools that share a source can repeat one archive at a block boundary.
-- The soak's critical-incident check is skipped without a session cookie.
-- `/api/channel/live` still carries the operator's status text; the public page no longer prints it.
-- Ideas from the competitor comparison that are not planned: alerts on air, the 48-hour reconnect at an item
-  boundary, loudness normalisation, a daily on-air percentage, `!next` / `!schedule`, a progress bar, a
-  reaction when the creator goes live.
+1. Backup (mandatory, rc.1 adds two tables):
+   `ssh dut 'umask 077; docker exec stream247-postgres-1 pg_dump -U stream247 -d stream247 -Fc > ~/backups/stream247-pre-v2.2.0-rc.1.dump'`
+2. Repin: `ssh dt '~/repin.sh v2.2.0-rc.1 --dry-run'`, then without `--dry-run`.
+3. Right after the repin: **Admin -> Settings -> Channel language** to German. Until then the poll and
+   the skip bar are English.
+4. DUT checks A1 (migrations, indexes, `source_breakers`) and A2 (channel language), then B1/B2 after the
+   first programme changes, C (operator clicks) and D (the morning after the nightly blip). Their source is
+   the DUT sections of M75, M76, M78, M79, M80 and M82 in `planning/archive/plans-m0-m83.md`. The live
+   bridge check of M78 is left out: it would be M66.
+5. Live status, on the broadcast channel only:
+   `ssh dut 'docker exec stream247-playout-1 yt-dlp --simulate --print "%(is_live)s" https://www.twitch.tv/jimpanse247'`
+6. Soak start: `ssh dut 'cd ~ && ~/scripts/start-soak.sh 24; tmux ls'`
+7. After 24 h, the result: `ssh dut 'grep -E "outage|complete" ~/logs/<soaklog>; grep -c " status=ok " ~/logs/<soaklog>'`.
+   Passed means `soak-monitor-complete` in the log. A pass with an outage is "passed with failure",
+   never clean. Report `outages`, `outageSecondsMax` and the uplink restart delta with it.
+8. Passed: the owner pushes the tag above (tag pushes from the cloud are refused), then backs up again
+   and repins `v2.2.0`.
+
+## After v2.2.0 is out (the last commit of M83)
+
+- Record the DUT check results and the soak in `planning/archive/plans-m0-m83.md` (sections M75-M82 and a
+  new M83 section).
+- Move the M83 row of `PLANS.md` to **Shipped** and drop "tag pending" from the 2.2.0 line there.
+- `CHANGELOG.md:14` says the candidate's checks are recorded "in `PLANS.md` under M83"; point it at
+  `planning/archive/plans-m0-m83.md` instead.
+- Delete this file.
+
+## The release after 2.2.0
+
+It ships M84-M104. Its DUT checks are listed in `PLANS.md` under *DUT checks for the next release
+candidate*. It has migrations, so the backup before the repin is mandatory again.
+
+## Open owner decisions
+
+- `planning/suggestions-2026-10-04.md`: 27 findings outside the milestones, each with a recommendation.
+  Nobody starts any of them before the owner names numbers.
+- M86: confirm that only cycles in which the database cannot be reached count towards the five-minute
+  exit (recommended: keep it so; see the M86 notes in `PLANS.md`).
 
 ## Rules that are not in the code
 
-- Read `AGENTS.md` and `PLANS.md` first; one commit per milestone; `pnpm validate` before every commit.
-- UI text changes need the design and wording baselines re-recorded on a fresh stack; a session without
-  docker relies on CI for that and must say so.
-- Never move the relay pin (`bluenviron/mediamtx:1.15.4`), never print or commit a secret or a stream key.
+- The broadcast channel is `jimpanse247`, the bot account is `3JakeC`; check live status on the channel.
+- Never print or commit a secret or a stream key; never move the relay pin `bluenviron/mediamtx:1.15.4`.
+- M66 and the soak part of M57 never without the owner; M77 and M81 only on the owner's word.
+- UI text changes need the design and wording baselines re-recorded on a fresh stack.
