@@ -146,7 +146,9 @@ describe.sequential("first run (M91)", () => {
     expect(state.sources.map((source) => source.id)).toEqual(["source-local-library"]);
     expect(state.pools).toEqual([]);
     expect(state.scheduleBlocks).toEqual([]);
-  });
+    // Its own limit like the tests around it: the retry loop above alone can wait 6 s, and the first
+    // bootstrap of an empty database took 5004 ms under the full suite on 2026-10-06 (the default is 5 s).
+  }, 60_000);
 
   it("keeps an existing install's rows, the old demo rows included, through a restart", async () => {
     // The rows the seed wrote before M91, as an install from then carries them.
