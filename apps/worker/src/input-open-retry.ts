@@ -72,9 +72,14 @@ export function decideInputOpenRetryAfterExit(input: InputOpenRetryExitInput): I
   return { next: { assetId: input.exitedAssetId, retried: false, failedAtMs: input.nowMs }, countsTowardCrashLoop: true };
 }
 
-// The selections that play an item to its end: the pool's pick, a graceful hand-off and a Move next. An
-// operator insert or override has its own rules, and a scheduled insert is used up when it starts.
-const RETRIED_REASON_CODES = new Set(["scheduled_match", "graceful_handoff", "manual_next"]);
+// The selections that play an item to its end: the pool's pick, a graceful hand-off, a Move next, and since
+// M105 a scheduled insert (review finding R13). An operator insert or override has its own rules. A
+// scheduled insert is used up when it starts (its cuepoint fired, the pool's counter reset), so before it
+// was never retried: a YouTube sting whose first format candidate was refused (exit 8, a 403 on the
+// googlevideo URL) was lost after one try, with neither a retry nor a skipped report. Its retry starts
+// with the next format candidate (the exit handler recorded the failed one) and uses nothing up again:
+// it carries no trigger, and the worker holds it on air like any scheduled insert (scheduled-insert.ts).
+const RETRIED_REASON_CODES = new Set(["scheduled_match", "graceful_handoff", "manual_next", "scheduled_insert"]);
 
 export interface InputOpenRetrySelectionInput {
   retry: InputOpenRetryState | null;
@@ -120,4 +125,26 @@ export function decideInputOpenRetry(input: InputOpenRetrySelectionInput): Input
  */
 export function isCurrentItemSlotFree(input: { currentAssetId: string; status: string; processRunning: boolean }): boolean {
   return input.currentAssetId === "" || (input.status === "failed" && !input.processRunning);
+}
+
+/**
+ * A scheduled insert whose once-more start failed to open as well (R13): final, and reported as skipped
+ * (playout.insert.skipped, reason open-failed) like an insert that could not be prepared, since its cuepoint
+ * or the pool's counter was already used up by the first start.
+ */
+export function isFinalScheduledInsertOpenFailure(input: { exit: InputOpenRetryExit; immediateOpenFailure: boolean }): boolean {
+  return input.immediateOpenFailure && input.exit.next?.exhausted === true && input.exit.next.reasonCode === "scheduled_insert";
+}
+
+/**
+ * A scheduled insert's once-more start that fails before ffmpeg runs it (review of M105, 2026-10-05): the
+ * resolve throws (no format candidate left, a 403 at resolve; the first failure dropped the probe entry, so
+ * the retry always resolves afresh) or the start itself fails. Final too, and reported as skipped like the
+ * retry that fails to open (isFinalScheduledInsertOpenFailure). The retry carries no trigger, so the
+ * cycle's own skip (for an insert that is used up by this start) never saw it: the insert was lost with
+ * only the generic preparation incident, and the M94 DUT check found neither an aired nor a skipped row.
+ * Nothing is used up again; the first start did that.
+ */
+export function isFailedScheduledInsertRetry(input: { selectionIsOpenRetry: boolean; reasonCode: string; insertTrigger: string }): boolean {
+  return input.selectionIsOpenRetry && input.reasonCode === "scheduled_insert" && input.insertTrigger === "";
 }

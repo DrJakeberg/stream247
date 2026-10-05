@@ -119,7 +119,8 @@ describe("the playout cycle", () => {
     expect(capture).toBeGreaterThan(-1);
     expect(capture).toBeLessThan(firstRead);
     expect(flat(cycle.slice(capture, firstRead + 40))).toContain(
-      "const processRunningAtCycleStart = isPlayoutProcessRunning(); await pendingPlayoutExitUpdate; let state = await readAppState();"
+      // and, since R3 (M105), an exit write the database refused is applied again before that read
+      "const processRunningAtCycleStart = isPlayoutProcessRunning(); await pendingPlayoutExitUpdate; await reapplyFailedPlayoutExitWrite(); let state = await readAppState();"
     );
   });
 
@@ -128,22 +129,28 @@ describe("the playout cycle", () => {
     const bound = cycle.indexOf("await enforceAssetDurationBound(state.assets);");
     const feed = cycle.indexOf("await updateProgramFeedRuntimeStatus();");
     const reread = cycle.indexOf("if (processRunningAtCycleStart && !isPlayoutProcessRunning()) {");
-    const select = cycle.indexOf("let selection: SelectionResult = choosePlaybackCandidate(state);");
+    const select = cycle.indexOf("let selection: SelectionResult = choosePlaybackCandidate(state, scheduleNow);");
     expect(capture).toBeGreaterThan(-1);
     expect(capture).toBeLessThan(bound);
     expect(bound).toBeLessThan(feed);
     expect(feed).toBeLessThan(reread);
     expect(reread).toBeLessThan(select);
     // The exit handler's runtime write first (it clears the insert), then the read.
-    expect(flat(cycle.slice(reread, select))).toContain("await pendingPlayoutExitUpdate; state = await readAppState();");
-    expect(flat(workerSource)).toContain("pendingPlayoutExitUpdate = runtimeUpdate.then( () => undefined, () => undefined );");
+    expect(flat(cycle.slice(reread, select))).toContain(
+      "await pendingPlayoutExitUpdate; await reapplyFailedPlayoutExitWrite(); state = await readAppState();"
+    );
+    // A refused write is kept for that (R3), unless a new process has started since.
+    expect(flat(workerSource)).toContain(
+      "pendingPlayoutExitUpdate = runtimeUpdate.then( () => undefined, () => { // Refused, a database outage most likely"
+    );
+    expect(flat(workerSource)).toContain("if (!isPlayoutProcessRunning()) { failedPlayoutExitWrite.fail(exitRuntimeUpdate);");
   });
 
   it("logs every insert it clears before it aired", () => {
     // Since M78 the decision is decideInsertAfterSelection (playout-boundary.ts, tested there), and a
     // live selection no longer leaves the insert in place: the takeover drops a pending one as
     // "live-bridge" and ends an active one.
-    const clear = flat(between(cycle, "const insertAfterSelection = decideInsertAfterSelection({", "selection = choosePlaybackCandidate(state);"));
+    const clear = flat(between(cycle, "const insertAfterSelection = decideInsertAfterSelection({", "selection = choosePlaybackCandidate(state, scheduleNow);"));
     expect(clear).toContain('selectionIsLive: selection.queueKind === "live"');
     expect(clear).toContain(
       'if (insertAfterSelection.clear) { if (insertAfterSelection.dropReason !== "") { await recordDroppedInsert({ state, reason: insertAfterSelection.dropReason, selectionReasonCode: selection.reasonCode });'

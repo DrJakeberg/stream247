@@ -114,6 +114,33 @@ describe("readiness counts only what can air (M91, I1)", () => {
     expect(findUnplayableWeekBlocks(state, getMaterializedProgrammingWeekPreview(state, NOW))).toEqual(["Fri 18:00 prime"]);
   });
 
+  it("blocks that fall on no day of the coming week make neither pools nor schedule ready (R18)", () => {
+    // NOW is Wednesday 2026-10-07: one one-off that ended on 1 Sep, one that starts after the week.
+    const state = stateWith({
+      pools: [pool("pool-a", ["source-local-library"])],
+      scheduleBlocks: [
+        { ...block("ended", "pool-a", 2), validFrom: "2026-09-01", validUntil: "2026-09-01" },
+        { ...block("later", "pool-a", 0), validFrom: "2026-11-01", validUntil: "2026-11-01" }
+      ],
+      assets: [readyAsset("a1")]
+    });
+    expect(getMaterializedProgrammingWeekPreview(state, NOW).flatMap((day) => day.blocks)).toEqual([]);
+    expect(statusOf(state, "pools")?.status).toBe("action");
+    expect(statusOf(state, "schedule")).toMatchObject({
+      status: "action",
+      detail: "None of the 2 schedule block(s) airs in the coming week: their dates have ended or lie later. Add blocks or apply a schedule template."
+    });
+
+    // A dated block inside the week counts like any other.
+    const inWeek = stateWith({
+      pools: [pool("pool-a", ["source-local-library"])],
+      scheduleBlocks: [{ ...block("special", "pool-a", 5), validFrom: "2026-10-09", validUntil: "2026-10-09" }],
+      assets: [readyAsset("a1")]
+    });
+    expect(statusOf(inWeek, "pools")?.status).toBe("ready");
+    expect(statusOf(inWeek, "schedule")?.status).toBe("ready");
+  });
+
   it("a placeholder source without a URL does not count as a content source", () => {
     const state = stateWith({
       sources: [

@@ -1,18 +1,5 @@
 # Changelog
 
-## 2.2.0 - 2026-10-02
-
-The release of `2.2.0-rc.1`, unchanged in code. A source whose items keep failing their probes is held out
-of the pool rotation for a cooldown instead of costing one failed boundary per item (source circuit
-breaker), and an outage of the channel's own network, corroborated by the output host, is counted
-neither by the breaker nor by per-item quarantine. Every playout run is written to an as-run log
-(`Live -> Status`, `GET /api/as-run`). Operator actions end what they replace, and viewers never skip an
-operator's Pin, Fallback or Play now. One channel language (English or German) drives everything viewers
-see and read. Upgrading from 2.1 adds two tables (`source_breakers`, `as_run_log`): back up PostgreSQL
-before the repin, and set `Admin -> Settings -> Channel language` afterwards (a channel speaks English
-until it is set). The rollback is the reverse repin; an older image ignores both tables. The candidate's
-checks on the device under test and its soak are recorded in `PLANS.md` under M83.
-
 ## 2.2.0-rc.1 - 2026-10-02
 
 ### Fixed

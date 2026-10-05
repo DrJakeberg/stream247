@@ -1,6 +1,6 @@
 # Agent Rules
 
-The only rule file for every session, local or cloud. `PLANS.md` says what to build; history up to 2.2.0
+The only rule file for every session, local or cloud. `PLANS.md` says what to build; history up to M83
 is in `planning/archive/`. If a brief, a plan or another file disagrees with this file, this file wins
 unless the owner says otherwise in the brief; name the conflict in the report.
 
@@ -24,7 +24,8 @@ unless the owner says otherwise in the brief; name the conflict in the report.
 
 ## Scope and quality
 
-- Keep the diff to the milestone. Extend working code before rewriting it; additive schema changes first.
+- Keep the diff to the milestone. Extend working code before rewriting it; schema changes additive first, with
+  a downgrade note in `docs/deployment.md`: what an older image does with the new rows, what to do before a reverse repin.
 - Changed behaviour needs tests, or a written justification in the report.
 - No test is deleted or weakened to get green. If a test contradicts the code, find out which is right.
 - Docs stay in sync with behaviour, in the same commit.
@@ -40,10 +41,9 @@ unless the owner says otherwise in the brief; name the conflict in the report.
 - The integration tests need Docker (they start `postgres:16-alpine`). In a cloud container start the
   daemon first (`dockerd`) if `docker info` fails; without Docker run lint, typecheck, unit tests and
   build one by one and say that CI covers the rest.
-- Three tests fail only in cloud containers and pass in CI: the process-group test in
-  `tests/unit/process-utils.test.ts` and the two ICU "GMT" zone-name tests in
-  `tests/unit/ops-state.test.ts` and `tests/unit/viewer-messages.test.ts`. Locally the bar is no
-  failure beyond these three; the pull request's CI run decides.
+- Three tests fail only in cloud containers and pass in CI: the process-group test in `tests/unit/process-utils.test.ts`
+  and the two ICU "GMT" zone-name tests in `tests/unit/ops-state.test.ts` and `tests/unit/viewer-messages.test.ts`.
+  Locally the bar is no failure beyond these three; the pull request's CI run decides.
 - Targeted checks where needed: `pnpm test:fresh-db`, `pnpm test:fresh-compose`, `docker/smoke-test.sh`.
 
 ## Commits, branches, merges
@@ -91,7 +91,7 @@ unless the owner says otherwise in the brief; name the conflict in the report.
   - repin: `ssh dt '~/repin.sh <tag> --dry-run'`, then without `--dry-run`
   - PostgreSQL backup before a schema change:
     `ssh dut 'umask 077; docker exec stream247-postgres-1 pg_dump -U stream247 -d stream247 -Fc > ~/backups/stream247-pre-<tag>.dump'`
-  - soak start: `ssh dut 'cd ~ && ~/scripts/start-soak.sh 24; tmux ls'` (wraps `scripts/soak-monitor.sh`)
+  - soak start: the command of step 10 of *Safe Upgrade Flow* in `docs/deployment.md` (a release checkout, `CHECK_BASE_URL=http://127.0.0.1:3000`)
   - live check: `ssh dut 'docker exec stream247-playout-1 yt-dlp --simulate --print "%(is_live)s" https://www.twitch.tv/jimpanse247'`
 - A 24-hour soak runs only on the DUT. Never change DUT secrets or production values.
 

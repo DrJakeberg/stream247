@@ -1,6 +1,6 @@
 import { promises as fs } from "node:fs";
 import { getCycleAwaitCeilingMs } from "./cycle-budget.js";
-import { execFileText } from "./process-utils.js";
+import { ExecFileTextError, execFileText } from "./process-utils.js";
 
 /**
  * Real lengths for local-library files (M96).
@@ -11,8 +11,11 @@ import { execFileText } from "./process-utils.js";
  *
  * A file version is its size plus its modification time. The key is stored with the asset, so an
  * unchanged file is never probed again, across scans and worker restarts alike; a replaced or edited
- * file gets a new key and is probed once more. A probe that fails stores the key too, so a broken file
- * costs one bounded probe per version, not one per scan.
+ * file gets a new key and is probed once more. A probe that ffprobe answered without a duration stores
+ * the key too, so a broken file costs one bounded probe per version, not one per scan. A probe that got no
+ * answer -- the 10 s timeout on a busy disk or a slow mount, ffprobe that could not be started -- says
+ * nothing about the file: it stores nothing, and the file is tried again after LOCAL_DURATION_PROBE_RETRY_MS
+ * (review finding R14, 2026-10-05; until then such a file kept duration 0 for good, until it was touched).
  *
  * Probing is incremental: each scan stops starting probes once its budget is spent, and the files it
  * did not reach keep what they had (no key, so the next scan takes them). A first scan of a large
@@ -21,6 +24,13 @@ import { execFileText } from "./process-utils.js";
 
 /** One ffprobe call. Local disk answers in milliseconds; this only bounds a hung NFS read. */
 export const LOCAL_DURATION_PROBE_TIMEOUT_MS = 10_000;
+
+/**
+ * A file whose probe got no answer waits this long before it is probed again, so a hung mount costs one
+ * timeout per file per half hour and the files after it are not starved of the scan budget. Kept in memory:
+ * a restart tries such files again at once.
+ */
+export const LOCAL_DURATION_PROBE_RETRY_MS = 30 * 60_000;
 
 /** Probing time per scan, far below the cycle's stall budget (cycle-budget.ts). */
 export const LOCAL_DURATION_SCAN_BUDGET_MS = 30_000;
@@ -80,7 +90,24 @@ export type LocalDurationScanResult = {
   failed: number;
   /** Files left for a later scan because the budget ran out. */
   deferred: number;
+  /** Probes that got no answer (timeout, ffprobe not started); retried after LOCAL_DURATION_PROBE_RETRY_MS. */
+  unanswered: number;
 };
+
+/** A probe that got no answer, and when its file version may be probed again. */
+export type LocalDurationRetry = { key: string; notBeforeMs: number };
+
+/**
+ * Whether a failed probe said nothing about the file: ffprobe did not answer in time, could not be started,
+ * or was ended by a signal. An exit with a code (ffprobe read the file and refused it) is an answer, and so
+ * is any error this cannot classify, which keeps the M96 rule for it.
+ */
+export function isUnansweredDurationProbe(error: unknown): boolean {
+  if (!(error instanceof ExecFileTextError)) {
+    return false;
+  }
+  return error.kind === "timeout" || error.kind === "spawn" || (error.kind === "exit" && error.exitCode === null);
+}
 
 /**
  * The duration of every scanned file, probing only files whose version changed.
@@ -94,16 +121,20 @@ export async function resolveLocalFileDurations(args: {
   probe?: (filePath: string) => Promise<number>;
   nowMs?: () => number;
   budgetMs?: number;
+  /** Unanswered probes by file path, kept by the caller across scans (in memory). */
+  retries?: Map<string, LocalDurationRetry>;
 }): Promise<LocalDurationScanResult> {
   const stat = args.stat ?? ((filePath: string) => fs.stat(filePath));
   const probe = args.probe ?? ((filePath: string) => probeLocalFileDurationSeconds(filePath));
   const nowMs = args.nowMs ?? Date.now;
   const budgetMs = args.budgetMs ?? resolveLocalDurationScanBudgetMs(process.env);
   const startedAtMs = nowMs();
+  const retries = args.retries ?? new Map<string, LocalDurationRetry>();
   const entries = new Map<string, LocalDurationEntry>();
   let probed = 0;
   let failed = 0;
   let deferred = 0;
+  let unanswered = 0;
 
   for (const filePath of args.files) {
     let key: string;
@@ -120,6 +151,13 @@ export async function resolveLocalFileDurations(args: {
       continue;
     }
 
+    // Waiting after a probe that got no answer: like a deferred file, it keeps what is stored. A new version
+    // of the file is probed at once.
+    const retry = retries.get(filePath);
+    if (retry && retry.key === key && nowMs() < retry.notBeforeMs) {
+      continue;
+    }
+
     if (nowMs() - startedAtMs >= budgetMs) {
       deferred += 1;
       continue;
@@ -128,9 +166,16 @@ export async function resolveLocalFileDurations(args: {
     let durationSeconds = 0;
     try {
       durationSeconds = await probe(filePath);
-    } catch {
+    } catch (error) {
+      if (isUnansweredDurationProbe(error)) {
+        probed += 1;
+        unanswered += 1;
+        retries.set(filePath, { key, notBeforeMs: nowMs() + LOCAL_DURATION_PROBE_RETRY_MS });
+        continue;
+      }
       durationSeconds = 0;
     }
+    retries.delete(filePath);
     probed += 1;
     if (durationSeconds <= 0) {
       failed += 1;
@@ -138,5 +183,5 @@ export async function resolveLocalFileDurations(args: {
     entries.set(filePath, { durationSeconds, durationProbeKey: key });
   }
 
-  return { entries, probed, failed, deferred };
+  return { entries, probed, failed, deferred, unanswered };
 }

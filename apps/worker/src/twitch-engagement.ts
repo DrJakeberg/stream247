@@ -15,7 +15,9 @@ import {
   type ChatMessageSegment,
   type ViewerLocale,
   isChatBridgeRuntimeNeeded,
+  CHAT_SEND_BUDGET_RESERVED_LINES,
   ChatSendBudget,
+  type ChatLinePriority,
   sanitizeChatLine,
 } from "@stream247/core";
 import type { AppState, EngagementEventRecord } from "@stream247/db";
@@ -536,13 +538,14 @@ export class TwitchChatBridge {
   /**
    * Says one line in the joined room, for a reply the worker decides outside a command callback: a skip
    * vote refused while the operator holds the air (M78), also when the worker cycle refuses a vote that
-   * passed. Nothing while disconnected; such a reply is stale by the time the socket is back.
+   * passed. Nothing while disconnected; such a reply is stale by the time the socket is back. A "low" line
+   * (a request refusal) leaves CHAT_SEND_BUDGET_RESERVED_LINES of the budget to everything else (R23).
    */
-  say(message: string): void {
-    this.sendChatMessage(message);
+  say(message: string, priority: ChatLinePriority = "normal"): void {
+    this.sendChatMessage(message, priority);
   }
 
-  private sendChatMessage(message: string): void {
+  private sendChatMessage(message: string, priority: ChatLinePriority = "normal"): void {
     if (!this.socket || this.socket.destroyed || !this.channel) {
       return;
     }
@@ -554,8 +557,11 @@ export class TwitchChatBridge {
     }
     // Past the budget the line is dropped, not queued: a late answer is stale, and more lines than
     // Twitch allows put the bot's chat access at risk (M104).
-    if (!this.sendBudget.claim(Date.now())) {
-      logRuntimeEvent("chat.say.dropped", { reason: "send-budget", line: message.slice(0, 40) });
+    if (!this.sendBudget.claim(Date.now(), priority === "low" ? CHAT_SEND_BUDGET_RESERVED_LINES : 0)) {
+      logRuntimeEvent("chat.say.dropped", {
+        reason: priority === "low" ? "send-budget-reserve" : "send-budget",
+        line: message.slice(0, 40)
+      });
       return;
     }
     this.socket.write(`PRIVMSG #${this.channel} :${message}\r\n`);

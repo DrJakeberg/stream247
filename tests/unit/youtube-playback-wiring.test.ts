@@ -69,7 +69,8 @@ describe("the running programme keeps its input", () => {
 describe("quarantine counting", () => {
   it("counts a cached result only if nothing counted it yet", () => {
     const body = functionBody("getPlayableQueuedAssets");
-    const useCache = body.slice(body.indexOf('if (action === "use-cache")'), body.indexOf('if (action === "skip-failed")'));
+    // Since M105 (R12) a refresh due uses the cached entry the same way while it is resolved again.
+    const useCache = body.slice(body.indexOf('if (action === "use-cache" || action === "refresh")'), body.indexOf('if (action === "skip-failed")'));
     expect(useCache).toMatch(/if \(takeUncountedProbeOutcome\(cached\)\) \{\s*probeOutcomes\.push/);
     const skipFailed = body.slice(body.indexOf('if (action === "skip-failed")'), body.indexOf('if (action === "defer")'));
     expect(skipFailed).toMatch(/if \(takeUncountedProbeOutcome\(cached\)\) \{\s*probeOutcomes\.push/);
@@ -89,7 +90,8 @@ describe("fixes from the M68 review", () => {
   });
 
   it("re-cycles instead of cold-starting a kept selection whose process exited", () => {
-    const guard = workerSource.indexOf("if (keepRunningInput && !isPlayoutProcessRunning()) {");
+    // Also the item a dated block's waiting takeover kept on air (M105).
+    const guard = workerSource.indexOf("if ((keepRunningInput || scheduleTakeoverDeferral) && !isPlayoutProcessRunning()) {");
     const start = workerSource.indexOf("if (!playoutProcess || playoutProcess.killed || restartRequested) {");
     expect(guard).toBeGreaterThan(-1);
     expect(start).toBeGreaterThan(guard);

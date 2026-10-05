@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   buildScheduleOccurrences,
+  carryCuepointFiredKeys,
   findCurrentScheduleOccurrence,
   getCurrentScheduleMoment,
   getScheduleEndInstant,
   getScheduleInstant,
   getScheduleOccurrenceAirWindowSeconds,
+  getScheduleOccurrenceRunKey,
   getScheduleRunElapsedSeconds,
   toUtcIsoForLocalDateTime,
   type ScheduleBlock
@@ -162,6 +164,62 @@ describe("cuepoints count real seconds (P8)", () => {
       { start: 0, end: 7_200 },
       { start: 9_000, end: 10_800 }
     ]);
+  });
+});
+
+describe("R8: a block that comes back on the fall-back night fires each cuepoint once", () => {
+  // Sunday 2026-10-25: A 00:00-02:30 with cuepoints at 30, 60 and 90 min, B 02:30-06:00. On the wall clock A
+  // airs 00:00-02:30 CEST (22:00Z-00:30Z), B from 02:30 CEST, A again 02:00-02:30 CET (01:00Z-01:30Z).
+  const a = block({ id: "a", dayOfWeek: 0, startMinuteOfDay: 0, durationMinutes: 150, cuepointOffsetsSeconds: [1_800, 3_600, 5_400] });
+  const b = block({ id: "b", dayOfWeek: 0, startMinuteOfDay: 150, durationMinutes: 210 });
+
+  // The playout cycle's cuepoint part, once a minute: the plan, then the end write of the run and its keys.
+  function fireCuepoints(carry: (previousRunKey: string, firedKeys: string[], runKey: string) => string[]) {
+    const state = {
+      scheduleBlocks: [a, b],
+      pools: [{ id: "pool-1", name: "Pool", sourceIds: ["source-1"], insertAssetId: "sting", insertEveryItems: 0 }],
+      assets: [{ id: "sting", sourceId: "source-1", title: "Sting", status: "ready", includeInProgramming: true }],
+      playout: { cuepointWindowKey: "", cuepointFiredKeys: [] as string[] }
+    } as unknown as AppState;
+    const fired: string[] = [];
+    for (let ms = Date.parse("2026-10-24T22:00:00.000Z"); ms <= Date.parse("2026-10-25T02:00:00.000Z"); ms += 60_000) {
+      const now = new Date(ms);
+      const current = currentOccurrenceAt([a, b], now.toISOString());
+      const plan = getCuepointInsertPlan({ state, currentScheduleItem: current, skippedAssetId: "", now, timeZone: BERLIN });
+      const runKey = current ? getScheduleOccurrenceRunKey(current) : "";
+      const keys = carry(state.playout.cuepointWindowKey, state.playout.cuepointFiredKeys, runKey);
+      if (plan) {
+        fired.push(`${plan.cuepointKey} at ${now.toISOString().slice(11, 16)}Z`);
+        keys.push(plan.cuepointKey);
+      }
+      state.playout = { ...state.playout, cuepointWindowKey: runKey, cuepointFiredKeys: keys };
+    }
+    return fired;
+  }
+
+  it("fires A's three cuepoints once, before 02:30 CEST, and none when A comes back after B", () => {
+    expect(fireCuepoints((previousRunKey, firedKeys, runKey) => carryCuepointFiredKeys({ previousRunKey, firedKeys, runKey }))).toEqual([
+      "2026-10-25:a:0:150@1800 at 22:30Z",
+      "2026-10-25:a:0:150@3600 at 23:00Z",
+      "2026-10-25:a:0:150@5400 at 23:30Z"
+    ]);
+  });
+
+  it("fired all three again before M105, which emptied the list at every change of run", () => {
+    const fired = fireCuepoints((previousRunKey, firedKeys, runKey) => (runKey && previousRunKey === runKey ? [...firedKeys] : []));
+    expect(fired.slice(3)).toEqual([
+      "2026-10-25:a:0:150@1800 at 01:00Z",
+      "2026-10-25:a:0:150@3600 at 01:01Z",
+      "2026-10-25:a:0:150@5400 at 01:02Z"
+    ]);
+  });
+
+  it("keeps the keys of the run before the change and of the new one, and nothing older", () => {
+    const keys = ["d:a@1800", "d:a@3600", "d:b@900", "d:c@60"];
+    expect(carryCuepointFiredKeys({ previousRunKey: "d:b", firedKeys: keys, runKey: "d:a" })).toEqual(["d:a@1800", "d:a@3600", "d:b@900"]);
+    expect(carryCuepointFiredKeys({ previousRunKey: "d:a", firedKeys: keys, runKey: "d:a" })).toEqual(keys);
+    // No block on air: the last run's keys stay for when it comes back.
+    expect(carryCuepointFiredKeys({ previousRunKey: "d:a", firedKeys: keys, runKey: "" })).toEqual(["d:a@1800", "d:a@3600"]);
   });
 });
 

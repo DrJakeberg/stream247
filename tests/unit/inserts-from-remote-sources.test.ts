@@ -278,16 +278,20 @@ describe("W1: a bridged or failed insert is skipped once and counts as played (o
       'selection.reasonCode === "scheduled_insert" && selection.asset && (selection.insertTrigger === "pool-interval" || selection.insertTrigger === "cuepoint")'
     );
     expect(flat).toContain("const scheduledInsertAttempt = scheduledInsertAttemptOf(selection);");
-    expect(flat).toContain('state = await skipScheduledInsert({ state, attempt: scheduledInsertAttempt, reason: "bridged" });');
+    expect(flat).toContain('state = await skipScheduledInsert({ state, attempt: scheduledInsertAttempt, reason: "bridged", now: scheduleNow });');
     // A failure while the bridge itself is resolved is the bridge's: the insert counts as bridged.
     expect(flat).toContain(
-      'state = await skipScheduledInsert( bridgingInsert ? { state, attempt: scheduledInsertAttempt, reason: "bridged" } : { state, attempt: scheduledInsertAttempt, reason: "prepare-failed", error: message } );'
+      'state = await skipScheduledInsert( bridgingInsert ? { state, attempt: scheduledInsertAttempt, reason: "bridged", now: scheduleNow } : { state, attempt: scheduledInsertAttempt, reason: "prepare-failed", error: message, now: scheduleNow } );'
     );
     // Start and switch failures (ffmpeg could not be started) skip it too: it is never due for good.
-    expect(flat.match(/state = await skipScheduledInsert\(\{ state, attempt: startedInsert, reason: "start-failed", error: message \}\);/g)?.length).toBe(2);
+    expect(flat.match(/state = await skipScheduledInsert\(\{ state, attempt: startedInsert, reason: "start-failed", error: message, now: scheduleNow \}\);/g)?.length).toBe(2);
     const skip = between(workerSource, "async function skipScheduledInsert(", "\n}\n").replace(/\s+/g, " ");
-    expect(skip).toContain('fingerprint: "playout.insert.skipped"');
-    expect(skip).toContain('appendAuditEvent("playout.insert.skipped", message)');
+    // The audit row and the incident are written by recordSkippedInsert since M105, which the open failure
+    // of a scheduled insert's retry uses as well (R13).
+    expect(skip).toContain("await recordSkippedInsert(message);");
+    const record = between(workerSource, "async function recordSkippedInsert(", "\n}\n").replace(/\s+/g, " ");
+    expect(record).toContain('fingerprint: "playout.insert.skipped"');
+    expect(record).toContain('appendAuditEvent("playout.insert.skipped", message)');
     // The cycle-end write carries the fired cuepoints from the snapshot, so the snapshot gets them too.
     expect(skip).toContain("state = { ...state, playout: { ...state.playout, ...decision.cuepoint } };");
   });
@@ -379,7 +383,12 @@ describe("W6: an item that failed to open is tried once more", () => {
     expect(decideInputOpenRetryAfterExit({ previous: null, exitedAssetId: "B", immediateOpenFailure: false, nowMs: T }).next).toBeNull();
     const owed: InputOpenRetryState = { assetId: "B", retried: false, failedAtMs: T };
     expect(decideInputOpenRetry({ ...failedRow, retry: owed, runtimeReasonCode: "operator_insert" })).toBeNull();
-    expect(decideInputOpenRetry({ ...failedRow, retry: owed, runtimeReasonCode: "scheduled_insert" })).toBeNull();
+    // Since M105 (review finding R13) a scheduled insert is retried once as well, with its own reason code:
+    // scheduled-insert-open-retry.test.ts.
+    expect(decideInputOpenRetry({ ...failedRow, retry: owed, runtimeReasonCode: "scheduled_insert" })).toEqual({
+      assetId: "B",
+      reasonCode: "scheduled_insert"
+    });
     expect(decideInputOpenRetry({ ...failedRow, retry: owed, processRunning: true })).toBeNull();
     expect(decideInputOpenRetry({ ...failedRow, retry: owed, runtimeCurrentAssetId: "C" })).toBeNull();
     expect(decideInputOpenRetry({ ...failedRow, retry: owed, nowMs: T + INPUT_OPEN_RETRY_WINDOW_MS })).toBeNull();

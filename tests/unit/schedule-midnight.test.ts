@@ -111,8 +111,11 @@ describe("C1: cuepoints of a block crossing midnight", () => {
   });
 
   it("keeps the worker and the live summary on the run key", () => {
-    const worker = readFileSync(new URL("../../apps/worker/src/index.ts", import.meta.url), "utf8");
-    expect(worker).toContain("const cuepointWindowKey = currentScheduleItem ? getScheduleOccurrenceRunKey(currentScheduleItem) : \"\";");
+    const worker = readFileSync(new URL("../../apps/worker/src/index.ts", import.meta.url), "utf8").replace(/\s+/g, " ");
+    // The run before a dated block's boundary stays recorded while its takeover waits (M105).
+    expect(worker).toContain(
+      'const cuepointWindowKey = waitingTakeover ? state.playout.cuepointWindowKey : currentScheduleItem ? getScheduleOccurrenceRunKey(currentScheduleItem) : "";'
+    );
     const web = readFileSync(new URL("../../apps/web/lib/server/state.ts", import.meta.url), "utf8");
     expect(web).toContain("occurrenceKey: getScheduleOccurrenceRunKey(currentScheduleItem)");
   });
@@ -218,7 +221,7 @@ describe("C3: a saved overlap does not lock the editor", () => {
 
   it("is what the block and template routes refuse on", () => {
     const blocksRoute = readFileSync(new URL("../../apps/web/app/api/schedule/blocks/route.ts", import.meta.url), "utf8");
-    expect(blocksRoute.match(/findScheduleConflictsInvolving\(/g)?.length).toBe(3);
+    expect(blocksRoute.match(/findScheduleConflictsInvolving\(/g)?.length).toBe(4);
     const templatesRoute = readFileSync(new URL("../../apps/web/app/api/schedule/templates/route.ts", import.meta.url), "utf8");
     expect(templatesRoute).toContain("findScheduleConflictsInvolving(");
   });

@@ -2,7 +2,14 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { CycleStepIncidentTracker, runIsolatedCycleSteps, type CycleStep } from "../../apps/worker/src/cycle-steps.js";
+import { opensIncident } from "../../apps/worker/src/alerts.js";
+import {
+  CYCLE_STEP_ALERT_AFTER_MS,
+  CycleStepAlertWatch,
+  CycleStepIncidentTracker,
+  runIsolatedCycleSteps,
+  type CycleStep
+} from "../../apps/worker/src/cycle-steps.js";
 import { EXTERNAL_REQUEST_TIMEOUT_MS, fetchWithTimeout } from "../../apps/worker/src/http-timeout.js";
 import {
   TWITCH_REFRESH_REFUSED_ERROR,
@@ -99,6 +106,67 @@ describe("worker cycle steps (H1)", () => {
     for (const step of ["reconcileTwitch", "reconcileTwitchLiveStatus", "reconcileTwitchEventSub", "twitchChatBridge.sync", "syncTwitchVodSources"]) {
       expect(steps, step).toContain(step);
     }
+  });
+});
+
+// Review finding R2 (fixed in M105): isolating the steps took away the alert a crashing cycle sent.
+describe("a failure that lasts still reaches the operator's alert channel (R2)", () => {
+  it("alerts a step that has failed on every run for 30 min, then every 30 min while it lasts", () => {
+    const watch = new CycleStepAlertWatch();
+    const t0 = Date.parse("2026-10-05T00:00:00.000Z");
+    const alerts: number[] = [];
+    // One failed run every 30 s for 75 minutes.
+    for (let ms = 0; ms <= 75 * 60_000; ms += 30_000) {
+      const failingFor = watch.recordFailure("twitch-sync", t0 + ms);
+      if (failingFor !== null) {
+        alerts.push(failingFor / 60_000);
+      }
+    }
+    expect(CYCLE_STEP_ALERT_AFTER_MS).toBe(30 * 60_000);
+    expect(alerts).toEqual([30, 60]);
+  });
+
+  it("does not alert a short failure, nor one a success interrupts, and keeps steps apart", () => {
+    const watch = new CycleStepAlertWatch();
+    const t0 = Date.parse("2026-10-05T00:00:00.000Z");
+    for (let ms = 0; ms < 3 * 3_600_000; ms += 30_000) {
+      // A source host down for 20 minutes of every hour: each streak ends before the bound.
+      if (ms % 3_600_000 < 20 * 60_000) {
+        expect(watch.recordFailure("youtube-sources", t0 + ms)).toBeNull();
+      } else {
+        watch.recordSuccess("youtube-sources");
+      }
+    }
+    expect(watch.recordFailure("twitch-sync", t0)).toBeNull();
+    expect(watch.recordFailure("twitch-sync", t0 + CYCLE_STEP_ALERT_AFTER_MS)).toBe(CYCLE_STEP_ALERT_AFTER_MS);
+  });
+
+  it("alerts a refused Twitch token when its reconnect entry opens, not on every refusal after", () => {
+    expect(opensIncident([], "twitch.reconnect.required")).toBe(true);
+    expect(opensIncident([{ fingerprint: "twitch.reconnect.required", status: "resolved" }], "twitch.reconnect.required")).toBe(true);
+    expect(opensIncident([{ fingerprint: "twitch.reconnect.required", status: "open" }], "twitch.reconnect.required")).toBe(false);
+  });
+
+  it("is what the worker does with them (index.ts cannot be imported: it starts the worker)", () => {
+    const refused = workerSource.slice(workerSource.indexOf("async function markIdentityRefreshRefused("), workerSource.indexOf("async function closeTwitchReconnectIncident("));
+    // The check reads the incidents before the entry is written, and the alert follows the write.
+    expect(refused.indexOf('const opening = opensIncident(state.incidents, "twitch.reconnect.required");')).toBeGreaterThan(-1);
+    expect(refused.indexOf("const opening")).toBeLessThan(refused.indexOf("await upsertIncident({"));
+    expect(refused.indexOf('await sendAlert("Reconnect Twitch", message)')).toBeGreaterThan(refused.indexOf("await upsertIncident({"));
+    // One refused token, one alert (review of M105): the 401 retries of reconciliation and schedule sync,
+    // which have alerts of their own, leave theirs out when the refusal is the bot's refused token.
+    expect(refused).toContain("async function markIdentityRefreshRefused(error: unknown): Promise<boolean> {");
+    expect(refused).toContain("if (!isIdentityRefreshRefusal(error)) {\n    return false;\n  }");
+    expect(refused.indexOf("  return true;\n}")).toBeGreaterThan(refused.indexOf('await sendAlert("Reconnect Twitch", message)'));
+    const flatWorker = workerSource.replace(/\s+/g, " ");
+    for (const subject of ["Twitch reconciliation warning", "Twitch schedule sync warning"]) {
+      expect(flatWorker, subject).toContain(`if (!refused) { await sendAlert("${subject}", refreshMessage); }`);
+    }
+    expect(flatWorker.match(/const refused = await markIdentityRefreshRefused\(refreshError\);/g)?.length).toBe(2);
+    const failed = workerSource.slice(workerSource.indexOf("async function recordWorkerCycleStepFailure("), workerSource.indexOf("async function runWorkerCycle("));
+    // After the incident write, so a database outage (which rethrows above) alerts nothing; a success resets.
+    expect(failed.indexOf("workerCycleStepAlerts.recordFailure(step, Date.now())")).toBeGreaterThan(failed.indexOf("throw error;"));
+    expect(failed).toContain("workerCycleStepAlerts.recordSuccess(step);");
   });
 });
 

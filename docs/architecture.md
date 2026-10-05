@@ -245,7 +245,8 @@ gives each quarantined item one trial a day, at most one per source per cycle, o
 breaker is closed and no network outage of the channel was seen in the last ten minutes
 (`selectQuarantineReprobes`); the trial runs after the queue's own probes and with the budget they left,
 a clean one clears the quarantine, a failed one only records when it was tried, and the breaker hears
-neither.
+neither. A Twitch archive that is not in the cache is tried without its download: the trial only asks
+whether it still resolves on Twitch (`apps/worker/src/quarantine-trial.ts`, since M105).
 The source circuit breaker (M75, `packages/core/src/source-circuit-breaker.ts`) judges the source: when
 probes fail on three different items of one source with no clean probe of it in between, the source is
 open and the rotation treats its whole lane as having nothing eligible, so the pool alternates between
@@ -383,8 +384,8 @@ The runtime now supports multiple concurrent RTMP outputs per channel.
 
 - healthy enabled `primary` destinations are treated as the active delivery group
 - `backup` destinations take over only when no healthy primary group is available
-- the built-in `destination-primary` and `destination-backup` records can still use env-based stream keys
-- additional destinations store managed stream keys encrypted at rest in PostgreSQL
+- every destination, the built-in `destination-primary` and `destination-backup` included, stores its managed stream key encrypted at rest in PostgreSQL (setup wizard or `Studio → Output`)
+- the two built-in records can still use env-based stream keys as a fallback; a stored key overrides the env key (`resolveDestinationStreamTarget`)
 - direct mode lets playout resolve the active destination group and build a tee-muxer output when more than one destination is active
 - relay mode moves that destination-group output to the uplink worker, keeping playout focused on producing the buffered local program feed
 

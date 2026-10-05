@@ -11,6 +11,8 @@
  * No I/O here; the worker applies what these decide.
  */
 
+import { carryCuepointFiredKeys } from "@stream247/core";
+
 export type ScheduledInsertTrigger = "pool-interval" | "cuepoint" | "";
 
 export interface PoolInsertDueInput {
@@ -68,14 +70,19 @@ export function decideScheduledInsertSkip(input: ScheduledInsertSkipInput): Sche
   if (input.trigger !== "cuepoint" || !input.cuepointKey || !input.runKey) {
     return { resetItemsSinceInsert: false, cuepoint: null };
   }
-  const fired = input.playout.cuepointWindowKey === input.runKey ? [...input.playout.cuepointFiredKeys] : [];
+  const fired = carryCuepointFiredKeys({
+    previousRunKey: input.playout.cuepointWindowKey,
+    firedKeys: input.playout.cuepointFiredKeys,
+    runKey: input.runKey
+  });
   if (!fired.includes(input.cuepointKey)) {
     fired.push(input.cuepointKey);
   }
   return { resetItemsSinceInsert: false, cuepoint: { cuepointWindowKey: input.runKey, cuepointFiredKeys: fired } };
 }
 
-export type ScheduledInsertSkipReason = "bridged" | "prepare-failed" | "start-failed";
+// open-failed (R13): started twice, the second time with the next format candidate, and refused both times.
+export type ScheduledInsertSkipReason = "bridged" | "prepare-failed" | "start-failed" | "open-failed";
 
 /** The incident's message: names the insert and says that the schedule goes on without it. */
 export function describeSkippedInsert(input: {
@@ -84,10 +91,52 @@ export function describeSkippedInsert(input: {
   reason: ScheduledInsertSkipReason;
   error?: string;
 }): string {
-  const kind = input.trigger === "cuepoint" ? "Cuepoint insert" : "Pool insert";
+  // The exit handler that reports an open failure no longer knows the trigger.
+  const kind = input.trigger === "cuepoint" ? "Cuepoint insert" : input.trigger === "pool-interval" ? "Pool insert" : "Scheduled insert";
+  const verb = input.reason === "start-failed" ? "started" : input.reason === "open-failed" ? "opened, on two tries" : "prepared";
   const why =
     input.reason === "bridged"
       ? "was not ready when it was due (its source needs a remote resolve that had not finished)"
-      : `could not be ${input.reason === "start-failed" ? "started" : "prepared"}${input.error ? ` (${input.error.slice(0, 200)})` : ""}`;
+      : `could not be ${verb}${input.error ? ` (${input.error.slice(0, 200)})` : ""}`;
   return `${kind} ${input.title} ${why}, so it was skipped once and counted as played. The schedule continues; the next insert is tried as usual.`;
+}
+
+export interface RunningScheduledInsertInput {
+  processRunning: boolean;
+  // A dated block's start or end (schedule-takeover.ts, R7): the new block takes the air from any item.
+  scheduleTakeover: boolean;
+  // The runtime row the cycle selected from: what is on air and why it was started.
+  runtimeReasonCode: string;
+  runtimeCurrentAssetId: string;
+  // The item the running process plays (the worker's own record): a row that names another item is stale,
+  // and holding it would start an insert that has ended again from 0.
+  runningAssetId: string;
+  // The skip hold and the Remove next hold in force (core heldOutAssetIds).
+  heldOutAssetIds: string[];
+}
+
+/**
+ * Whether the scheduled insert on air keeps the air until its end (review finding R11, 2026-10-05).
+ *
+ * A pool's interval insert or a block's cuepoint item is used up when it starts: the counter is reset and
+ * the cuepoint fired by that cycle, so from the next cycle on neither insert arm names it. Only the pool
+ * arm could hold it, and only when the item came from one of the pool's own sources. A sting from another
+ * source (the admin offers every ready item as a pool insert or a cuepoint item, so a YouTube or local
+ * sting under a pool of Twitch archives is the ordinary case) was cut 15 s later for the pool's next pick,
+ * as-run `switch` -- since v2.1.0, and M94's own fixture hid it by putting the sting's source into the pool.
+ *
+ * Held means selected again as the same scheduled insert with no trigger: the cycle-end write leaves the
+ * fired cuepoints and the counter alone (no trigger, and the item is already the one on air), so holding
+ * it uses up nothing a second time. A Skip or Remove next of it, a dated block's takeover and every
+ * operator arm (which come first) still end it; its natural end or its duration bound ends it as before.
+ */
+export function keepsRunningScheduledInsert(input: RunningScheduledInsertInput): boolean {
+  return (
+    input.processRunning &&
+    !input.scheduleTakeover &&
+    input.runtimeReasonCode === "scheduled_insert" &&
+    input.runtimeCurrentAssetId !== "" &&
+    input.runningAssetId === input.runtimeCurrentAssetId &&
+    !input.heldOutAssetIds.includes(input.runtimeCurrentAssetId)
+  );
 }

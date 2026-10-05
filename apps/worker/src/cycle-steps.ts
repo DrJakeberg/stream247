@@ -67,3 +67,42 @@ export class CycleStepIncidentTracker {
     this.settled.delete(name);
   }
 }
+
+/** How long a step may keep failing before it raises an alert, and how often it repeats one (R2). */
+export const CYCLE_STEP_ALERT_AFTER_MS = 30 * 60_000;
+
+/**
+ * When a step that keeps failing is worth a Discord or e-mail alert (review finding R2).
+ *
+ * Before M87 a throwing step ended the cycle, and runLoop's `worker.loop.crashed` path sent an alert, one
+ * every 30 min while it lasted. Isolating the steps took that away: a refused Twitch token found by the
+ * proactive refresh, a source sync that throws on every run, now only opened the warning
+ * `worker.step.failed.<step>`, which nobody sees until they open the admin. A step now alerts once it has
+ * failed on every run for `afterMs`, and again every `afterMs` while it goes on failing, as the crash
+ * alert did; a run that succeeds ends the streak. A short failure (a host down for a few minutes) stays
+ * an incident only. Kept in memory: a new process counts the bound from its first failure again.
+ */
+export class CycleStepAlertWatch {
+  private readonly streaks = new Map<string, { sinceMs: number; nextAlertAtMs: number }>();
+
+  constructor(private readonly afterMs: number = CYCLE_STEP_ALERT_AFTER_MS) {}
+
+  /** A failed run at `nowMs`: how long the step has failed when this run should alert, else null. */
+  recordFailure(name: string, nowMs: number): number | null {
+    let streak = this.streaks.get(name);
+    if (!streak) {
+      streak = { sinceMs: nowMs, nextAlertAtMs: nowMs + this.afterMs };
+      this.streaks.set(name, streak);
+    }
+    if (nowMs < streak.nextAlertAtMs) {
+      return null;
+    }
+    streak.nextAlertAtMs = nowMs + this.afterMs;
+    return nowMs - streak.sinceMs;
+  }
+
+  /** A run that completed: the step's streak is over. */
+  recordSuccess(name: string): void {
+    this.streaks.delete(name);
+  }
+}

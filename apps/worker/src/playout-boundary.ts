@@ -400,6 +400,31 @@ export function decideCycleEndInsert(input: CycleEndInsertInput): InsertFields {
   return { ...input.row };
 }
 
+export interface CycleEndStatusInput<S extends string> {
+  // What the cycle's selection makes of the air (running, recovering, standby, reconnecting).
+  computed: S;
+  // The status on the row as the cycle-end write finds it.
+  row: S;
+  // A playout process is running at the moment of the write.
+  processRunning: boolean;
+}
+
+/**
+ * The status the cycle-end write leaves (M105).
+ *
+ * The write describes the item the cycle started as on air. When that ffmpeg has already ended and its
+ * exit write came first (an input refused at once, while the start's own writes ran), the row says
+ * `failed` (or `degraded` for the crash-loop guard) with nothing running; overwritten with `running`, the
+ * next cycle owed the item no retry (decideInputOpenRetry reads `failed`) and the crash-loop state read as
+ * healthy. That status stands; anything else is the cycle's to write, as before.
+ */
+export function decideCycleEndStatus<S extends string>(input: CycleEndStatusInput<S>): S {
+  if (!input.processRunning && (input.row === "failed" || input.row === "degraded")) {
+    return input.row;
+  }
+  return input.computed;
+}
+
 export interface CycleEndRestartFlagInput {
   // The restart flag this cycle read when it decided whether to restart ("" when it read none).
   consumed: string;
@@ -408,6 +433,8 @@ export interface CycleEndRestartFlagInput {
   // The flag doubles as the start of direct mode's reconnect window (scheduled reconnect, Force reconnect,
   // a Restart without the relay); a write inside that window leaves it as it is.
   keepReconnectWindow: boolean;
+  // When the process on air was spawned (ms), 0 for none. A flag written before it is satisfied by it.
+  spawnedAtMs?: number;
 }
 
 /**
@@ -424,7 +451,19 @@ export function decideCycleEndRestartFlag(input: CycleEndRestartFlagInput): stri
   if (input.keepReconnectWindow) {
     return input.row;
   }
-  return input.row === input.consumed ? "" : input.row;
+  if (input.row === input.consumed) {
+    return "";
+  }
+  // A flag newer than the one the cycle read but older than the spawn of the process now on air was
+  // satisfied by that spawn (review finding R1, 2026-10-05). It was aimed at the item the cycle was
+  // already switching away from: a Skip, a passed chat vote or a Restart of B pressed while the cycle
+  // resolved C. Kept, it stopped C on the next cycle and started it again from 0, and the as-run log
+  // recorded an operator restart nobody pressed. A press after the spawn is still the next cycle's.
+  const writtenAtMs = Date.parse(input.row);
+  if ((input.spawnedAtMs ?? 0) > 0 && Number.isFinite(writtenAtMs) && writtenAtMs <= (input.spawnedAtMs ?? 0)) {
+    return "";
+  }
+  return input.row;
 }
 
 export interface PendingActionFields {

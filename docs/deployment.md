@@ -138,7 +138,9 @@ Important current limitation:
 
 - external-service secrets can now be stored encrypted at rest in PostgreSQL from the admin UI
 - `.env` is still supported as bootstrap/fallback input for self-hosted deployments
-- stream keys remain deployment-time secrets in `.env`
+- stream keys are stored encrypted in PostgreSQL from the setup wizard (*Where the stream goes*) or
+  `Studio → Output`; `TWITCH_STREAM_KEY` / `STREAM_OUTPUT_KEY` (and the `BACKUP_*` pair) stay an env
+  fallback for the built-in primary and backup outputs, and a stored key overrides them
 - infrastructure and reverse-proxy settings always stay in `.env`
 
 ## Media And Persistence
@@ -170,7 +172,7 @@ Production Compose is intended to pull from:
 - `ghcr.io/drjakeberg/stream247-playout:<tag>`
 - `bluenviron/mediamtx:<tag>` for the local RTMP relay
 
-`docker-compose.yml` carries its own default tags; `.env.production.example` pins `v2.2.0` for a stable
+`docker-compose.yml` carries its own default tags; `.env.production.example` pins `v2.1.0` for a stable
 deployment, and the defaults move with each release.
 See `docs/operations.md` for the runbook and backup procedures.
 
@@ -195,10 +197,13 @@ Every release follows the same order:
 5. **Validate on DUT**
    - SSH to DUT and run readiness checks against the active deployment path
    - run `./scripts/upgrade-rehearsal.sh <target-version>` from the DUT repo path against the active stack
-   - start `./scripts/soak-monitor.sh --hours 24` in `tmux` on DUT
+   - start the 24-hour soak in `tmux` on DUT from the repository checkout, measured through the host's own
+     port (`CHECK_BASE_URL=http://127.0.0.1:3000`; step 10 of *Safe Upgrade Flow* below has the command)
 6. **Promote or roll back**
    - keep the Portainer deployment only after DUT stays healthy
-   - if DUT fails, restore the prior pinned image refs in Portainer and redeploy the previous known-good stack
+   - if DUT fails, read the release's rollback notes first (since 2.3, dated and one-off blocks are deleted
+     before a reverse repin: *Rollback to 2.1.0* below), then restore the prior pinned image refs in
+     Portainer and redeploy the previous known-good stack
 
 ## Release Channels And Tags
 
@@ -212,7 +217,8 @@ Recommended pre-release commands:
 
 - `pnpm release:preflight`
 - `./scripts/upgrade-rehearsal.sh <target-version>`
-- `./scripts/soak-monitor.sh --hours 24`
+- `CHECK_BASE_URL=http://127.0.0.1:3000 ./scripts/soak-monitor.sh --hours 24` on the DUT, from the
+  repository checkout (step 10 of *Safe Upgrade Flow*)
 
 ## Upgrading
 
@@ -262,11 +268,30 @@ Do not use `latest` for unattended production deployments.
    - current broadcast state
 10. For production candidates, run on DUT from the repo path:
     ```bash
-    ./scripts/soak-monitor.sh --hours 24
+    CHECK_BASE_URL=http://127.0.0.1:3000 ./scripts/soak-monitor.sh --hours 24
+    ```
+    On the DUT, start it in `tmux` so that it outlives the SSH session, with its output in the log file the
+    soak result is read from (`~/logs/soak-<stamp>.log`), from the checkout of the release (`<checkout>`):
+    ```bash
+    cd <checkout> && tmux new-session -d -s soak "COMPOSE_PROJECT_NAME=stream247 CHECK_BASE_URL=http://127.0.0.1:3000 ./scripts/soak-monitor.sh --hours 24 >> ~/logs/soak-$(date -u +%Y%m%d-%H%M).log 2>&1"; tmux ls
+    ```
+    Measure through the host's own port (`web` publishes `3000:3000`), not the public URL: the public route
+    measures the way in as well, and the 2.1.0 soak's only outage was a 220 s Cloudflare `522` while the
+    channel stayed on air. With `CHECK_BASE_URL` set the script needs no `.env`. Run it from the
+    repository checkout so `scripts/lib/soak-readiness-classifier.cjs` is found, or copy `scripts/` as a
+    whole. Before trusting a pass, read two lines of its log:
+    - the first, `Starting soak monitor for 24h at <url>`, names what was measured;
+    - `Baseline container restarts: web=… worker=… playout=… uplink=… relay=…` must show numbers. The
+      counts come from `docker compose ps` in the directory above `scripts/`; where that directory is not
+      the stack's compose project (a Portainer stack, a copied `scripts/`), every count reads `unknown` and
+      a container restart goes unseen. Run it from a checkout, whose `docker-compose.yml` names the
+      services, with `COMPOSE_PROJECT_NAME` set to the stack's project (`stream247` for containers named
+      `stream247-web-1`), and check the line again. `relay=unknown` is expected with the relay off.
 
-    On a host that runs the stack from Portainer and has no repo `.env`, set `CHECK_BASE_URL` to the
-    public base URL instead; the script then needs no `.env`. Run it from the repository checkout so
-    `scripts/lib/soak-readiness-classifier.cjs` is found, or copy `scripts/` as a whole.
+    Without `SESSION_COOKIE` (below) every sample logs `openCriticalIncidents=skipped(no-session-cookie)`
+    and open critical incidents do not fail the soak; read them afterwards instead:
+    ```bash
+    docker compose exec -T postgres psql -U stream247 -d stream247 -At -c "SELECT created_at, fingerprint, status, resolved_at FROM incidents WHERE severity = 'critical' AND updated_at > to_char(now() - interval '25 hours', 'YYYY-MM-DD\"T\"HH24:MI:SS') ORDER BY created_at"
     ```
     The soak gate fails if broadcast readiness never becomes ready, or drops and does not come back
     within the outage window (five minutes by default, below). A healed outage does not fail the soak
@@ -276,7 +301,7 @@ Do not use `latest` for unattended production deployments.
 
 Useful overrides:
 
-- `CHECK_BASE_URL=http://127.0.0.1:3000` if `APP_URL` is externally routed and not directly reachable from the host
+- `CHECK_BASE_URL=http://127.0.0.1:3000` for a soak on the stack's own host (step 10), and whenever `APP_URL` is externally routed and not directly reachable from the host
 - `SOAK_OUTAGE_TOLERANCE_SECONDS` (default 300): how long an outage may last, counted from its first bad
   sample, before the soak fails with `outage-exceeded`. Any bad sample opens the outage — a failed fetch,
   a not-ready service, `broadcastReady=false` — and the next healthy sample closes it. Written for the
@@ -414,6 +439,9 @@ re-upgrade do to a pool's position.
 
 ### Upgrading To 2.2
 
+2.2.0 was not released (*Upgrading To 2.3* below): these notes describe the six changes of
+2.2.0-rc.1, which ship with 2.3.0, and still apply to that upgrade.
+
 The release after 2.1.0 carries six changes at once (M75, M76, M78, M79, M80, M82). As one upgrade:
 
 - **Stack and schema.** No stack file changes; it is a repin of the three `STREAM247_*_IMAGE` tags. Two
@@ -547,6 +575,156 @@ probe failure reads as an outage and goes uncounted, so a remote host that is re
 quarantined or held for that kind of error. An older image counts every failed probe again; nothing is
 stored.
 
+### Upgrading To 2.3
+
+2.2.0 was never released: `v2.2.0-rc.1` was tagged but never deployed, its release commit was never
+tagged, and no 2.2.0 images exist. 2.3.0 is the first release after 2.1.0. It carries the changes of
+2.2.0-rc.1 (M75, M76, M78, M79, M80, M82; the notes under *Upgrading To 2.2* above apply unchanged) and
+M84-M105. This section is that one upgrade from 2.1.0, and the way back.
+
+- **Before the repin.** Back up PostgreSQL and keep the dump: restoring it is one of the two ways back
+  (*Rollback to 2.1.0* below).
+
+  ```bash
+  umask 077; docker compose exec -T postgres pg_dump -U stream247 -d stream247 -Fc > stream247-pre-2.3.dump
+  ```
+
+- **Stack.** No stack file changes; it is a repin of the three `STREAM247_*_IMAGE` tags. One new optional
+  variable, `CHANNEL_LANGUAGE` (*Viewer Language* above).
+- **Schema.** Seven migrations, applied on the first start; the base schema has the same statements for a
+  fresh install. All are additive except the scrub, which is one-way on purpose:
+
+  | Migration | Milestone | Change |
+  | --- | --- | --- |
+  | `20261001_002_source_breakers` | M75 | table `source_breakers`, empty: every source is in play |
+  | `20261001_003_as_run_log` | M76 | table `as_run_log` and two indexes, empty |
+  | `20261002_001_redact_stored_secrets_again` | M85 | removes credential-shaped text from incidents, the audit trail and destination and runtime errors |
+  | `20261002_002_remove_next_hold` | M89 | `playout_runtime.remove_next_asset_id`, `remove_next_until`; empty is no hold |
+  | `20261003_001_schedule_block_dates` | M93 | `schedule_blocks.valid_from`, `valid_until`; empty keeps every block weekly |
+  | `20261003_002_asset_duration_probe_key` | M96 | `assets.duration_probe_key`; empty means each local file is probed once |
+  | `20261004_001_chat_reply_switches` | M104 | four answer switches on `chat_interaction_settings`, all on |
+
+  After the first start this prints `7`:
+
+  ```bash
+  docker compose exec -T postgres psql -U stream247 -d stream247 -At -c "SELECT COUNT(*) FROM schema_migrations WHERE id >= '20261001_002'"
+  ```
+
+- **After the repin, the operator.** Set `Admin → Settings → Channel language` (a channel speaks English
+  until it is set; *Viewer Language* above). Where egress from the playout container is filtered, let it
+  reach the output hosts (*A Network Outage Is Not A Source Fault* above). With *Viewer control* on
+  (`Studio → Engagement`) the chat bot now answers `!commands`, `!now`, `!next` and every `!request`; each
+  answer has its own switch there, all on after the upgrade. The stream key the install already has stays
+  where it is; `Studio → Output` now shows and edits it (M99).
+
+What changes on air in the first cycles, without touching a setting (besides the 2.2.0-rc.1 changes):
+
+- **M85.** A channel time zone that `Intl` rejects (a typo in `CHANNEL_TIMEZONE` or the saved zone) no
+  longer breaks the schedule: the next usable value applies, then `UTC`, and the incident
+  `config.channel-timezone.invalid` stays open until the value is fixed.
+- **M86.** A PostgreSQL outage shorter than five minutes leaves every process, ffmpeg and the uplink
+  running.
+- **M88, M101.** The first Twitch sync deletes the phantom segment a block crossing midnight left a day
+  late, and a segment touching a clock change carries the length it really airs.
+- **M95.** Within the first cycles each quarantined item whose last probe is more than 24 hours old gets
+  one trial, one per source per cycle and none while its source's breaker is open; a clean trial puts it
+  back in play.
+- **M96.** The local library's files are probed with `ffprobe` over the first scans (at most 30 s of
+  probes per scan). From then on a local file with a known length is ended by the duration bound, and with
+  the overlay in scene mode that is how every local file ends: at its length plus the margin (15 s), the
+  last frame held over padded audio, as-run end reason `duration-bound`, where it used to end through the
+  feed-audio watchdog.
+- **M100.** `/channel` names what airs now and next, and `/channel.ics` serves the programme as a calendar.
+- **M102.** The standby and reconnect slates show the current block's title or `Stand by`, never the
+  title that aired before.
+- **M103.** Worker, playout and uplink exit after five minutes of failing their own healthcheck (the
+  playout only while its feed does not advance), and `restart` starts a fresh one; crash-loop and
+  uplink-watchdog restarts back off, up to five minutes.
+- **M105 (review fixes on air).** A pool or cuepoint insert plays to its end also when its item comes from
+  a source outside the block's pool (2.1.0 cut it after one cycle, 15 s in); a scheduled insert whose
+  input cannot be opened is started once more with the next format candidate; the trial of a quarantined
+  Twitch archive that is not in the cache asks Twitch only and downloads nothing (the M95 trials of the
+  first cycles included). The uplink watchdog does not count a restart while the hosts it publishes to
+  cannot be reached and ends every hold once one answers again, so the nightly network blip adds no
+  backoff wait after the network is back; a timestamp storm keeps the picture on air while its restart
+  waits. `/channel` lists no pool insert as a video, `!now` and `!next` name what plays when asked, and a
+  step that fails for 30 minutes or a refused Twitch token sends an alert.
+
+#### Rollback to 2.1.0
+
+The way back is the reverse repin to `v2.1.0` (no stack file change), after the step for dated blocks
+below, or a restore of the pre-upgrade dump instead. 2.2.0-rc.1 is no target: it never ran in production,
+and it reads dated blocks exactly as 2.1.0 does.
+
+1. **Dated and one-off blocks first (M93).** An image older than M93 does not know `valid_from` and
+   `valid_until`. A block saved as *Once* or *Between dates* is stored as a weekly block on its weekday
+   (`repeat_mode` `single`) that only its dates bound, so 2.1.0 airs it every week on that weekday,
+   ended blocks included. The latest-starting block on air wins, so on a channel filled around the clock
+   it takes the air from the weekly grid every week, and the Twitch sync posts it as a weekly segment.
+   2.1.0 also refuses every schedule create and edit while any two blocks overlap, and a dated block
+   always overlaps the weekly block it cuts, so the editor stays locked. Its whole-state write (`DELETE
+   FROM schedule_blocks`, then every row again without the two columns; a moderator's `!game` start or
+   stop or a blueprint apply runs it) erases the dates, so the blocks stay weekly after a later roll
+   forward too. Therefore, still on 2.3: back up (this dump keeps the dates), list the dated blocks, and
+   delete them, ended ones included. The listing must then print `(0 rows)`:
+
+   ```bash
+   umask 077; docker compose exec -T postgres pg_dump -U stream247 -d stream247 -Fc > stream247-pre-rollback.dump
+   docker compose exec -T postgres psql -U stream247 -d stream247 -c "SELECT id, title, day_of_week, start_minute_of_day, duration_minutes, valid_from, valid_until FROM schedule_blocks WHERE valid_from <> '' OR valid_until <> '' ORDER BY valid_from, start_minute_of_day"
+   docker compose exec -T postgres psql -U stream247 -d stream247 -c "DELETE FROM schedule_blocks WHERE valid_from <> '' OR valid_until <> ''"
+   ```
+
+   Deleting each one under `Program → Schedule → Day` does the same. Let one worker cycle pass so the
+   Twitch schedule drops their segments too, then repin. After a later roll forward, save them again from
+   the listing.
+2. **Repin** `v2.1.0`, redeploy, and confirm that readiness is green.
+
+The other way back, instead of both steps, is the pre-upgrade dump: the database as it was before the
+upgrade, so everything written since goes (as-run rows, breaker state, blocks, settings) and no dated
+block is left. It is a custom-format archive, which `pg_restore` reads (`psql` cannot), and it goes into
+an empty database: `pg_restore --clean` into the upgraded one drops and recreates only what the dump
+holds, so the tables only 2.3 has (`as_run_log`, `source_breakers`) would keep their rows. Stop everything
+that writes, keep PostgreSQL running, recreate the database, restore, then repin `v2.1.0`, which starts the
+stopped services again on the old images:
+
+```bash
+docker compose stop web worker playout uplink
+docker compose exec -T postgres dropdb -U stream247 stream247
+docker compose exec -T postgres createdb -U stream247 -O stream247 stream247
+docker compose exec -T postgres pg_restore -U stream247 -d stream247 --no-owner < stream247-pre-2.3.dump
+```
+
+What 2.1.0 then does with what 2.3 left behind; none of it needs a step:
+
+- **M75, M76.** As under *Upgrading To 2.2*: a held source is in play at once, and an open
+  `playout.source-breaker.<sourceId>` incident and the as-run row that was on air stay open.
+- **M85.** The scrub is one-way: redacted text stays redacted. 2.1.0's audit sink does not redact, so a
+  stream key quoted into an audit entry after the rollback stays there. A channel time zone that `Intl`
+  rejects breaks the schedule again.
+- **M86, M103.** A short PostgreSQL outage can take the processes down again, ffmpeg with the playout; a
+  failing healthcheck restarts nothing, and restarts do not back off.
+- **M88, M101.** 2.1.0's Twitch sync replaces the segments with its own plan: a block crossing midnight
+  gets its phantom next-day segment back, and a segment touching a clock change is an hour off again.
+- **M89.** 2.1.0 does not see a *Remove next* pressed on 2.3 (it holds for 60 minutes), so the removed item
+  can air next; skip it if it does. A Skip or a chat skip vote lifts a Remove next again, and a Restart
+  pressed while a playout cycle runs can be lost again.
+- **M96.** 2.1.0 keeps the probed lengths, and with them the duration bound on local files, but its writes
+  empty `duration_probe_key`, so after a roll forward each local file is probed once more.
+- **M100.** `/channel.ics` answers 404; calendars subscribed to it stop updating.
+- **M104.** The bot no longer answers `!commands`, `!now` and `!next`, and answers `!request` as 2.1.0
+  did; the four switches stay stored.
+- **Incidents only 2.3 raises.** 2.1.0 never closes `config.channel-timezone.invalid`,
+  `worker.step.failed.<step>`, `twitch.reconnect.required`, `playout.insert.skipped`,
+  `playout.health.self-restart`, `worker.health.self-restart` or `uplink.health.self-restart`: one that is
+  open at the rollback stays open until it is resolved by hand under `Live → Status`.
+- **M105.** No schema. The fired cuepoints of the run before the one on air, which 2.3 keeps beside the
+  current run's, name their run, so 2.1.0 counts none of them for its block and empties the list at the
+  next block change. The rest of M105 is behaviour (the cut at a dated block's start and end, the hold and
+  retry of a scheduled insert, the restart-flag rule, the uplink backoff, the alerts), and 2.1.0 brings its
+  own back.
+- Everything else (M84, M87, M90-M92, M94, M95, M97-M99, M102) changes behaviour
+  only: 2.1.0 brings the old behaviour back and misreads nothing that 2.3 stored.
+
 ### Patch vs Minor Upgrades
 
 - Patch upgrades should be the default production path.
@@ -555,7 +733,9 @@ stored.
 
 ### Rollback
 
-If the new version is unhealthy:
+If the new version is unhealthy, read the rollback part of the release's upgrade section first: an older
+image can misread rows the new one stored, and since 2.3 a reverse repin needs a step before it
+(*Rollback to 2.1.0* above). Then:
 
 1. Revert the DT Portainer stack image refs to the previous known-good release tags.
 2. Redeploy the stack from Portainer.

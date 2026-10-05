@@ -4,7 +4,8 @@
  * An incident card used to say what was wrong and stop there: "Playout crash-loop protection is
  * active ... Manual intervention is required" at three in the morning, with no word on which
  * intervention. This catalogue gives every CRITICAL fingerprint the worker and the storage layer
- * report one concrete next step, so the card can end with it.
+ * report one concrete next step, so the card can end with it, and gives the warnings that share a
+ * keyed family's prefix without belonging to it an entry of their own (R25).
  * `tests/unit/incident-actions.test.ts` reads every `fingerprint:` literal with its severity out of
  * `apps/worker/src/index.ts` and `packages/db/src/index.ts` and fails on a critical one that has no
  * entry here, so a new critical reporting site cannot ship without an answer.
@@ -52,7 +53,9 @@ export const INCIDENT_OPERATOR_ACTIONS: readonly IncidentOperatorAction[] = [
     fingerprint: "playout.start.failed",
     keyed: false,
     action:
-      "Check the destination's address and stream key under Live → Status, then press Soft restart under Live → Control → If something is stuck."
+      // Since M99 the destinations and their keys are edited under Studio → Output; Live → Status shows
+      // only their state (review finding R19).
+      "Check the destination's address and stream key under Studio → Output → Output destinations, then press Soft restart under Live → Control → If something is stuck."
   },
   {
     fingerprint: "playout.switch.failed",
@@ -65,6 +68,27 @@ export const INCIDENT_OPERATOR_ACTIONS: readonly IncidentOperatorAction[] = [
     keyed: true,
     action:
       "Open Program → Sources, check this source's address and whether it is still online, then press Sync now. Until it delivers, give its pool a second source."
+  },
+  // Three warnings share the per-source family's `source.` prefix but are about no single source (review
+  // finding R25): a failed directory scan is a mount or permission fault on the host, where "check its
+  // address and whether it is still online" pointed the wrong way. An exact entry wins over a family.
+  {
+    fingerprint: "source.local-library.scan-failed",
+    keyed: false,
+    action:
+      "Check that the folder named here is mounted into the worker and readable (`docker compose exec worker ls -la /app/data/media`). The stored items are kept; the next scan that reads every folder closes this entry."
+  },
+  {
+    fingerprint: "source.local-library.empty",
+    keyed: false,
+    action:
+      "Add media: upload files under Program → Library, or put them into data/media on the host (mp4, mkv, mov, m4v or webm). The next scan that finds one closes this entry."
+  },
+  {
+    fingerprint: "source.direct-media.invalid",
+    keyed: false,
+    action:
+      "Open Program → Sources and correct each direct media URL to an http(s) link that ends in a media file extension (mp4, mkv, mov, m4v or webm). The next sync closes this entry."
   },
   {
     fingerprint: "disk.watermark.exhausted",
@@ -113,15 +137,16 @@ export const INCIDENT_OPERATOR_ACTIONS: readonly IncidentOperatorAction[] = [
   ])
 ];
 
-/** The catalogue entry for a stored fingerprint, or null when there is none. */
+/**
+ * The catalogue entry for a stored fingerprint, or null when there is none. An exact entry wins over a
+ * keyed family whose prefix it shares (`source.local-library.empty` is not a source called "empty").
+ */
 export function findIncidentOperatorAction(fingerprint: string): IncidentOperatorAction | null {
-  for (const entry of INCIDENT_OPERATOR_ACTIONS) {
-    if (entry.keyed ? fingerprint.startsWith(`${entry.fingerprint}.`) : fingerprint === entry.fingerprint) {
-      return entry;
-    }
-  }
-
-  return null;
+  return (
+    INCIDENT_OPERATOR_ACTIONS.find((entry) => !entry.keyed && fingerprint === entry.fingerprint) ??
+    INCIDENT_OPERATOR_ACTIONS.find((entry) => entry.keyed && fingerprint.startsWith(`${entry.fingerprint}.`)) ??
+    null
+  );
 }
 
 /** The sentence to show under an incident, or "" when the catalogue has none. */

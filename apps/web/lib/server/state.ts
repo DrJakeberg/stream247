@@ -1484,10 +1484,8 @@ function summarizeCuepoints(
       ? getCuepointProgress({
           occurrenceKey: getScheduleOccurrenceRunKey(currentScheduleItem),
           cuepointOffsetsSeconds: offsetsSeconds,
-          firedCuepointKeys:
-            state.playout.cuepointWindowKey === getScheduleOccurrenceRunKey(currentScheduleItem)
-              ? state.playout.cuepointFiredKeys
-              : [],
+          // Every key names its run (the worker keeps the run before the last change too, R8).
+          firedCuepointKeys: state.playout.cuepointFiredKeys,
           // The worker's count (M101): real seconds since the run started.
           elapsedSeconds: getScheduleRunElapsedSeconds({
             occurrence: currentScheduleItem,

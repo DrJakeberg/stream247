@@ -1,71 +1,82 @@
 # Handoff - 2026-10-05
 
 State of the work for a session that continues it, local or cloud. Read `AGENTS.md` and `PLANS.md`
-first. Delete this file when v2.2.0 is tagged, released and repinned (milestone M83).
+first. Delete this file when v2.3.0 is tagged, released and repinned (milestone M106).
 
 ## Where things stand
 
 | What | State |
 | --- | --- |
-| v2.1.0 | Released 2026-10-02 (commit `799ff8b`), GitHub release published, DUT repinned to it. Soak of rc.2: passed with one outage (220 s, the nightly network blip). |
-| v2.2.0-rc.1 | Tagged and released as a prerelease on 2026-10-02 (commit `a0fb063`). **Not yet on the DUT**: backup, repin and soak are the owner's next step (below). |
-| v2.2.0 | Release commit `e81b6f4` (`release: v2.2.0`) is on `main`, push CI green. **Not tagged**: the tag waits for a passed rc.1 soak (owner decision 2026-10-02, "with soak"). |
-| M84-M104 | All 21 merged to `main` after `e81b6f4` (pull requests #10 to #30, last merge `5529679`). They ship with the version after 2.2.0. New migrations in M85, M89, M93, M96 and M104. |
-| Open pull requests | None. |
+| v2.1.0 | Released 2026-10-02 (commit `799ff8b`), GitHub release published, on the DUT. Soak of rc.2: passed with one outage (220 s, the nightly network blip). |
+| v2.2.0-rc.1 | Tagged as a prerelease on 2026-10-02 (commit `a0fb063`), never deployed or soaked. Its code ships in 2.3.0; M83 is superseded by M106 (owner decision 2026-10-05). |
+| `e81b6f4` | `release: v2.2.0` on `main`, never tagged; no 2.2.0 images exist. **Never tag it**: its `CHANGELOG.md` still has a 2.2.0 section, so the release workflow would publish a 2.2.0 that the repository says does not exist (`docs/deployment.md`, *Upgrading To 2.3*). |
+| M84-M104 | Merged to `main` 2026-10-02 to 2026-10-04 (pull requests #10 to #30). New migrations in M85, M89, M93, M96 and M104. |
+| M105 | The fixes of the 2026-10-05 review of M84-M104 (`planning/review-2026-10-05.md`). Merged before M106 starts. |
+| M106 | Release 2.3.0: next (row in `PLANS.md`). |
 
-`package.json` on `main` says 2.2.0 and `CHANGELOG.md` has no section for M84-M104 yet: the next release
-commit writes it from the milestone notes in `PLANS.md`. Never edit the `2.2.0` section for later work.
+Until M106's release commit, `package.json` on `main` reads `2.2.0-rc.1` (the last version that exists),
+and the image defaults in `docker-compose.yml` and `.env.production.example` pin `v2.1.0`. `CHANGELOG.md`
+has no 2.2.0 section; the 2.3.0-rc.1 release commit writes one section for everything since 2.1.0 (the
+2.2.0-rc.1 section's changes and M84-M105, from the milestone notes in `PLANS.md`).
 
-## The v2.2.0 tag goes on `e81b6f4`, not on the newest `main`
+## M106, the session's part
 
-`main` now carries M84-M104, which the rc.1 soak does not test. v2.2.0 must stay the soaked code, so the
-tag names the release commit explicitly:
-
-```sh
-git fetch origin && git tag v2.2.0 e81b6f4d7ad25fd8fa57fb4010690c334763fdd2 && git push origin v2.2.0
-```
-
-Tags in this repository are lightweight. The release workflow retags the `main-e81b6f4…` images and
-creates the GitHub release from the `2.2.0` section of `CHANGELOG.md`; check it with
-`gh api repos/DrJakeberg/stream247/releases/tags/v2.2.0` (draft and prerelease both false). If the soak
-fails, `e81b6f4` is never tagged; a `v2.2.0-rc.2` follows instead.
+1. On `main` after M105, one commit `release: v2.3.0-rc.1`: `package.json` and the `CHANGELOG.md` section
+   `## 2.3.0-rc.1`, as `release: v2.2.0-rc.1` (`a0fb063`) did. Wait for its push CI run to be green.
+2. Hand the owner the tag command (tag pushes from the cloud are refused):
+   `git fetch origin && git tag v2.3.0-rc.1 <sha of the release commit> && git push origin v2.3.0-rc.1`.
+   Check the GitHub release with `gh api repos/DrJakeberg/stream247/releases/tags/v2.3.0-rc.1`
+   (prerelease true).
 
 ## Owner steps, in order (only the owner reaches the DUT and the Portainer host)
 
 The DUT (`ssh dut`) and the Portainer host (`ssh dt`) are on the owner's LAN. A session without that
 network never guesses a result: it names the command and waits for the output.
 
-1. Backup (mandatory, rc.1 adds two tables):
-   `ssh dut 'umask 077; docker exec stream247-postgres-1 pg_dump -U stream247 -d stream247 -Fc > ~/backups/stream247-pre-v2.2.0-rc.1.dump'`
-2. Repin: `ssh dt '~/repin.sh v2.2.0-rc.1 --dry-run'`, then without `--dry-run`.
-3. Right after the repin: **Admin -> Settings -> Channel language** to German. Until then the poll and
-   the skip bar are English.
-4. DUT checks A1 (migrations, indexes, `source_breakers`) and A2 (channel language), then B1/B2 after the
-   first programme changes, C (operator clicks) and D (the morning after the nightly blip). Their source is
-   the DUT sections of M75, M76, M78, M79, M80 and M82 in `planning/archive/plans-m0-m83.md`. The live
-   bridge check of M78 is left out: it would be M66.
-5. Live status, on the broadcast channel only:
+1. Backup (mandatory: seven migrations, and the dump is one of the two ways back). Keep the file:
+   `ssh dut 'umask 077; docker exec stream247-postgres-1 pg_dump -U stream247 -d stream247 -Fc > ~/backups/stream247-pre-v2.3.0-rc.1.dump'`
+2. Repin: `ssh dt '~/repin.sh v2.3.0-rc.1 --dry-run'`, then without `--dry-run`.
+3. Count the migrations after the first start; this prints `7`:
+
+   ```sh
+   ssh dut 'docker exec -i stream247-postgres-1 psql -U stream247 -d stream247 -At' <<'SQL'
+   SELECT COUNT(*) FROM schema_migrations WHERE id >= '20261001_002';
+   SQL
+   ```
+
+4. Right after the repin: **Admin → Settings → Channel language** to German. Until then the poll, the
+   skip bar and the chat answers are English.
+5. The DUT checks. They are in `PLANS.md` under *DUT checks for the next release candidate*, each with its
+   commands and what passes, the soak check included. The checks of 2.2.0-rc.1 run too, since that
+   candidate never reached the DUT: the DUT sections of M75, M76, M78, M79, M80 and M82 in
+   `planning/archive/plans-m0-m83.md`, without the live bridge check of M78 (that would be M66). (The
+   labels A1, A2, B1, B2, C and D of the previous handoff named these checks; they exist nowhere else.)
+6. Live status, on the broadcast channel only:
    `ssh dut 'docker exec stream247-playout-1 yt-dlp --simulate --print "%(is_live)s" https://www.twitch.tv/jimpanse247'`
-6. Soak start: `ssh dut 'cd ~ && ~/scripts/start-soak.sh 24; tmux ls'`
-7. After 24 h, the result: `ssh dut 'grep -E "outage|complete" ~/logs/<soaklog>; grep -c " status=ok " ~/logs/<soaklog>'`.
-   Passed means `soak-monitor-complete` in the log. A pass with an outage is "passed with failure",
-   never clean. Report `outages`, `outageSecondsMax` and the uplink restart delta with it.
-8. Passed: the owner pushes the tag above (tag pushes from the cloud are refused), then backs up again
-   and repins `v2.2.0`.
+7. Soak start: the command of step 10 of *Safe Upgrade Flow* in `docs/deployment.md`, from the release checkout on the DUT, measured
+   through `CHECK_BASE_URL=http://127.0.0.1:3000` with `COMPOSE_PROJECT_NAME=stream247`. Then `tmux ls`
+   and the soak check in `PLANS.md` (the log's first line and its `Baseline container restarts` line).
+   The old start, `~/scripts/start-soak.sh` from `~`, measures the public route and sees no container
+   restart (review finding R31).
+8. After 24 h, the result: `ssh dut 'grep -E "outage|complete" ~/logs/soak-<stamp>.log'`. Passed means
+   `soak-monitor-complete` in the log. A pass with an outage is "passed with failure", never clean.
+   Report `outages`, `outageSecondsMax` and the uplink restarts with it, and the critical incidents of
+   the 24 hours (last command of the soak check).
+9. Passed: the session writes `release: v2.3.0` (`package.json`, the image defaults in
+   `docker-compose.yml` and `.env.production.example`, `docs/deployment.md`, the `CHANGELOG.md` section
+   `## 2.3.0`); after its green push CI the owner pushes the tag `v2.3.0` on it, backs up again and repins
+   `v2.3.0`. Failed: the fix, then `v2.3.0-rc.2` the same way.
 
-## After v2.2.0 is out (the last commit of M83)
+Rolling back at any point: `docs/deployment.md`, *Rollback to 2.1.0*. Dated and one-off blocks are
+listed and deleted first (2.1.0 would air them every week and erase their dates), or the pre-upgrade
+dump is restored into an empty database instead; then `ssh dt '~/repin.sh v2.1.0 --dry-run'` and without.
 
-- Record the DUT check results and the soak in `planning/archive/plans-m0-m83.md` (sections M75-M82 and a
-  new M83 section).
-- Move the M83 row of `PLANS.md` to **Shipped** and drop "tag pending" from the 2.2.0 line there.
-- `CHANGELOG.md:14` says the candidate's checks are recorded "in `PLANS.md` under M83"; point it at
-  `planning/archive/plans-m0-m83.md` instead.
+## After v2.3.0 is out (the last commit of M106)
+
+- Record the DUT check results and the soak in the milestone notes of `PLANS.md`, then move the rows of
+  M83-M106 to **Shipped** and their sections to `planning/archive/`, text unchanged (`AGENTS.md`,
+  *Releases*).
 - Delete this file.
-
-## The release after 2.2.0
-
-It ships M84-M104. Its DUT checks are listed in `PLANS.md` under *DUT checks for the next release
-candidate*. It has migrations, so the backup before the repin is mandatory again.
 
 ## Open owner decisions
 

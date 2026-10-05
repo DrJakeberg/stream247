@@ -359,12 +359,14 @@ describe("source breaker wiring", () => {
   it("lets the breaker hear the inline resolve of the selection, the only judge of a trial picked straight away", () => {
     const inline = flatWorker.indexOf("prepared = await resolveAssetPlaybackInput(failedAsset);");
     expect(inline).toBeGreaterThan(-1);
-    const around = flatWorker.slice(inline - 120, inline + 400);
-    // The failed record hands back the breakers as its write left them, for the recovery plan below it.
+    const around = flatWorker.slice(inline - 120, flatWorker.indexOf('await recordSelectionResolveOutcome(failedAsset, "ok");', inline) + 60);
+    // The failed record hands back the breakers as its write left them, for the recovery plan below it. It
+    // comes first, also when a dated block's takeover then waits for its pick instead of rethrowing (M105).
     expect(around).toContain(
-      '} catch (error) { breakersAfterFailedResolve = await recordSelectionResolveOutcome(failedAsset, "failed", error); throw error; }'
+      '} catch (error) { breakersAfterFailedResolve = await recordSelectionResolveOutcome(failedAsset, "failed", error); // A takeover'
     );
-    expect(around).toContain('await recordSelectionResolveOutcome(failedAsset, "ok");');
+    expect(around).toContain(') !== "hold" ) { throw error; }');
+    expect(around).toContain('if (prepared) { await recordSelectionResolveOutcome(failedAsset, "ok");');
     // Only that call: a failed fallback bridge resolve is not the scheduled item's failure.
     expect(flatWorker.match(/recordSelectionResolveOutcome\(failedAsset/g)).toHaveLength(2);
     // It must never throw inside the resolve's own try, where a failed write would read as a failed resolve.

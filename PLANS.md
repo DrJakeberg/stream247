@@ -1,7 +1,7 @@
 # Stream247 Plan
 
 What to build next. The rules for every session are in `AGENTS.md`. Everything up to and including
-2.2.0 (M0-M83: milestone sections, progress notes, DUT checks, follow-up lists) is kept verbatim in
+2.2.0-rc.1 (M0-M83: milestone sections, progress notes, DUT checks, follow-up lists) is kept verbatim in
 `planning/archive/plans-m0-m83.md`; `git log --follow` on that file shows its history.
 
 How this file works:
@@ -18,7 +18,7 @@ How this file works:
 
 | Milestone | Type | Priority | Status | Goal | Acceptance | Touched Areas | Risk | Rollback |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| M83 Release 2.2.0 | Release | Now | In progress | Ship M64, M75, M76, M78, M79, M80 and M82 (owner decision 2026-10-01: the version is 2.2.0, not 2.1.1 - two new tables, a new setting and a visible default change are more than a patch) | After v2.1.0 is tagged: this branch merged, `v2.2.0-rc.1` on the DUT with a PostgreSQL backup first, the channel language set to German, the DUT checks of each milestone section run, the two measurements of the nightly outage read (M82), a 24-h soak, then 2.2.0 tagged with its GitHub release and repinned; `docs/deployment.md` names the upgrade section *Upgrading To 2.2* (earlier sections of this file still say *Upgrading Past 2.1.0*); details, the DUT checks of each milestone and the soak go into `planning/archive/plans-m0-m83.md` (sections M71 and M75-M82; the release thread adds the M83 section there) | release, docs | medium | repin v2.1.0 |
+| M83 Release 2.2.0 | Release | Now | Superseded by M106 (owner decision 2026-10-05: 2.2.0-rc.1 was never deployed or soaked; its code ships in 2.3.0) | Ship M64, M75, M76, M78, M79, M80 and M82 (owner decision 2026-10-01: the version is 2.2.0, not 2.1.1 - two new tables, a new setting and a visible default change are more than a patch) | After v2.1.0 is tagged: this branch merged, `v2.2.0-rc.1` on the DUT with a PostgreSQL backup first, the channel language set to German, the DUT checks of each milestone section run, the two measurements of the nightly outage read (M82), a 24-h soak, then 2.2.0 tagged with its GitHub release and repinned; `docs/deployment.md` names the upgrade section *Upgrading To 2.2* (earlier sections of this file still say *Upgrading Past 2.1.0*); details, the DUT checks of each milestone and the soak go into `planning/archive/plans-m0-m83.md` (sections M71 and M75-M82; the release thread adds the M83 section there) | release, docs | medium | repin v2.1.0 |
 | M84 One Plan And A Reference Check | Docs + Ops | Now | Complete | One short plan, one rule file, history archived, and no doc can point at a missing file | `wc -l < PLANS.md` < 300; `wc -l < AGENTS.md` ≤ 120; `test ! -e IMPLEMENT.md && test ! -e planning/next-session-prompt.md && ! ls -d release-prune-backup-*`; `git log --follow --oneline planning/archive/plans-m0-m83.md \| wc -l` > 1; the new PLANS.md lists M57, M66, M77, M81 under "Owner-gated and deferred"; `grep -c "recovery-stack\|full-product-reset-audit\|automatically continue" AGENTS.md` = 0; each of the 12 items of 3.3 is found by a keyword grep on AGENTS.md (`jimpanse247`, `mediamtx:1.15.4`, `passed with failure`, `its own milestone`, `M66`, `M77`, `force`, `pnpm validate`, `deleted or weakened`, `German`, `texts, names`, `Hard blockers`), each ≥ 1; new `tests/unit/doc-refs.test.ts` fails on a backticked repo path in `AGENTS.md`, `PLANS.md`, `README.md`, `CONTRIBUTING.md` or `docs/*.md` that does not exist (mutation: adding `` `docs/nope.md` `` to AGENTS.md turns it red) and is green on the tree (fixes `docs/architecture.md:331`) | `AGENTS.md`, `PLANS.md`, IMPLEMENT.md (deleted), `planning/**`, release-prune-backup-* (deleted), `docs/architecture.md`, `.github/pull_request_template.md`, `tests/unit/` | low; losing an open follow-up is the risk, checked by comparing the old open rows and follow-up blocks with the new plan | revert the commit |
 | M85 Safe Configuration And Secrets | Reliability + Security | Now | Complete | A stream key never stays in the audit log, and a zone typo never breaks the schedule | M4: `appendAuditEvent` redacts like `upsertIncident`; a new migration id redacts existing `audit_events` rows; integration test: a synthetic `rtmp://…/live_…` key written through `appendAuditEvent` and one seeded before the migration both read back as `<redacted>`. C4: `resolveChannelTimeZone({}, {CHANNEL_TIMEZONE:"Europe/Berln"})` returns the managed zone or `UTC` and a state incident is raised; unit test. M5: the `custom_layers_json` cast is guarded; integration test boots a DB with one malformed row | `packages/db`, `apps/worker`, tests, `docs/operations.md` | low; the redaction migration is one-way (it removes secrets on purpose) | revert the commit; redacted rows stay redacted |
 | M86 A Database Blip Does Not Take The Channel Off Air | Reliability | Now | Complete | A Postgres restart or short outage leaves ffmpeg and the uplink running; web recovers by itself | H2: the failed-cycle branch is guarded; a process exits only after 5 min of consecutive failed cycles (owner Q2); pool `connectionTimeoutMillis` set. Unit test of a pure counter (below 5 min no exit, at 5 min exit). H3: a rejected `__stream247DbReady` is cleared; retry on `40P01`/`55P03`; migrations run with `SET LOCAL lock_timeout`; integration test: `ensureDatabase` fails with Postgres down, succeeds after Postgres starts, no reset helper called. R3's S1 probe (appendix of `planning/research/robustness.md`) becomes an integration test: Postgres stopped for 45 s, the worker process in all three modes is still running afterwards. DUT check (owner): `docker compose stop postgres; sleep 45; docker compose start postgres` during air, playout and uplink `StartedAt` unchanged | `apps/worker`, `packages/db`, `apps/web/lib/server`, tests, `docs/operations.md` | medium: a half-dead process for at most 5 min | revert the commit |
@@ -28,7 +28,7 @@ How this file works:
 | M90 The 3 A.M. Answer | UX + Reliability | Next | Complete | A tired operator sees what is wrong and what to press, first | U7: a stale or missing worker or playout heartbeat is the first "Open problems" entry with its age in words and the restart command; unit test. U8: the status sentence follows the heartbeats; `grep -rn "are now active" apps/web` → no output. U10: incident messages store no relative time (test on the writer); engine fields behind "Details" (`grep -rn "ready not ready" apps/web` → no output). U11: all three interrupting actions of "If something is stuck" confirm, Soft restart, Force reconnect and Hard reload (`apps/web/components/playout-action-form.tsx:97,105,128`; in direct mode Force reconnect drops the uplink); component test per button. Every critical incident fingerprint maps to one operator action in a catalogue (`IncidentRecord` has no such field today, `packages/db/src/index.ts:399-412`); a unit test collects all `fingerprint:` literals in `apps/worker/src` and fails on a critical one without an action; the crash-loop text no longer says only "Manual intervention is required" (`apps/worker/src/index.ts:7486`). U12: render test: without a connected bot account the Live chip reads "Not connected to Twitch", never "Checking". audit U3/U30: one heartbeat constant and one effective-heartbeat function used by state, readiness and worker; test that a 50 s old heartbeat gives the same verdict everywhere. U9 (default R2 Q4 in 5.2): Playwright at 390 px, "Open problems" above y = 1 400 | `apps/web`, `apps/worker`, `packages/core`, tests, baselines, `docs/ui.md` | low | revert the commit |
 | M91 Honest First Run | UX + Data | Next | Complete | A fresh install starts empty, readiness counts only what can air, and plain HTTP is explained | I1 (decided 5.1 Q5): an empty DB bootstraps with no pool, no schedule block and no URL-less source (unit test on `createInitialSeedState`); existing installs keep their rows (integration test); readiness: a pool is ready only when a block uses it and it has a ready asset, the schedule only when the coming week has no unplayable block (`tests/unit/onboarding*.test.ts`). I2 (decided 5.1 Q6): over `http:` on a host other than `localhost`/`127.0.0.1`, `/setup` and `/login` show the two ways out; render test. I6: component test: the URL field is prefilled with the request origin and the zone field with the browser zone. I7: render test of the password warning under the field plus, per decided 5.1 Q8, a change-password form under Admin → Settings → Security that requires the current password (API test: wrong current password refused, right one changes it) and a one-line container command for a reset documented in `docs/operations.md` (integration test: the reset entry point run against a test database sets a new password and sign-in with it succeeds); no e-mail reset. I8: render test: the login hint has no line clamp and, without Twitch app credentials, contains "Twitch app credentials" and the link to `/setup` step 3 | `packages/db` seed, `apps/web`, tests, baselines, `docs/getting-started.md` | low: only `isDatabaseEmpty` installs change | revert the commit |
 | M92 Getting Started A Stranger Can Follow | Docs + Ops | Next | Complete | The guide leads a stranger from an empty host to air without a gap | I4: `docs/getting-started.md` gets "Get the files" (clone a release tag, or download `docker-compose.yml` and `docker/mediamtx.yml`), the link `https://dev.twitch.tv/console/apps` (also in wizard step 3) and a numbered stream-key step; `grep -c "dev.twitch.tv/console" docs/getting-started.md` ≥ 1. I3: unit test that the four compose image defaults equal the newest non-rc `## X.Y.Z` heading in `CHANGELOG.md`, so a release commit that forgets them fails. I5: the same one-or-two-accounts sentence in wizard and guide (decided 5.1 Q9). `pnpm test:fresh-compose` green | `docs/`, `apps/web/app/setup`, `tests/unit/`, `README.md` | low | revert the commit |
-| M93 Dated And One-Off Schedule Blocks | Feature | Next | Complete | "The next 10 days at 20:00 this playlist" and "once on 10 Oct" can be saved on a 24/7 grid, and air, previews, `/channel` and Twitch agree | R1 row A (decided 5.1 Q1, Q2): `valid_from`/`valid_until` in baseline, ALTER, migration, manifest, mapper, writers and blueprints; filter in `buildScheduleOccurrences`; dated layer ranks first in `findCurrentScheduleOccurrence`; `applyScheduleLayers` with `airWindows`; conflicts per layer; ended rows listed as ended; form field *Runs*; "Single day" renamed to "One weekday, every week". Tests: a 10-day run has day 10 and not day 11; a once-block airs once; a carry-over past `valid_until` still ends; weekly 18-22 + dated 20-21 gives three windows with one key; a cuepoint is not re-fired; the 24/7 grid + dated 20:00 block saves (today `["grid","special"]`); schema-manifest and DB round-trip tests | `packages/core`, `packages/db`, `apps/web`, `apps/worker`, tests, baselines, `docs/` | medium: touches the one function every schedule consumer uses; additive columns | revert the commit; old images ignore the columns |
+| M93 Dated And One-Off Schedule Blocks | Feature | Next | Complete | "The next 10 days at 20:00 this playlist" and "once on 10 Oct" can be saved on a 24/7 grid, and air, previews, `/channel` and Twitch agree | R1 row A (decided 5.1 Q1, Q2): `valid_from`/`valid_until` in baseline, ALTER, migration, manifest, mapper, writers and blueprints; filter in `buildScheduleOccurrences`; dated layer ranks first in `findCurrentScheduleOccurrence`; `applyScheduleLayers` with `airWindows`; conflicts per layer; ended rows listed as ended; form field *Runs*; "Single day" renamed to "One weekday, every week". Tests: a 10-day run has day 10 and not day 11; a once-block airs once; a carry-over past `valid_until` still ends; weekly 18-22 + dated 20-21 gives three windows with one key; a cuepoint is not re-fired; the 24/7 grid + dated 20:00 block saves (today `["grid","special"]`); schema-manifest and DB round-trip tests | `packages/core`, `packages/db`, `apps/web`, `apps/worker`, tests, baselines, `docs/` | medium: touches the one function every schedule consumer uses; additive columns | revert the commit; before a reverse repin below M93, delete every dated or one-off block (or restore the pre-upgrade dump): an older image ignores the date columns, so it airs those blocks every week, ended ones included, and its whole-state writes erase the dates (`docs/deployment.md`, *Upgrading To 2.3*) |
 | M94 Inserts From Remote Sources Air | Bug | Next | Complete | A YouTube or Twitch insert airs, or is skipped once with an incident, never retried forever | W1: the due insert is warmed in the queue scan; a failed or bridged insert counts as consumed and raises an incident naming it (owner Q6); both insert checks apply quarantine and breaker. W5: one shared "cuepoint asset of a block" helper used by worker and preview; test: `insertEveryItems: 0` with a pool insert asset gives the same cuepoint count in both. W6: an item that failed to open is retried once; `failed` treated like an empty current item in the Move next and insert checks. R3's W1 probe becomes a test | `apps/worker`, `packages/core`, tests | low–medium: crash-loop interplay | revert the commit |
 | M95 Self-Healing Fills The Gaps | Reliability | Next | Complete | No stale incident, no orphan encoder, no permanently lost item | H5: disk and system-volume flags re-armed from open incidents on the first cycle; `secrets.key-mismatch` resolved at a boot where every secret decrypts; tests. W7: the playout exit handler returns when the exiting child is not current (static test as R3's); the uplink handler checked for the same pattern. H9: one re-probe per quarantined item per 24 h, one per source per cycle, only with the breaker closed and no outage verdict (owner Q1); test. U18: `scripts/soak-monitor.sh` counts uplink and relay restarts; shell test or `bash -n` plus a fixture run | `apps/worker`, `scripts/`, tests, `docs/operations.md` | low | revert the commit |
 | M96 Local File Durations | Data | Next | Complete | Local-library assets carry their real length, so planning numbers are right | U4: `ffprobe` duration at scan time, bounded timeout, cached by size + mtime; unit test on a generated 2-minute file → `durationSeconds` within 1 s of 120; an unchanged file is not probed again (spy); Day lens shows "Unique library: 6m" for three such files | `apps/worker`, `packages/db`, tests | medium: a large first scan is slower, so probing is incremental | revert the commit; stored durations are harmless to old images |
@@ -40,13 +40,17 @@ How this file works:
 | M102 Standby Shows Standby | Bug | Later | Complete | The standby or reconnect slate never shows the previous item's title | W8: `writeStandbySlate` sets the standby scene payload; unit test on the payload; a design-baseline check of the standby frame | `apps/worker`, tests, baselines | medium: changes the on-air picture | revert the commit |
 | M103 Backoff And Health Restarts | Reliability | Later | Complete | Repeated restarts slow down; a hung worker or uplink restarts itself | H7: growing backoff up to 5 min for the crash-loop reset and the uplink watchdog; the crash-loop incident no longer says "Manual intervention is required" when playable media exists (unit test on the message). H8 (owner Q7): worker and uplink exit after 5 min of failing their own healthcheck; playout only while its feed does not advance. Tests: backoff sequence; a playing playout with an advancing feed never exits | `apps/worker`, `docker-compose.yml`, tests, docs | medium: dark time grows with backoff; a wrong rule could restart a playing channel | revert the commit |
 | M104 Wording Pass And Chat Answers | UX | Later | Complete | Admin text names no milestone ids; viewers can ask the bot | U13: render test fails on `\bM\d{2}\b` in admin text. U14: the admin preview and (i) show the localized standby text. S19 (lead from the stopped planning branch, re-checked): overlay output is one checkbox among many (`apps/web/components/overlay-settings-form.tsx:890`) and the Scene tab shows "unknown" / "never" before a first publish; Scene gets an on/off banner at the top and "Not published yet"; render test. V5/V6 (decided 5.1 Q7): `!commands` (only enabled commands), `!now`, `!next` with the `/channel` link, one reply per `!request` (queued with position, no match, cooldown, queue full), each with its own switch, 60 s per viewer and 10 s global cooldown, en + de; unit tests per reply | `apps/web`, `apps/worker`, `packages/core`, tests, baselines | medium: chat volume and Twitch rate limits | revert the commit |
+| M105 Review Fixes Before 2.3 | Reliability + Docs | Now | Complete | The defects the 2026-10-05 review of M84-M104 confirmed are fixed before the next candidate, and the repository stops advertising a 2.2.0 that does not exist | A dated or one-off block takes the air at its start and gives it back at its end, cutting the item on air (owner decision 5.1 Q1, 2026-10-01); a scheduled insert from a source outside the block's pool plays to its end; an upgrade and rollback section for everything since 2.1.0 with a pre-rollback step for dated blocks, the downgrade-note rule back in AGENTS.md; compose and env defaults pin a release that exists; the CHANGELOG lists no 2.2.0; the confirmed minor findings fixed or recorded with a reason (list: `planning/review-2026-10-05.md`); `pnpm validate`, baselines and smokes green | worker, core, web, db, docs | medium | revert the merge |
+| M106 Release 2.3.0 | Release | Now | Planned | Ship 2.2.0-rc.1 (M64, M75, M76, M78-M80, M82) and M84-M105 as 2.3.0 (owner decision 2026-10-05) | `v2.3.0-rc.1` on the DUT after a PostgreSQL backup, migrations counted, channel language set to German, the DUT checks run, a 24-h soak, then 2.3.0 tagged with its GitHub release and repinned | release, docs | medium | repin v2.1.0 after the dated-block step |
 
 M84-M104 were approved by the owner on 2026-10-02 (all 21, as written). Their source is `planning/proposal-2026-10.md`: references in these rows such as "decided 5.1 Q5", "2.5a", "3.3" and finding ids (S1, C3, I1, U7, …) point into that file and the research files under `planning/research/`. Order: M84 first, then the table order with M88 before M93, M93 before M100 and M91 before M99; one milestone per thread, the next starts after the previous one is merged.
 
-State on 2026-10-05: M84-M104 are merged on `main` after the 2.2.0 release commit `e81b6f4` and ship with
-the next version. M83 waits for the owner to deploy and soak `v2.2.0-rc.1`; the v2.2.0 tag goes on `e81b6f4`,
-not on the newest `main`. Steps and commands: `HANDOFF.md`. Findings outside the milestones, waiting for the
-owner to pick numbers: `planning/suggestions-2026-10-04.md`.
+State on 2026-10-05: production runs v2.1.0. `v2.2.0-rc.1` was tagged but never deployed, and the release
+commit `e81b6f4` (`release: v2.2.0`) was never tagged; no 2.2.0 images exist. M84-M104 are merged on `main`
+after it. Owner decision 2026-10-05: M105 fixes the review's findings, then everything ships as 2.3.0 (M106);
+until then `main` pins v2.1.0 and its version reads `2.2.0-rc.1`, the last that exists. Steps and commands:
+`HANDOFF.md`. Findings outside the milestones, waiting for the owner to pick numbers:
+`planning/suggestions-2026-10-04.md`.
 
 ## Owner-gated and deferred
 
@@ -196,8 +200,10 @@ deployed; the release that ships them records the results.
   uplink keep running; the worker only syncs sources, Twitch and incidents). Passes when `Live → Control`
   shows "The worker has stopped reporting" as the first entry of *Open problems*, with "Last heard from
   N minutes ago" and the restart command, `/api/system/readiness` reports `"worker":"degraded"`,
-  and the entry is gone within a minute of the restart. Then press *Soft restart* once and answer
-  *Cancel*: no `playout.restart.requested` audit row may appear.
+  and the entry is gone once the worker's first cycle after the restart has finished: up to about three
+  minutes, not one, because the worker writes its heartbeat only at the end of a whole cycle and the first
+  cycle after a start runs every source sync (`runWorkerCycle` in `apps/worker/src/index.ts`). Then press
+  *Soft restart* once and answer *Cancel*: no `playout.restart.requested` audit row may appear.
 
   ```sh
   ssh dut 'docker stop stream247-worker-1; sleep 300; docker exec stream247-web-1 wget -qO- http://127.0.0.1:3000/api/system/readiness | grep -o "\"worker\":\"[a-z-]*\""'
@@ -219,10 +225,15 @@ deployed; the release that ships them records the results.
 - M93, after the repin: the migration ran and every existing block stayed undated. Passes on `1|0`.
   Then, in `Program → Schedule → Day`, add a block *Runs: Once* on a date four to six days ahead, 30 min or
   longer, at a time a weekly block covers. Passes when, after the next worker cycle,
-  `https://www.twitch.tv/jimpanse247/schedule` shows the one-off entry on its date, the weekly entry it
-  covers cut around it (when that weekly block is on Twitch at all: blocks over 23 h are not sent), and no
-  other date changed. Delete the test block afterwards; the next
-  cycle restores the single weekly entry. Twitch's answer to these segments was not reachable from the cloud.
+  `https://www.twitch.tv/jimpanse247/schedule` shows the one-off entry on its date with the weekly block
+  cut around it, and no other date changed. Each cut part is sent on its own when it lasts 30 min to 23 h
+  (a shorter or longer part is left out): under a weekly block of 23 h or less the date shows the part
+  before, the one-off and the part after; under a 24 h block (a 24/7 grid of one block a day), which Twitch
+  never gets as a whole, the same three entries appear on that date only, the two parts with the weekly
+  title (`planTwitchScheduleSegments`,
+  `apps/worker/src/twitch-schedule-plan.ts`). Delete the test block afterwards: the next cycle restores the
+  single weekly entry of a block of 23 h or less, and removes all three entries under a 24 h block, which
+  then has no entry at all, as before. Twitch's answer to these segments was not reachable from the cloud.
 
   ```sh
   ssh dut 'docker exec -i stream247-postgres-1 psql -U stream247 -d stream247 -At' <<'SQL'
@@ -231,19 +242,44 @@ deployed; the release that ships them records the results.
   SQL
   ```
 
-- M94, on the deployed candidate, with a YouTube item as a block's cuepoint item (Program → Schedule, a
-  block of the coming evening with one cuepoint about 20 minutes in; delete it afterwards). Passes when,
-  after the block, the as-run log has a row of the cuepoint item with `queue_kind` `insert` that aired
-  longer than 10 s, or (if YouTube refused it) the audit trail has one `playout.insert.skipped` row
-  naming it and the as-run log has no second attempt of it in that block. Both were stubbed in the
-  cloud, where YouTube is not reachable.
+  On air (M105, R7): add a block *Runs: Once* for today, 30 minutes, starting 15 to 30 minutes ahead,
+  inside a weekly block whose item on air will still run at its start (a multi-hour archive), from a pool
+  with other sources. Passes when, after its end, the as-run rows of the last hour show the item on air
+  ended `switch` within a minute after the one-off's start, the one-off's first item starting then with
+  the one-off's `block_id`, the one-off's item on air at its end ended `switch` (or `natural-end` exactly
+  then) within a minute after it, and the weekly block's item starting then; and the playout log has two
+  `playout.schedule.takeover` lines, `edge` `start` and `end`. Delete the block afterwards. Give the
+  one-off a pool whose next item is local, YouTube or an archive already cached: an uncached Twitch
+  archive moves the cut to the end of its download (a `playout.schedule.takeover_deferred` line first), by
+  design since the review of the M105 change.
 
   ```sh
   ssh dut 'docker exec -i stream247-postgres-1 psql -U stream247 -d stream247 -At' <<'SQL'
-  SELECT 'aired', started_at, title, aired_seconds FROM as_run_log WHERE queue_kind = 'insert'
+  SELECT started_at, ended_at, end_reason, block_id, title FROM as_run_log
+    WHERE started_at > to_char(now() - interval '1 hour', 'YYYY-MM-DD"T"HH24:MI:SS')
+       OR ended_at > to_char(now() - interval '1 hour', 'YYYY-MM-DD"T"HH24:MI:SS')
+    ORDER BY started_at;
+  SQL
+  ssh dut 'docker logs --since 1h stream247-playout-1 2>&1 | grep playout.schedule.takeover'
+  ```
+
+- M94 and M105 (R11, R13), on the deployed candidate, with a YouTube item **from a source the block's
+  pool does not use** as the block's cuepoint item (Program → Schedule, a block of the coming evening
+  with one cuepoint about 20 minutes in; delete it afterwards). Passes when, after the block, the as-run
+  log has a row of the cuepoint item with `queue_kind` `insert` whose `end_reason` is `natural-end` or
+  `duration-bound` and whose `aired_seconds` is at least `planned_seconds - 5` (it played to its end;
+  until M105 such an insert was cut at the next cycle with `switch`, which "aired longer than 10 s" did
+  not catch), or (if YouTube refused it) the audit trail has one `playout.insert.skipped` row naming it
+  (reason `bridged`, `prepare-failed`, `start-failed`, or `open-failed` after two starts: one or two
+  `failed` rows of about 0 s before it) and no later attempt of it in that block. Stubbed in the cloud,
+  where YouTube is not reachable.
+
+  ```sh
+  ssh dut 'docker exec -i stream247-postgres-1 psql -U stream247 -d stream247 -At' <<'SQL'
+  SELECT 'aired', started_at, title, end_reason, aired_seconds, planned_seconds FROM as_run_log WHERE queue_kind = 'insert'
     AND started_at > to_char(now() - interval '6 hours', 'YYYY-MM-DD"T"HH24:MI:SS')
   UNION ALL
-  SELECT 'skipped', created_at, message, 0 FROM audit_events WHERE type = 'playout.insert.skipped'
+  SELECT 'skipped', created_at, message, '', 0, 0 FROM audit_events WHERE type = 'playout.insert.skipped'
     AND created_at > to_char(now() - interval '6 hours', 'YYYY-MM-DD"T"HH24:MI:SS')
   ORDER BY 2;
   SQL
@@ -255,24 +291,40 @@ deployed; the release that ships them records the results.
   the third prints no `playout.source-breaker.opened` line whose `failedAssetIds` lists only items that
   were quarantined at the repin. Real YouTube and Twitch sources are not reachable from the cloud.
   And the next soak's baseline line lists `uplink=` and `relay=` with numbers, not `unknown`.
+  M105 (R34): before the repin, the fifth command lists the quarantined Twitch archives with their
+  `cache_status`; in the 25 hours after it, the sixth (the downloads queued) names no archive the fifth
+  listed as quarantined and not `ready`, except one whose trial cleared it and that the pool's queue then
+  reached (each uncached one shows a `playout.asset.reprobe.availability` line instead of a download).
 
   ```sh
   ssh dut 'docker exec stream247-postgres-1 psql -U stream247 -d stream247 -Atc "SELECT COUNT(*) FROM assets WHERE playback_probe_failures >= 3"'
-  ssh dut 'docker logs --since 25h stream247-playout-1 2>&1 | grep -oE "playout.asset.reprobe.(cleared|failed)" | sort | uniq -c'
+  ssh dut 'docker logs --since 25h stream247-playout-1 2>&1 | grep -oE "playout.asset.reprobe.(cleared|failed|availability)" | sort | uniq -c'
   ssh dut 'docker logs --since 25h stream247-playout-1 2>&1 | grep "playout.source-breaker.opened"'
   ssh dut 'grep "Baseline container restarts" ~/logs/soak-<stamp>.log'
+  ssh dut 'docker exec stream247-postgres-1 psql -U stream247 -d stream247 -Atc "SELECT id, cache_status FROM assets WHERE playback_probe_failures >= 3 AND path LIKE '"'"'%twitch.tv/videos/%'"'"' ORDER BY id"'
+  ssh dut 'docker logs --since 25h stream247-playout-1 2>&1 | grep "vod.cache.job.queued"'
   ```
 
 - M96, after the repin: the local library's files carry their real length. The first command, run once a
   few worker cycles have passed, prints `0|<n>` with `<n>` the number of local files (no file left without
   a probed version); a file ffprobe cannot read shows up in the second command with `0` and is worth a look.
   The Day lens (`Program -> Schedule`) then shows no "30-minute estimate" note for a pool of local files.
+  And, with the overlay in scene mode, local files now end by the duration bound (R15 of the 2026-10-05
+  review): the third command, a day after the repin, shows `duration-bound` rows with an average overrun
+  (`aired - planned`) of about 15 s and no `feed-watchdog` row, and the last two print `0` (a count above
+  `0` is compared with the as-run rows of its time: it fails the check only at the end of a local file).
 
   ```sh
   ssh dut 'docker exec -i stream247-postgres-1 psql -U stream247 -d stream247 -At' <<'SQL'
   SELECT COUNT(*) FILTER (WHERE duration_probe_key = ''), COUNT(*) FROM assets WHERE source_id = 'source-local-library';
   SELECT title, duration_seconds FROM assets WHERE source_id = 'source-local-library' ORDER BY duration_seconds, title;
+  SELECT end_reason, COUNT(*), ROUND(AVG(aired_seconds - planned_seconds)) FROM as_run_log
+    WHERE source_id = 'source-local-library' AND planned_seconds > 0
+      AND started_at > to_char(now() - interval '24 hours', 'YYYY-MM-DD"T"HH24:MI:SS')
+    GROUP BY end_reason ORDER BY 2 DESC;
   SQL
+  ssh dut 'docker logs --since 24h stream247-playout-1 2>&1 | grep -c playout.feed_audio.restart'
+  ssh dut 'docker logs --since 24h stream247-uplink-1 2>&1 | grep -c uplink.encoder_stall.restart'
   ```
 
 - M97, after the repin: `Program -> Schedule -> Week` shows what airs. With a pool used by two blocks of
@@ -304,11 +356,15 @@ deployed; the release that ships them records the results.
   02:00 and lasts 2 hours). Without such a block, save a test block "Once" on that Sunday 01:00-04:00, let
   one Twitch sync run, check the Twitch dashboard's schedule, then delete the block.
 
-- M102, on the deployed candidate with the scene overlay on: the standby slate shows standby. Take every
-  source out of programming for a minute (or let the next block start without a ready item) after an item
-  with a known title aired; the picture reads `Stand by` / `Gleich geht’s weiter` with the current block's
-  title (or `Stand by`) and never the title that aired before. Put the items back; the next item's own
-  title is on the picture from its start. A Restart in direct mode shows the reconnect slate the same way.
+- M102, on the deployed candidate with the scene overlay on: the standby slate shows standby. After an item
+  with a known title aired, take every item out of programming (Library, select all, bulk *Exclude*), then
+  press *Skip*. Taking items out does not stop the one on air: it plays to its end (hours for a Twitch
+  archive), and a change of weekly block does not cut it either; the Skip's hold is what keeps it from
+  being picked again. The picture reads `Stand by` / `Gleich geht’s weiter` with the current block's title (or
+  `Stand by`) and never the title that aired before. Put the items back with bulk *Include*, and mark the
+  global fallback item again (bulk *Exclude* clears the mark, and *Include* does not restore it); the next
+  item's own title is on the picture from its start. A Restart in direct mode shows the reconnect slate the
+  same way.
 - M103, after the candidate's soak: no process restarted itself and the backoff fired only where a
   watchdog did. `ssh dut 'for s in worker playout uplink; do docker logs stream247-$s-1 2>&1 | grep -cE "worker.health.self_restart"; done'`
   prints `0` three times; `ssh dut 'docker logs stream247-uplink-1 2>&1 | grep -E "uplink.watchdog.backoff|worker.health.unhealthy" | tail -20'`
@@ -316,21 +372,84 @@ deployed; the release that ships them records the results.
   `worker.health.self_restart` is reported with the reason it names.
 - M104, on the deployed candidate with *Enable viewer control* on (Studio → Engagement), the channel in
   German and the app URL set: from a viewer account (not the bot), type in the broadcast channel's chat
-  `!commands`, then after 10 s `!now`, after another 10 s `!next`, then `!request zzzz` and after it `!request`
-  with a word from a requestable title (in this order: after an accepted request the refusal would be the
-  cooldown). Passes when the bot answers each once, in German and addressed `@<account>`: the command list
+  `!commands`, then after 65 s `!now`, after another 65 s `!next` (one answer to these three per viewer a
+  minute, shared: `ChatReplyCooldown` in `packages/core/src/chat-replies.ts`), then `!request zzzz` and after
+  it `!request` with a word from a requestable title (in this order: after an accepted request the refusal
+  would be the cooldown). Passes when the bot answers each once, in German and addressed `@<account>`: the command list
   without switched-off commands, `gerade läuft: …` with the title on air, `als Nächstes …` with
   `Programm: <APP_URL>/channel`, `… kein Video …` and `… steht in der Warteschlange auf Platz N.`; a second
   `!now` from the same account within a minute gets no answer; `ssh dut 'docker logs stream247-worker-1 2>&1 | grep -c chat.say.dropped'`
   prints `0`.
 
-- (The checks for 2.2.0 are in the archive, sections M75-M82.)
+- M105 (part C), through the candidate's soak, which begins with the repin's container restart: an ffmpeg
+  that ends during its own start is handled (on 2026-10-02 10:24 UTC under v2.1.0 a YouTube item started
+  right after a restart was bridged 15 s later as if still on air, then the switch waited out the 20 s
+  stop deadline). Passes when the first command prints no `playout.stop.deadline_exceeded` line, or each
+  one it prints is a hung process (a `playout.process.exit_ignored` line follows it); a
+  `playout.stop.already_exited` line is a start that failed to spawn and is reported. And no restart
+  nobody pressed (R1): the second command lists the `operator-restart` ends and the restart presses of
+  the same 25 hours; every `asrun` row has a `press` row (Restart or Hard reload) up to a minute before it.
+
+  ```sh
+  ssh dut 'docker logs --since 25h stream247-playout-1 2>&1 | grep -E "playout.stop.(deadline_exceeded|already_exited)|playout.process.exit_ignored"'
+  ssh dut 'docker exec -i stream247-postgres-1 psql -U stream247 -d stream247 -At' <<'SQL'
+  SELECT 'asrun', ended_at, title FROM as_run_log WHERE end_reason = 'operator-restart'
+    AND ended_at > to_char(now() - interval '25 hours', 'YYYY-MM-DD"T"HH24:MI:SS')
+  UNION ALL
+  SELECT 'press', created_at, type FROM audit_events WHERE type IN ('playout.restart.requested', 'broadcast.hard-reload.requested')
+    AND created_at > to_char(now() - interval '25 hours', 'YYYY-MM-DD"T"HH24:MI:SS')
+  ORDER BY 2;
+  SQL
+  ```
+
+- M105 (part D, R35 and R4), through the candidate's soak, which spans the DUT's nightly network blip (about
+  00:02 UTC): the uplink's restarts during the blip are not counted and nothing holds the uplink once the
+  network is back. Passes when the first command shows `uplink.watchdog.network_outage` at the blip, an
+  `uplink.watchdog.network_outage.uncounted` line for each watchdog restart until
+  `uplink.watchdog.network_back`, and no `uplink.watchdog.backoff` line from the blip until ten minutes after
+  `network_back`; a `restart_waits` line (a timestamp storm kept on air) is reported with its time. The
+  soak's outage lines of the blip (second command) are reported with their seconds next to the uplink
+  lines; under 2.1.0 the uplink was back 50 to 70 s after a blip. A blip without any
+  `uplink.watchdog.network_outage` line (the uplink never restarted, so it never asked) passes too.
+
+  ```sh
+  ssh dut 'docker logs --since 25h stream247-uplink-1 2>&1 | grep -E "uplink.watchdog.(network_outage|network_back|backoff|hold_ended)|uplink.(encoder_stall|destination_stall|encoder.no_progress|discontinuity_storm).restart" | tail -40'
+  ssh dut 'log=$(ls -t ~/logs/soak-*.log | head -1); grep -E "outage" "$log" | tail -20'
+  ```
+
+- M105 (part D, R22), on the deployed candidate with *Enable viewer control* on: within 20 s after an item
+  change (Live → Status shows the new title), type `!now` from a viewer account. Passes when the bot names
+  the new title, not the one before.
+
+- The candidate's soak (R31 of the 2026-10-05 review) measures the channel, not the way in, and sees
+  container restarts and critical incidents. It is started as step 10 of *Safe Upgrade Flow* in `docs/deployment.md` says, from the
+  release checkout on the DUT (`<checkout>`). Before it counts: the soak script is main's (the first
+  command prints `1`); the log's first line reads `Starting soak monitor for 24h at http://127.0.0.1:3000`
+  (set `CHECK_BASE_URL` to that address, or `APP_URL` in the `.env` the script reads: the 2.1.0 soak's only
+  outage was a 220 s Cloudflare `522` on the public route while the channel stayed on air); and its
+  `Baseline container restarts` line shows numbers for `web`, `worker`, `playout` and `uplink`, not
+  `unknown` (the counts come from `docker compose ps` in the directory above `scripts/`; without the
+  stack's compose project there, restarts go unseen). Without `SESSION_COOKIE` every sample logs
+  `openCriticalIncidents=skipped(no-session-cookie)`, so after the soak the last command lists the critical
+  incidents of its 24 hours; each one is reported.
+
+  ```sh
+  ssh dut 'grep -c "SOAK_RESTART_SERVICES=\"web worker playout uplink relay\"" <checkout>/scripts/soak-monitor.sh'
+  ssh dut 'log=$(ls -t ~/logs/soak-*.log | head -1); head -1 "$log"; grep -m1 "Baseline container restarts" "$log"'
+  ssh dut 'docker exec -i stream247-postgres-1 psql -U stream247 -d stream247 -At' <<'SQL'
+  SELECT created_at, fingerprint, status, resolved_at FROM incidents WHERE severity = 'critical'
+    AND updated_at > to_char(now() - interval '25 hours', 'YYYY-MM-DD"T"HH24:MI:SS') ORDER BY created_at;
+  SQL
+  ```
+
+- The checks of 2.2.0-rc.1 are in the archive, sections M75-M82. That candidate never reached the DUT, so
+  the 2.3.0 candidate runs them too.
 
 ## Shipped
 
 | Release | Date | Milestones | Where |
 | --- | --- | --- | --- |
-| 2.2.0 | 2026-10-02 (release commit `e81b6f4`; tag pending, M83) | M64, M75, M76, M78, M79, M80, M82 | archive, sections M64, M75, M76, M78-M80, M82 and the M83 row; `CHANGELOG.md` |
+| (2.2.0) | Not released: release commit `e81b6f4` never tagged, `v2.2.0-rc.1` never deployed; these milestones ship with 2.3.0 (M106, owner decision 2026-10-05) | M64, M75, M76, M78, M79, M80, M82 | archive, sections M64, M75, M76, M78-M80, M82 and the M83 row; `CHANGELOG.md`, *2.2.0-rc.1* |
 | 2.1.0 | 2026-10-02 | M68, M69, M70, M72, M73, M74 (release M71) | archive, sections M68-M74; `CHANGELOG.md` |
 | 2.0.0 | 2026-09-09 | M59, M60, M61, M62, M63, M65 (release M67) | archive, sections M59-M67; `CHANGELOG.md` |
 | 1.x | 2026-03-27 (1.0.0) to 2026-09-05 (1.5.47) | M0-M58 | archive, milestone tables, phase sections and *Progress Notes*; `CHANGELOG.md` |
@@ -394,6 +513,11 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
 - Not changed: web needed no code of its own (`apps/web/lib/server` reads through `ensureDatabase`).
   During the outage the playout cycle cannot pick the next item, so ffmpeg's current input is what keeps
   the channel on air; when it ends inside the outage the programme stops until the database is back.
+- **Review 2026-10-05 (R3), fixed in M105.** The exit write of an ffmpeg that ended inside the outage was
+  refused and dropped, so after the outage an operator insert that had ended still read as active and
+  aired again from 0 (not a regression: before M86 the row was as stale). The refused write is now kept
+  and applied again before the next state read, dropped at the next spawn (`apps/worker/src/playout-exit-write.ts`,
+  `tests/unit/playout-exit-write.test.ts`).
 
 ### M87 An External Failure Costs One Step, Not The Cycle
 
@@ -446,6 +570,16 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   (`isIdentityRefreshRefusal`). The channel owner's scope check (core's validate helper) now gets
   `fetchWithTimeout` too. Left: a reconnect that lands between the refusal and the error write is
   overwritten (narrow window); a disconnect instead of a reconnect leaves "Reconnect Twitch" open.
+- **Review 2026-10-05 (R2), fixed in M105.** Isolating the steps took away the only alert for an
+  integration that keeps failing: before M87 a throwing step ended the cycle and `worker.loop.crashed` sent
+  a Discord/e-mail alert, one per 30 min; since then a refused token found by the proactive refresh (the
+  usual path) only opened incidents. Now `twitch.reconnect.required` alerts when it opens (`opensIncident`,
+  `apps/worker/src/alerts.ts`), and a step that failed on every run for 30 min alerts, again every 30 min
+  while it lasts (`CycleStepAlertWatch`, `apps/worker/src/cycle-steps.ts`; a success ends the count, a
+  database outage alerts nothing). Tests in `tests/unit/external-failure-isolation.test.ts`. The review of
+  the M105 change found the new alert in the shared `markIdentityRefreshRefused`, so a refusal found by the
+  reconciliation's or the schedule sync's 401 retry alerted twice (their own warning too; `sendAlert`
+  dedups by subject): those two now send their warning only for a failure that is not a refused token.
 
 ### M88 Schedule Maths Across Midnight
 
@@ -464,8 +598,9 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   they no longer force a full sync every cycle.
 - **C3/B2, overlap.** Blocks are compared on a circular 7-day minute line. Decision: a save is refused
   only for an overlap the saved blocks take part in (`findScheduleConflictsInvolving`, used by create,
-  duplicate, edit and a template laid over the week), so an overlap that was already saved and is now
-  revealed is marked in the editor without locking every other edit. An edit of one of the two blocks (even a
+  duplicate, edit and a template laid over the week; *Clone day* since M105, review finding R10, where it
+  still saved with only its empty-weekday check, `tests/unit/schedule-clone-day.test.ts`), so an overlap
+  that was already saved and is now revealed is marked in the editor without locking every other edit. An edit of one of the two blocks (even a
   title change) is refused until it ends the overlap. `tests/unit/schedule-template-conflicts.test.ts`:
   the midnight fixture moved from weekday 1 + 1 to 1 + 2 and still asserts the conflict; a new case
   asserts the same-weekday early block is no conflict (strengthened, not weakened).
@@ -516,6 +651,13 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   before); Resume is still enabled only while a Pin, Fallback or insert is in effect, also when a hold is
   what the operator wants cleared. Not measured: the real timing of the race on a playing channel (DUT
   check above).
+- **Review 2026-10-05 (R1), fixed in M105.** "Keep anything newer" also kept a Skip, a passed chat vote or
+  a Restart aimed at the item a cycle was already switching away from; the next cycle restarted the new
+  item from 0 and the as-run log recorded an operator restart nobody pressed. A flag written before the
+  spawn of the item now on air counts as done by that spawn (`decideCycleEndRestartFlag` with
+  `spawnedAtMs`, in the start write and the cycle end); a press after the spawn is still carried out. A
+  Force reconnect of direct mode pressed in that window is done by the new process's own connection.
+  Table cases in `tests/unit/operator-actions-never-lost.test.ts`.
 
 ### M90 The 3 A.M. Answer
 
@@ -559,6 +701,12 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   and the chip). `incident-age` reads the panel from its new file.
 - Not changed: a web action still writes `heartbeatAt: now` (`apps/web/lib/server/broadcast.ts`), so a
   button press hides a stale playout heartbeat for up to 60 s.
+- **Review 2026-10-05 (R25), fixed in M105.** The keyed `source` entry matched every `source.` fingerprint,
+  so the three source-wide warnings (`source.local-library.scan-failed`, `source.local-library.empty`,
+  `source.direct-media.invalid`) got "check this source's address and whether it is still online", wrong
+  for a mount or permission fault. They have entries of their own, and an exact entry now wins over a
+  keyed family (`findIncidentOperatorAction`); a test fails on a new literal `source.` fingerprint without
+  one. R19 (M99's move) corrected the `playout.start.failed` action too.
 
 ### M91 Honest First Run
 
@@ -571,7 +719,10 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   enabled sources with a URL; *Program pools* only a pool a block uses that holds a ready video
   (`poolHasPlayableAsset` in core, the schedule preview's eligibility); *Weekly schedule* only when every
   block of the coming week has something to play. `findUnplayableWeekBlocks` is shared with the schedule
-  page's "Needs attention" panel, which computed the same list inline.
+  page's "Needs attention" panel, which computed the same list inline. Since M105 (review finding R18) a
+  pool counts as scheduled, and the schedule as ready, only through the blocks of the coming week (the
+  week view's projection), and the week must hold one: a schedule of dated blocks that have ended or start
+  after the week read ready before, and *First programme* read Done.
 - **I2.** `InsecureHttpNotice` on `/setup` and `/login`: in production, over `http:` on a host other than
   `localhost`, `127.0.0.1` or `::1`, one notice with the two ways out (HTTPS via the `proxy` profile or
   one's own, or an SSH tunnel to `localhost:3000`). The server renders it from the request's forwarded
@@ -580,6 +731,10 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
 - **I6.** The instance step prefills the public URL with the request origin and the zone with the
   browser's (`useSyncExternalStore`, so the server's zone never shows), each with "check it" in its hint,
   while nothing is saved and the environment does not pin it. The step summary names the language too.
+  Since M105 (review finding R16) the zone only on a first run: once the public URL was saved or the
+  schedule has a block, an empty zone is UTC in use, and the field stays empty with "Empty means UTC, and
+  the channel runs on UTC now"; before, saving the step to fix the URL moved every block by the browser's
+  offset (`zoneInUse`, a render test in `onboarding-first-run`).
   The searchable zone list R2 suggested is not built.
 - **I7.** The warning sits under the password field in step 1. *Change password* under Admin → Settings →
   Security (local owner only, current password required, rate-limited like sign-in, audit
@@ -665,6 +820,41 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   are not in the snapshots, so nothing was re-recorded.
 - **Not built.** R1's inline takeover notice in the form (1.3 step 8) and the "for N days" helper: not in
   this row's acceptance.
+- **M105, review finding R7: the takeover on air.** The worker now does what the projection, `/channel`,
+  Twitch and `docs/operations.md` said since M93: a dated or one-off block takes the air at its start and
+  gives it back at its end, cutting the item on air (as-run `switch`). Before, only the pool the worker
+  consulted changed and the item finished first, so a one-off under a multi-hour archive could pass
+  without airing. `apps/worker/src/schedule-takeover.ts` reads the boundary from the run the last cycle
+  recorded (`cuepointWindowKey`): a new run that is dated, or a change from a dated run to a block on air.
+  At that cycle neither keep-arm of `choosePlaybackCandidate` holds the item, so the new block's pool
+  picks; the operator arms (Pin, Fallback, Play now / Insert, Live Bridge) come first and still win, and
+  once they end nothing is cut. Weekly to weekly keeps the graceful handoff; a dated block with nothing
+  after it lets its item finish; the worker logs `playout.schedule.takeover`. The week projection cuts a
+  block's last item where such a takeover follows (`cutAtEnd`), and `/channel`'s *Up next* with it. Tests:
+  `tests/unit/schedule-takeover.test.ts` (the decision; the selection across cycles every 15 s: the
+  one-off swallowed before M105 and cut at 20:00 and 21:00 now, as-run and projection agreeing on every
+  start and cut, a Pin across the start, weekly to weekly still graceful; the wiring in `index.ts`), one
+  case in `tests/unit/public-programme.test.ts`. Left: `/channel`'s *Now* card shows the item's own end,
+  not the cut; the dated block's first item is not warmed ahead of its start, so a cold prepare delays the
+  cut by that long (the item on air plays on meanwhile); when the new pool's pick is the item already on
+  air it plays on.
+- **M105, review of the M105 change (2026-10-05).** As first written the takeover had four holes, now
+  closed in `apps/worker/src/schedule-takeover.ts` and the cycle. (1) A pick that could not be prepared
+  inline (an uncached Twitch archive with `TWITCH_VOD_CACHE_ALLOW_REMOTE_FALLBACK=0`, a yt-dlp resolve that
+  failed) fell into the recovery plan and cut the healthy item for the global or generic fallback or the
+  standby slate until the download was done; and a block with no eligible item cut it for the fallback
+  ladder. Now the takeover waits (`decideTakeoverPrepareFailure`, `scheduleTakeoverWaiting`): the item on
+  air plays on, the cycle records the run before the boundary so the next one tries again, the queue
+  prefetch warms the pick meanwhile, and `playout.schedule.takeover_deferred` is logged once. So the
+  sentence above holds for a failed prepare too. (2) An edit of the dated block on air (start or length,
+  also of its series) changed its run key and read as a new start, cutting its own item; a run of the same
+  block is no boundary now. (3) The selection and the recorded run read two clocks; a cycle straddling the
+  minute recorded the dated run without the cut, and the archive swallowed the one-off as before R7. The
+  cycle now reads the schedule once (`scheduleNow`) for every selection, the insert skips and the end
+  write. (4) On the fall-back night every wall-clock change in the repeated hour was a cut (three in an
+  hour); none is now (`isRepeatedWallClockMinute`). Tests in `tests/unit/schedule-takeover.test.ts` (each
+  case also fails with the rule taken out). Warming the next dated block's first item ahead of its start
+  is not built (`planning/review-2026-10-05.md`).
 
 ### M94 Inserts From Remote Sources Air
 
@@ -705,6 +895,19 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   cycle; the week view does not know the Twitch cache cooldown; the worker wiring is pinned by source
   text, the decisions are run.
 - **Not measured.** A real YouTube or Twitch insert on air (DUT check above).
+- **Review 2026-10-05, fixed in M105.** R11 (major): a scheduled insert whose item is not from one of the
+  block pool's sources was cut at the next cycle for the pool's pick (since v2.1.0; this section's fixture
+  put the sting's source into the pool, and the DUT check's "longer than 10 s" passed a cut insert).
+  `keepsRunningScheduledInsert` (`apps/worker/src/scheduled-insert.ts`) holds it to its end, behind the
+  operator arms and the R7 takeover, with no trigger so nothing is used up twice; multi-cycle test with a
+  YouTube sting under a Twitch pool (`tests/unit/scheduled-insert-plays-out.test.ts`); the DUT check now
+  asks for `natural-end` or `duration-bound` and the planned length. R12: a warm insert went cold at each
+  five-minute probe expiry and a boundary in that gap skipped it; a ready entry of a remote item is
+  resolved again in the background in its last minute and replaced only on success (`isProbeRefreshDue`,
+  `tests/unit/probe-refresh-ahead.test.ts`). R13: a scheduled insert that fails at input-open is retried
+  once with the next format candidate like a pool item (W6 above excluded it), and a second failure is
+  reported as `playout.insert.skipped` with reason `open-failed`
+  (`tests/unit/scheduled-insert-open-retry.test.ts`).
 
 ### M95 Self-Healing Fills The Gaps
 
@@ -755,6 +958,12 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   failing step; a failed trial of a Twitch archive still downloading counts as that day's trial.
 - **Not measured.** W7 with a real hung ffmpeg (static and decision tests only); H9 against real YouTube
   and Twitch sources (DUT check above).
+- **Review 2026-10-05 (R34), fixed in M105.** A trial of a quarantined Twitch archive missing from the
+  cache started its full download, queued one at a time ahead of the archives the programme needed. Such
+  a trial now only asks whether the archive still resolves (yt-dlp, no download, nothing cached); a
+  cached, too-large or non-Twitch item is tried as before (`apps/worker/src/quarantine-trial.ts`,
+  `tests/unit/quarantine-trial.test.ts`). Decision: a clean answer lifts the quarantine, and the download
+  comes when the pool's queue reaches the archive. DUT check above extended.
 
 ### M96 Local File Durations
 
@@ -776,10 +985,18 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   its version: a replaced file whose probe fails reads unknown, not the old file's length
   (`chooseStoredAssetSyncFields`); remote listings keep the old rule (no duration never erases a known one).
 - **Side effect on air.** A local file with a known duration now has the duration bound (`apps/worker/src/duration-bound.ts`)
-  like cached Twitch VODs: it is ended at duration + margin (default 15 s) if no EOF came. Local files
-  normally end by EOF well before that; the global fallback still plays once per start, not looped. And a
-  live picture-in-picture source's sound is now mixed over local programmes, as the design in
-  `docs/deployment.md` says for programmes of known length (before: picture only over local files).
+  like cached Twitch VODs: it is ended at duration + margin (default 15 s) if no EOF came. With the overlay
+  off or in text mode the picture ends with the file, so a local file ends by EOF as before. In scene mode
+  (the DUT's) it never does: the scene overlay ends with its longest input (`shortest=1` only for a YouTube
+  video+audio pair, `buildSceneOverlayFilterComplex`) and the scene pipe never ends, so from M96 on every
+  probed local file, the global fallback and boundary bridges included, ends by the bound at duration +
+  margin, its last frame frozen over padded audio, as-run end reason `duration-bound`. Before M96 such a file
+  had no duration and ended through the feed-audio watchdog once the pad ran out. Corrected after the
+  2026-10-05 review (R15; until then this note said local files normally end by EOF well before the bound):
+  an improvement, but the main on-air effect of M96, and measured only by the DUT check above. The global
+  fallback still plays once per start, not looped. And a live picture-in-picture source's sound is now
+  mixed over local programmes, as the design in `docs/deployment.md` says for programmes of known length
+  (before: picture only over local files).
 - **Tests.** `tests/unit/local-durations.test.ts`: real ffprobe on a generated two-minute file reads
   120 s; a spy sees three probes on the first scan, none on the second, one after a touch; budget,
   failed probe and failed stat; the Day lens reads "Unique library: 6m" for three such files (90m before).
@@ -793,6 +1010,12 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
 - **Review (fresh subagent).** All items met. Fixed: a failed scan no longer probes (its results were lost
   and repeated every cycle); the budget follows the cycle-await ceiling. Noted above: the PiP audio side
   effect and the CI gap.
+- **Review 2026-10-05 (R14), fixed in M105.** The decision above stored a timeout or an ffprobe that could
+  not start like an unreadable file, so a good file kept duration 0 until touched. Now only an answer
+  (ffprobe ran and found no duration, or refused the file) stores the key; a probe without an answer
+  stores nothing and the file waits 30 minutes before the next try, taking no scan budget meanwhile
+  (`isUnansweredDurationProbe`, `ExecFileTextError` in `apps/worker/src/process-utils.ts`,
+  `tests/unit/local-durations-retry.test.ts`).
 
 ### M97 Week View Tells The Truth
 
@@ -916,6 +1139,12 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   switch with M97's confirmation. Without a ready video the step says how media gets in and carries the
   library upload form. A pool is made of sources, so "chosen media" means chosen sources; single videos
   cannot be picked.
+- **M105, review finding R17.** Without *Replace* the template's seven all-day blocks overlap every weekly
+  block, so on a week with one every press failed after creating the pool and left one more pool named
+  *Programme*. The step's writes moved to `apps/web/lib/setup-first-programme.ts`: with weekly blocks and
+  *Replace* unticked it stops before writing anything and says why; a pool a failed press created is used
+  again; dated blocks are no obstacle. The hint says which case applies; the guide sentence is corrected.
+  Tests in `tests/unit/setup-first-programme.test.ts` run it against the real routes.
 - **Completion.** Steps 5 and 6 are done exactly when readiness says so (*Live destination*; *Program pools*
   and *Weekly schedule*); *Review* is done only when all six before it are.
 - **R2 U3.** `LibraryEmptyState`: an empty library says the three ways in (upload on the page, `data/media`,
@@ -938,6 +1167,11 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   until the step is opened again.
 - **Not in this milestone's scope, needed for its e2e:** `scripts/e2e-smoke.sh` (two switches) and the CI
   step.
+- **Review 2026-10-05 (R19), fixed in M105.** The move of the destination forms to Studio → Output missed the
+  incident catalogue: the action of `playout.start.failed` still sent the operator to Live → Status for
+  the address and stream key. It names Studio → Output → Output destinations now, and
+  `tests/unit/incident-actions.test.ts` fails on any action that sends an address or key edit to Live →
+  Status. A later move of a form checks `packages/core/src/incident-actions.ts` as well.
 
 ### M100 Public Programme For Viewers
 
@@ -986,6 +1220,11 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   daily 24 h block gives one *Up next* card per day (each day is its own block); when the item on air
   outlasts its block, the next block's items are still listed from the block's start; local files have
   no cover image (2.5a, follow-up).
+- **Review 2026-10-05 (R24), fixed in M105.** *Up next* listed a pool's own inserts (an ident every N
+  items) as programme videos, counted them in "N more videos" and could make one a card's headline. They
+  are left out of the list and the count and keep their time, so the video after one starts when it ends
+  (`apps/web/lib/public-programme.ts`; test with the review's probe pool). The *Now* card still names an
+  insert while it airs.
 
 ### M101 Schedule Across DST, Wall Clock Kept
 
@@ -1012,6 +1251,11 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   30-minute segment although it never airs). The week
   view and the day lens keep wall-clock lengths; the live summary's cuepoint count does not apply a dated
   block's air windows (the worker does, since M93).
+- **M105, review finding R8.** A block ending in the repeated hour comes back after the block that followed
+  it, and the run change had emptied its fired cuepoint keys, so it fired every cuepoint again. The keys of
+  the run before the change now stay with the new run's (`carryCuepointFiredKeys`; every key names its run,
+  so readers take the whole list); a test in `tests/unit/schedule-dst.test.ts` walks the night minute by
+  minute, three fires before and none after.
 
 ### M102 Standby Shows Standby
 
@@ -1064,6 +1308,25 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   (worker exits at five minutes and not before, streak reset, a playing playout with an advancing feed
   never exits over three hours, a stalled one exits at five minutes, holds and the feed verdict never
   count, wiring).
+- **Review 2026-10-05 (R4 and R35), fixed in M105.** Two corrections of H7 for the uplink, in
+  `apps/worker/src/uplink-watchdog.ts` (`UplinkWatchdog`, pure; the M103 maps in index.ts are gone).
+  R4: a timestamp storm is a picture still on air, and holding it stopped turned a few seconds' reconnect
+  into up to five minutes of dark air; its repeat now waits on air for its pause and restarts then only if
+  the storm lasts (no hold, incident *Uplink input timeline came apart*). R35: the nightly network blip
+  built the backoff up (production: an encoder-stall restart about 47 s after the uplink's I/O error, a
+  destination-stall restart about 20 s later, which was attempt 2 and held 15 s), so the uplink could stay
+  stopped after the network was back. The uplink now asks the M82 publish-host check while a running
+  profile has a destination in error, while a profile is held, until an outage it saw is over, and before
+  each dark-fault restart; a dark-fault restart while every publish host is unreachable, or after an
+  outage was seen since the fault began, restarts at once and is neither counted nor held, and the end of
+  such an outage ends every hold and streak (in uplink mode a destination goes back to *ready* only when
+  the uplink starts it, so a reachable publish host is the first sign). Encoder-stall restarts count as
+  dark faults here too: the production pattern begins with one. A hold also ends when the profile's
+  output changes (destinations, address or key), the operator path the review asked for, besides a
+  restart of the uplink container. A simulated 220 s blip held the uplink until 45 s after the network
+  was back under M103 and holds nothing now (`tests/unit/uplink-watchdog.test.ts`). Not covered: a
+  destination with no public publish host (a LAN restreamer) has nothing to ask, so its restarts count
+  as before.
 
 ### M104 Wording Pass And Chat Answers
 
@@ -1105,3 +1368,14 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   the runtime's effect, the programme info, send budget, sanitiser, worker wiring),
   `tests/unit/admin-wording-pass.test.ts` (U13, U14, S19 render tests), the migration in
   `tests/integration/db-roundtrip.test.ts`; `viewer-language-worker-wiring` knows the four new reply builders.
+- **Review 2026-10-05 (R22, R23, R27), fixed in M105.** R22: `!now` and `!next` answered from the chat step,
+  second to last in a cycle of over two minutes plus 30 s of sleep, so after an item change they named the
+  previous video; they read the playout row when asked now (`readPlayoutProgrammeTitles`,
+  `readChatProgrammeInfoNow`, 2 s bound, the last cycle's info as fallback). R23: refusals had no room
+  limit, so about fifteen accounts typing `!request zz` filled the send budget and dropped accepted
+  requests, moderator check-ins and `!game`; at most five refusals in 30 s now (`claimRefusal`), sent as
+  low-priority lines that leave the budget's last five slots to the rest. R27: the answers moved out of
+  index.ts into `apps/worker/src/chat-answers.ts`; `tests/unit/chat-answers.test.ts` drives them with the
+  chat runtime and the bridge with a fake socket (`!now` twice gives one line, at most 15 PRIVMSG writes in
+  30 s, each one IRC line, a raid of refusals leaves the other lines theirs) instead of grepping the
+  worker's source. The M80 language guard knows the three new helpers.

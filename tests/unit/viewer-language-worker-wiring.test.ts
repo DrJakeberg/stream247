@@ -74,7 +74,11 @@ const LOCALE_SLOT = new Map<string, LocaleSlot>(
     formatChatNowReply: arg(2),
     formatChatNextReply: arg(2),
     formatChatRequestReply: field,
-    buildChatProgrammeInfo: field
+    buildChatProgrammeInfo: field,
+    // M105 (R22, R23, R27): the answers taken out of index.ts into chat-answers.ts, and the read when asked.
+    answerChatEffect: field,
+    replyToChatRequest: field,
+    readChatProgrammeInfoNow: field
   })
 );
 
@@ -376,7 +380,17 @@ describe("the worker gives every viewer text the channel language", () => {
     "chat-game.ts": ["renderModel"],
     "twitch-engagement.ts": ["this.viewerLocale =", "viewerText", "parseTwitchIrcMessage", "formatPresenceClampReply"],
     "twitch-metadata.ts": ["localizeViewerBuiltInText"],
-    "scene-renderer.ts": ["formatOverlayClock"]
+    "scene-renderer.ts": ["formatOverlayClock"],
+    // Since M105 the IRC handler's answers and the request replies are written here (index.ts passes the
+    // language to answerChatEffect and replyToChatRequest, which the list holds to the same rule).
+    "chat-answers.ts": [
+      "formatChatSkipPausedReply",
+      "formatChatCommandsReply",
+      "formatChatNowReply",
+      "formatChatNextReply",
+      "formatChatRequestReply"
+    ],
+    "chat-programme-info.ts": ["buildChatProgrammeInfo", "localizeViewerBuiltInText"]
   };
 
   it("reads the files the gate named and finds the viewer text each one writes", () => {
@@ -481,7 +495,13 @@ describe("the chat bot says only what the catalogue wrote", () => {
   const flat = (text: string) => text.replace(/\s+/g, " ");
 
   it("finds the bot's lines: the worker's two skip refusals, the bridge's own sends, the game command's answers", () => {
-    expect(audits.get("index.ts")!.seen.filter((what) => what === "say").length).toBeGreaterThanOrEqual(2);
+    // The refusal of a vote that passed is said in index.ts; the IRC handler's refusal, !commands, !now,
+    // !next and the request replies in chat-answers.ts since M105 (R27), to which index.ts hands the
+    // bridge's own say and nothing that wraps it.
+    expect(audits.get("index.ts")!.seen.filter((what) => what === "say").length).toBeGreaterThanOrEqual(1);
+    expect(audits.get("chat-answers.ts")!.seen.filter((what) => what === "say").length).toBeGreaterThanOrEqual(6);
+    expect(worker.match(/say: twitchChatBridge\.say\.bind\(twitchChatBridge\)/g)).toHaveLength(3);
+    expect(worker).not.toMatch(/say: \([^)]*\) =>/);
     // Five answers and the cooldown's silence.
     expect(audits.get("index.ts")!.seen.filter((what) => what === "handleChatGameCommand").length).toBeGreaterThanOrEqual(6);
     // The check-in's confirmation and its failure, the game command's answer, and say() passing its line on.
@@ -497,7 +517,7 @@ describe("the chat bot says only what the catalogue wrote", () => {
   it("has one socket write for chat lines, so no line can go around the senders", () => {
     const writes = workerFiles.flatMap((name) => read(name).match(/PRIVMSG #\$\{/g) ?? []);
     expect(writes).toHaveLength(1);
-    expect(flat(bridge)).toContain("private sendChatMessage(message: string): void {");
+    expect(flat(bridge)).toContain('private sendChatMessage(message: string, priority: ChatLinePriority = "normal"): void {');
     expect(flat(bridge)).toContain("this.socket.write(`PRIVMSG #${this.channel} :${message}\\r\\n`); }");
   });
 

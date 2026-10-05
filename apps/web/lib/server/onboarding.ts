@@ -71,13 +71,18 @@ export function getGoLiveChecklist(state: AppState, now: Date = new Date()): GoL
   // Readiness counts what can air (M91), not rows: a placeholder source without a URL, a pool no block
   // uses or one with nothing ready in it, and a week with a block that resolves to nothing are not done.
   const deliveringSources = state.sources.filter(isDeliveringSource);
-  const scheduledPoolIds = new Set(state.scheduleBlocks.map((block) => block.poolId).filter(Boolean));
+  // Pools and the schedule are judged by the blocks of the coming week (the week view's projection), not
+  // by the stored rows: a schedule of dated blocks that have ended (M93) or start after the week counted as
+  // ready, and with it "First programme" read Done while the channel sat on the standby slate (review
+  // finding R18).
+  const week = state.scheduleBlocks.length > 0 ? getMaterializedProgrammingWeekPreview(state, now) : [];
+  const weekBlocks = week.flatMap((day) => day.blocks);
+  const scheduledPoolIds = new Set(weekBlocks.map((block) => block.poolId).filter(Boolean));
   const readyPools = state.pools.filter(
     (pool) => scheduledPoolIds.has(pool.id) && poolHasPlayableAsset({ pool, assets: state.assets })
   );
-  const unplayableBlocks =
-    state.scheduleBlocks.length > 0 ? findUnplayableWeekBlocks(state, getMaterializedProgrammingWeekPreview(state, now)) : [];
-  const scheduleReady = state.scheduleBlocks.length > 0 && unplayableBlocks.length === 0;
+  const unplayableBlocks = findUnplayableWeekBlocks(state, week);
+  const scheduleReady = weekBlocks.length > 0 && unplayableBlocks.length === 0;
   const routing = selectActiveDestinationGroup(
     state.destinations.map((destination) => ({
       id: destination.id,
@@ -219,7 +224,9 @@ export function getGoLiveChecklist(state: AppState, now: Date = new Date()): GoL
         ? `${state.scheduleBlocks.length} schedule block(s) are configured, and every block of the coming week has something to play.`
         : unplayableBlocks.length > 0
           ? `${unplayableBlocks.length} block(s) of the coming week have nothing to play: ${unplayableBlocks.slice(0, 3).join(" · ")}.`
-          : "Add blocks or apply a schedule template so the worker can build a full week of programming.",
+          : state.scheduleBlocks.length > 0
+            ? `None of the ${state.scheduleBlocks.length} schedule block(s) airs in the coming week: their dates have ended or lie later. Add blocks or apply a schedule template.`
+            : "Add blocks or apply a schedule template so the worker can build a full week of programming.",
       status: scheduleReady ? "ready" : "action",
       href: buildWorkspaceHref("program", "schedule")
     },

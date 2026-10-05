@@ -7,6 +7,24 @@ export type ExecFileTextOptions = {
   maxBufferBytes?: number;
 };
 
+/**
+ * Why execFileText failed, next to the unchanged message: a caller can tell a program that ran and said no
+ * (`exit`) from one that never answered (`timeout`, `spawn`) or was ended by a signal (`exit` with a null
+ * code), which local-durations.ts retries (review finding R14).
+ */
+export class ExecFileTextError extends Error {
+  readonly kind: "timeout" | "spawn" | "exit" | "overflow";
+  readonly exitCode: number | null;
+  readonly signal: string | null;
+
+  constructor(message: string, kind: ExecFileTextError["kind"], exitCode: number | null = null, signal: string | null = null) {
+    super(message);
+    this.kind = kind;
+    this.exitCode = exitCode;
+    this.signal = signal;
+  }
+}
+
 export function execFileText(file: string, args: string[], options: ExecFileTextOptions = {}): Promise<string> {
   return new Promise((resolve, reject) => {
     const maxBufferBytes = options.maxBufferBytes ?? 1024 * 1024 * 20;
@@ -96,28 +114,29 @@ export function execFileText(file: string, args: string[], options: ExecFileText
       const stderrText = stderrChunks.join("").trim();
 
       if (bufferOverflowed) {
-        reject(new Error(`Command exceeded the ${String(maxBufferBytes)} byte output limit and was terminated.`));
+        reject(new ExecFileTextError(`Command exceeded the ${String(maxBufferBytes)} byte output limit and was terminated.`, "overflow"));
         return;
       }
 
       if (timedOut) {
         reject(
-          new Error(
+          new ExecFileTextError(
             `Command timed out after ${String(options.timeoutMs)}ms and terminated ${
               options.killProcessGroup ? "its process group" : "the child process"
-            }.${stderrText ? ` ${stderrText}` : ""}`
+            }.${stderrText ? ` ${stderrText}` : ""}`,
+            "timeout"
           )
         );
         return;
       }
 
       if (spawnErrorMessage) {
-        reject(new Error(stderrText || spawnErrorMessage));
+        reject(new ExecFileTextError(stderrText || spawnErrorMessage, "spawn"));
         return;
       }
 
       if (code !== 0) {
-        reject(new Error(stderrText || `Command exited with code ${String(code ?? signal ?? "unknown")}.`));
+        reject(new ExecFileTextError(stderrText || `Command exited with code ${String(code ?? signal ?? "unknown")}.`, "exit", code, signal));
         return;
       }
 
@@ -141,6 +160,15 @@ export function execFileText(file: string, args: string[], options: ExecFileText
       timeoutHandle.unref?.();
     }
   });
+}
+
+/**
+ * Node has already reported this child's end: an exit code or a signal, or a negative code for a spawn that
+ * failed (which emits 'error' and never 'exit'). A listener for 'exit' attached now never runs, so whoever
+ * waits for one waits for good (M105, playout stop deadline).
+ */
+export function hasChildExited(child: { exitCode: number | null; signalCode: NodeJS.Signals | null }): boolean {
+  return child.exitCode !== null || child.signalCode !== null;
 }
 
 export type StallGuardResult<T> =
