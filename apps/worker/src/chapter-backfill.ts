@@ -9,13 +9,23 @@
 //
 // - budgeted: at most a handful of probes per cycle (env-tunable, capped so a cycle of worst-case
 //   probes stays inside the cycle-await ceiling that guards the loop stall budget);
-// - polite: a probe runs once per asset ever when it completes — "no chapters" is a final answer,
-//   not a retry — and failures wait out a cooldown, following the twitch-vod-cache pattern;
-// - safe: discovered chapters are stored through the same only-fill-empty rule as re-ingest, so
-//   operator edits always win, and the stored shape is the same chaptersJson the boundary
-//   emission and Helix sync already consume — nothing downstream changes.
+// - polite: a probe that found chapters runs once per asset, an empty answer is asked again after a
+//   week, and failures wait out a cooldown, following the twitch-vod-cache pattern; the exception
+//   (M108) is a Twitch archive's provisional answer — the single chapter yt-dlp makes up when Twitch
+//   returns no chapter list, or anything said about a VOD still being recorded — which is asked
+//   again within hours until it settles, six counted rechecks at most (CHAPTER_PROBE_RECHECK_CAP);
+// - safe: discovered chapters fill only an empty list, and a provisional probe-filled list is
+//   replaced only by a compare-and-swap inside the state write lock, so operator edits always win;
+//   the stored shape is the same chaptersJson the boundary emission and Helix sync already
+//   consume — nothing downstream changes.
 import type { AssetRecord, SourceRecord } from "@stream247/db";
-import { buildAssetChaptersFromSourceMetadata, parseAssetChaptersJson, serializeAssetChapters } from "@stream247/core";
+import {
+  buildAssetChaptersFromSourceMetadata,
+  isProvisionalProbedChapterList,
+  normalizeChapterProbeSettleLevel,
+  parseAssetChaptersJson,
+  serializeAssetChapters
+} from "@stream247/core";
 import { getCycleAwaitCeilingMs } from "./cycle-budget.js";
 import { execFileText } from "./process-utils.js";
 
@@ -29,6 +39,15 @@ const DEFAULT_FAILURE_COOLDOWN_SECONDS = 30 * 60;
  * rate limit or an extractor regression is not mis-categorised on air for a season.
  */
 export const DEFAULT_CHAPTER_EMPTY_RECHECK_SECONDS = 7 * 24 * 60 * 60;
+/**
+ * How long a provisional Twitch chapter list (M108) waits before it is asked again. Hours, not the
+ * week an empty answer waits: the list is on air under the wrong game until it is corrected, a VOD
+ * still being recorded gains chapters for as long as the stream runs (Twitch ends a broadcast after
+ * 48 hours at the latest), and a settled list costs nothing more. At two hours a recording VOD's
+ * list lags its stream by two hours at most, and a single-game archive probed after its stream ended
+ * costs one extra probe.
+ */
+export const DEFAULT_CHAPTER_PROVISIONAL_RECHECK_SECONDS = 2 * 60 * 60;
 /** A probe only reads metadata; anything slower than this is a hung network call. */
 const CHAPTER_PROBE_TIMEOUT_MS = 30_000;
 
@@ -38,6 +57,8 @@ export type ChapterBackfillConfig = {
   failureCooldownMs: number;
   /** How long an empty-but-valid result is trusted before one recheck. 0 disables rechecks. */
   emptyResultRecheckMs: number;
+  /** How long a provisional Twitch chapter list waits before the next recheck. 0 disables them. */
+  provisionalRecheckMs: number;
   probeTimeoutMs: number;
   ytDlpBinary: string;
   ffprobeBinary: string;
@@ -58,26 +79,39 @@ export function getChapterBackfillConfig(env: NodeJS.ProcessEnv): ChapterBackfil
 
   // 0 is a meaningful setting here (never recheck), so it is kept rather than replaced by the
   // default the way a nonsensical value is. An unset or blank variable is not a 0.
-  const rawRecheckText = env.CHAPTER_BACKFILL_EMPTY_RECHECK_SECONDS?.trim() ?? "";
-  const rawRecheck = Number(rawRecheckText);
-  const recheckSeconds =
-    rawRecheckText !== "" && Number.isFinite(rawRecheck) && rawRecheck >= 0
-      ? Math.floor(rawRecheck)
-      : DEFAULT_CHAPTER_EMPTY_RECHECK_SECONDS;
+  const recheckSeconds = readRecheckSeconds(env.CHAPTER_BACKFILL_EMPTY_RECHECK_SECONDS, DEFAULT_CHAPTER_EMPTY_RECHECK_SECONDS);
+  const provisionalRecheckSeconds = readRecheckSeconds(
+    env.CHAPTER_BACKFILL_PROVISIONAL_RECHECK_SECONDS,
+    DEFAULT_CHAPTER_PROVISIONAL_RECHECK_SECONDS
+  );
 
   return {
     perCycleBudget: Math.min(requestedBudget, budgetCeiling),
     failureCooldownMs: cooldownSeconds * 1000,
     emptyResultRecheckMs: recheckSeconds * 1000,
+    provisionalRecheckMs: provisionalRecheckSeconds * 1000,
     probeTimeoutMs,
     ytDlpBinary: env.YT_DLP_BIN || "yt-dlp",
     ffprobeBinary: env.FFPROBE_BIN || "ffprobe"
   };
 }
 
+function readRecheckSeconds(value: string | undefined, fallbackSeconds: number): number {
+  const text = value?.trim() ?? "";
+  const seconds = Number(text);
+  return text !== "" && Number.isFinite(seconds) && seconds >= 0 ? Math.floor(seconds) : fallbackSeconds;
+}
+
 export type ChapterBackfillAsset = Pick<
   AssetRecord,
-  "id" | "sourceId" | "path" | "chaptersJson" | "chaptersProbeStatus" | "chaptersProbedAt"
+  | "id"
+  | "sourceId"
+  | "path"
+  | "chaptersJson"
+  | "chaptersProbeStatus"
+  | "chaptersProbedAt"
+  | "chaptersProbeSettleLevel"
+  | "chaptersProbeRechecks"
 >;
 export type ChapterBackfillSource = Pick<SourceRecord, "id" | "connectorKind" | "enabled">;
 
@@ -87,6 +121,11 @@ export type ChapterBackfillCandidate = {
   probe: "yt-dlp" | "ffprobe";
   /** True for Twitch archives, where the chapter title names the game and thus the category. */
   chapterTitleNamesCategory: boolean;
+  /**
+   * What the asset held when it was selected. The write compares against it inside the state write
+   * lock, so an operator edit that lands while the probe runs is never overwritten (M108).
+   */
+  selectedWith: { chaptersJson: string; chaptersProbeStatus: "" | "ok" | "failed" };
 };
 
 // Which connector kinds can deliver chapters for already-listed assets, and how. twitch-vod is
@@ -124,20 +163,64 @@ function isWithinProbeInterval(probedAt: string | undefined, intervalMs: number,
  * variant and a yt-dlp extractor regression produce, and there was no way back out of it: unlike
  * "failed", which healed through its cooldown, "ok" never healed. So an empty success is treated
  * as provisional and rechecked once, much later.
+ *
+ * A probe-filled list was absorbing in the same way (M108): on the DUT 2026-10-06, 41 of 46 Twitch
+ * archives held the one chapter at offset 0 that yt-dlp invents when Twitch returns no chapter list,
+ * filled by early probes (while the VOD was still being recorded, or before Twitch had computed its
+ * chapters) and kept forever. Such a list
+ * is provisional too (isProvisionalProbedChapterList), and only on a source whose chapter titles
+ * name the category: there a wrong single chapter is a wrong game on air, while a YouTube or
+ * embedded single chapter is free text the uploader chose. Operator edits reset the status to "" and
+ * so never count as probe-filled. A list whose counted rechecks reached CHAPTER_PROBE_RECHECK_CAP is
+ * settled whatever its level: a source that keeps failing or answering empty or shorter must not cost
+ * a probe every interval for as long as it is listed (M108 gate).
  */
-type ProbeDisposition = "never-probed" | "retry-failure" | "recheck-empty" | "waiting";
+type ProbeDisposition = "never-probed" | "retry-failure" | "recheck-empty" | "recheck-provisional" | "waiting" | "settled";
 
 function classifyProbeDisposition(
   asset: ChapterBackfillAsset,
-  args: { failureCooldownMs: number; emptyResultRecheckMs: number; nowMs: number }
+  args: {
+    chapterTitleNamesCategory: boolean;
+    failureCooldownMs: number;
+    emptyResultRecheckMs: number;
+    provisionalRecheckMs: number;
+    nowMs: number;
+  }
 ): ProbeDisposition {
+  const chapters = parseAssetChaptersJson(asset.chaptersJson);
+  if (chapters.length > 0) {
+    // Operator edits ("" status), ingest fills, settled probe answers and capped rechecks are final.
+    if (
+      !args.chapterTitleNamesCategory ||
+      asset.chaptersProbeStatus !== "ok" ||
+      !isProvisionalProbedChapterList(chapters, asset.chaptersProbeSettleLevel, asset.chaptersProbeRechecks) ||
+      args.provisionalRecheckMs <= 0
+    ) {
+      return "settled";
+    }
+    return isWithinProbeInterval(asset.chaptersProbedAt, args.provisionalRecheckMs, args.nowMs)
+      ? "waiting"
+      : "recheck-provisional";
+  }
+
   if (asset.chaptersProbeStatus === "failed") {
     return isWithinProbeInterval(asset.chaptersProbedAt, args.failureCooldownMs, args.nowMs) ? "waiting" : "retry-failure";
   }
 
-  // Only ever an *empty* success reaches here: a probe that found chapters stored them, and an
-  // asset with stored chapters was filtered out before this point.
+  // Only an *empty* success reaches here: an asset with stored chapters was handled above.
   if (asset.chaptersProbeStatus === "ok") {
+    // An empty answer of a VOD still being recorded (level 0) is provisional like any other answer
+    // taken then (M108): the archive gains its chapters within hours, and a week without any would
+    // be the absorbing state this file exists to avoid (review of 2026-10-06).
+    if (
+      args.chapterTitleNamesCategory &&
+      args.provisionalRecheckMs > 0 &&
+      normalizeChapterProbeSettleLevel(asset.chaptersProbeSettleLevel) === 0
+    ) {
+      return isWithinProbeInterval(asset.chaptersProbedAt, args.provisionalRecheckMs, args.nowMs)
+        ? "waiting"
+        : "recheck-provisional";
+    }
     // 0 means an operator turned rechecks off and accepts the old absorbing behaviour.
     if (args.emptyResultRecheckMs <= 0) {
       return "waiting";
@@ -153,15 +236,17 @@ function classifyProbeDisposition(
 /**
  * Pick which assets this cycle spends its probe budget on.
  *
- * Skips anything that already has chapters — operator edits and earlier fills are final and are
- * never re-probed — plus failures inside their cooldown and empty results inside their (much
- * longer) recheck interval.
+ * Skips anything whose chapters are final — operator edits, ingest fills, settled probe answers and
+ * every list of a source whose chapter titles are free text — plus failures inside their cooldown,
+ * empty results inside their (much longer) recheck interval and provisional Twitch lists inside
+ * theirs.
  *
- * Priority is never-probed, then failure retries, then empty-result rechecks. A newly ingested
- * asset must get its first probe before the library's settled backlog is revisited, and rechecks
- * are the least urgent of the three: they are re-asking a question that already has a plausible
- * answer. The per-cycle budget is unchanged, so rechecks cost cycle time only in cycles where
- * nothing more urgent is waiting — the cycle-await ceiling invariant is untouched.
+ * Priority is never-probed, then failure retries, then rechecks (empty and provisional alike,
+ * oldest probe first). A newly ingested asset must get its first probe before the library's
+ * settled backlog is revisited, and rechecks are the least urgent of the three: they are re-asking
+ * a question that already has a plausible answer. The per-cycle budget is unchanged, so rechecks
+ * cost cycle time only in cycles where nothing more urgent is waiting — the cycle-await ceiling
+ * invariant is untouched.
  */
 export function selectChapterBackfillCandidates(args: {
   assets: ChapterBackfillAsset[];
@@ -169,6 +254,7 @@ export function selectChapterBackfillCandidates(args: {
   budget: number;
   failureCooldownMs: number;
   emptyResultRecheckMs: number;
+  provisionalRecheckMs: number;
   nowMs: number;
 }): ChapterBackfillCandidate[] {
   if (args.budget <= 0) {
@@ -176,10 +262,10 @@ export function selectChapterBackfillCandidates(args: {
   }
 
   const sourceById = new Map(args.sources.map((source) => [source.id, source] as const));
-  const buckets: Record<Exclude<ProbeDisposition, "waiting">, Array<{ asset: ChapterBackfillAsset; candidate: ChapterBackfillCandidate }>> = {
+  const buckets: Record<"never-probed" | "retry-failure" | "recheck", Array<{ asset: ChapterBackfillAsset; candidate: ChapterBackfillCandidate }>> = {
     "never-probed": [],
     "retry-failure": [],
-    "recheck-empty": []
+    recheck: []
   };
 
   for (const asset of args.assets) {
@@ -189,20 +275,27 @@ export function selectChapterBackfillCandidates(args: {
       continue;
     }
 
-    if (parseAssetChaptersJson(asset.chaptersJson).length > 0) {
-      continue;
-    }
-
     const disposition = classifyProbeDisposition(asset, {
+      chapterTitleNamesCategory: probe.chapterTitleNamesCategory,
       failureCooldownMs: args.failureCooldownMs,
       emptyResultRecheckMs: args.emptyResultRecheckMs,
+      provisionalRecheckMs: args.provisionalRecheckMs,
       nowMs: args.nowMs
     });
-    if (disposition === "waiting") {
+    if (disposition === "waiting" || disposition === "settled") {
       continue;
     }
 
-    buckets[disposition].push({ asset, candidate: { assetId: asset.id, path: asset.path, ...probe } });
+    const bucket = disposition === "recheck-empty" || disposition === "recheck-provisional" ? "recheck" : disposition;
+    buckets[bucket].push({
+      asset,
+      candidate: {
+        assetId: asset.id,
+        path: asset.path,
+        ...probe,
+        selectedWith: { chaptersJson: asset.chaptersJson ?? "[]", chaptersProbeStatus: asset.chaptersProbeStatus ?? "" }
+      }
+    });
   }
 
   // Oldest outcome first within a bucket, so nothing sits at the back of the queue forever.
@@ -214,7 +307,7 @@ export function selectChapterBackfillCandidates(args: {
   return [
     ...buckets["never-probed"],
     ...buckets["retry-failure"].sort(byProbedAt),
-    ...buckets["recheck-empty"].sort(byProbedAt)
+    ...buckets.recheck.sort(byProbedAt)
   ]
     .slice(0, args.budget)
     .map((entry) => entry.candidate);
@@ -226,8 +319,36 @@ export function selectChapterBackfillCandidates(args: {
  * candidates — resolution to a Helix id happens at sync time, exactly as before.
  */
 export function buildChaptersJsonFromYtDlpProbe(output: string, options: { chapterTitleNamesCategory: boolean }): string {
-  const payload = JSON.parse(output) as { chapters?: Array<{ start_time?: number; title?: string }> };
-  return serializeAssetChapters(buildAssetChaptersFromSourceMetadata(payload.chapters, options));
+  return parseYtDlpChapterProbe(output, options).chaptersJson;
+}
+
+/**
+ * The chapters of a `yt-dlp --dump-single-json` payload and whether the VOD was still being recorded.
+ *
+ * yt-dlp's Twitch extractor sets `is_live` true for an archive whose preview is Twitch's
+ * "404_processing" picture, which is what a VOD still being recorded shows (`_extract_info_gql`;
+ * read in yt-dlp 2026.08.19, the playout image's version, where it holds only for broadcast type
+ * ARCHIVE, so a highlight that is still processing does not count — yt-dlp issue 14455). The output
+ * also carries `live_status` "is_live", derived from the same field. Anything else — false, null (no
+ * preview at all), a missing field from another extractor or an older yt-dlp — reads as finished: an
+ * unknown state must not keep an asset provisional forever, and the single-chapter rule still
+ * catches the made-up chapter of a finished VOD. The database believes a true only within Twitch's
+ * longest broadcast after the asset was first listed (isRecordingAnswerPossible), since a heuristic
+ * can stick.
+ */
+export function parseYtDlpChapterProbe(
+  output: string,
+  options: { chapterTitleNamesCategory: boolean }
+): { chaptersJson: string; recording: boolean } {
+  const payload = JSON.parse(output) as {
+    chapters?: Array<{ start_time?: number; title?: string }>;
+    is_live?: unknown;
+    live_status?: unknown;
+  };
+  return {
+    chaptersJson: serializeAssetChapters(buildAssetChaptersFromSourceMetadata(payload.chapters, options)),
+    recording: payload.is_live === true || payload.live_status === "is_live"
+  };
 }
 
 /**
@@ -244,7 +365,9 @@ export function buildChaptersJsonFromFfprobeOutput(output: string): string {
   return serializeAssetChapters(buildAssetChaptersFromSourceMetadata(entries, { chapterTitleNamesCategory: false }));
 }
 
-export type ChapterProbeResult = { status: "ok"; chaptersJson: string } | { status: "failed"; error: string };
+export type ChapterProbeResult =
+  | { status: "ok"; chaptersJson: string; recording: boolean }
+  | { status: "failed"; error: string };
 
 /**
  * Run one metadata-only probe. Never throws: a probe failure is an expected outcome the caller
@@ -262,7 +385,7 @@ export async function probeAssetChapters(
         ["-v", "error", "-show_chapters", "-print_format", "json", candidate.path],
         { timeoutMs: config.probeTimeoutMs, killProcessGroup: true, maxBufferBytes: 4 * 1024 * 1024 }
       );
-      return { status: "ok", chaptersJson: buildChaptersJsonFromFfprobeOutput(output) };
+      return { status: "ok", chaptersJson: buildChaptersJsonFromFfprobeOutput(output), recording: false };
     }
 
     // Same invocation the twitch-vod sync uses: --dump-single-json simulates, nothing downloads.
@@ -270,10 +393,7 @@ export async function probeAssetChapters(
       timeoutMs: config.probeTimeoutMs,
       killProcessGroup: true
     });
-    return {
-      status: "ok",
-      chaptersJson: buildChaptersJsonFromYtDlpProbe(output, { chapterTitleNamesCategory: candidate.chapterTitleNamesCategory })
-    };
+    return { status: "ok", ...parseYtDlpChapterProbe(output, { chapterTitleNamesCategory: candidate.chapterTitleNamesCategory }) };
   } catch (error) {
     return { status: "failed", error: error instanceof Error ? error.message : String(error) };
   }

@@ -69,6 +69,13 @@ describe("chapter boundary detection", () => {
     { offsetSeconds: 600, categoryName: "Music", title: "Second hour" },
     { offsetSeconds: 1800, categoryName: "Gaming", title: "Third hour" }
   ];
+  const key = (offset: number) => {
+    const chapter = chapters.find((entry) => entry.offsetSeconds === offset);
+    if (!chapter) {
+      throw new Error(`no chapter at ${String(offset)}`);
+    }
+    return buildAssetChapterKey(windowKey, chapter);
+  };
 
   it("fires each crossed boundary exactly once", () => {
     const first = getDueAssetChapterBoundaries({ windowKey, chapters, firedChapterKeys: [], elapsedSeconds: 15 });
@@ -83,14 +90,102 @@ describe("chapter boundary detection", () => {
     expect(second.dueChapters).toEqual([]);
   });
 
-  it("catches up on every boundary missed during a stall, in offset order", () => {
+  // M108: until then a stall announced both boundaries, in offset order. The earlier chapter is
+  // over by the time the cycle sees it, so announcing it names a game no longer on air.
+  it("announces only the later boundary when two pass within one cycle, and marks both fired", () => {
     const progress = getDueAssetChapterBoundaries({
       windowKey,
       chapters,
-      firedChapterKeys: [buildAssetChapterKey(windowKey, 0)],
+      firedChapterKeys: [key(0)],
       elapsedSeconds: 2000
     });
-    expect(progress.dueChapters.map((chapter) => chapter.offsetSeconds)).toEqual([600, 1800]);
+    expect(progress.dueChapters.map((chapter) => chapter.offsetSeconds)).toEqual([1800]);
+    expect(progress.firedChapterKeys).toEqual(
+      expect.arrayContaining([key(600), key(1800)])
+    );
+
+    const next = getDueAssetChapterBoundaries({
+      windowKey,
+      chapters,
+      firedChapterKeys: progress.firedChapterKeys,
+      elapsedSeconds: 2030
+    });
+    expect(next.dueChapters).toEqual([]);
+  });
+
+  it("announces a single crossing exactly as before", () => {
+    const progress = getDueAssetChapterBoundaries({
+      windowKey,
+      chapters,
+      firedChapterKeys: [key(0)],
+      elapsedSeconds: 615
+    });
+    expect(progress.dueChapters.map((chapter) => chapter.offsetSeconds)).toEqual([600]);
+  });
+
+  // Seen on the DUT 2026-10-06: a probe filled the chapters of the item on air two hours in, and
+  // every boundary between offset 0 and now fired in one cycle.
+  it("announces only the current chapter when chapters arrive for the item on air mid-item", () => {
+    const progress = getDueAssetChapterBoundaries({ windowKey, chapters, firedChapterKeys: [], elapsedSeconds: 7200 });
+    expect(progress.dueChapters).toEqual([{ offsetSeconds: 1800, categoryName: "Gaming", title: "Third hour" }]);
+    expect([...progress.firedChapterKeys].sort()).toEqual(
+      [0, 600, 1800].map((offset) => key(offset)).sort()
+    );
+  });
+
+  it("announces only the current chapter after a worker restart empties the fired set mid-item", () => {
+    // Same playout process, so the same window key; only the worker's memory is new.
+    const progress = getDueAssetChapterBoundaries({ windowKey, chapters, firedChapterKeys: [], elapsedSeconds: 900 });
+    expect(progress.dueChapters.map((chapter) => chapter.offsetSeconds)).toEqual([600]);
+  });
+
+  it("announces nothing when a replaced list adds a boundary before the chapter already announced", () => {
+    // The old list had 0 and 1800, both announced; the new one adds 600, which is already over.
+    const progress = getDueAssetChapterBoundaries({
+      windowKey,
+      chapters,
+      firedChapterKeys: [key(0), key(1800)],
+      elapsedSeconds: 2000
+    });
+    expect(progress.dueChapters).toEqual([]);
+    expect(progress.firedChapterKeys).toContain(key(600));
+  });
+
+  // M108 review: a recheck replaces yt-dlp's stand-in while the archive is on air, in its first hour.
+  // The chapter on air keeps offset 0 but now names another game; keyed on the offset alone it counted
+  // as announced and the log never showed it.
+  it("announces the chapter on air once more when a replaced list changes what it says", () => {
+    const standIn = { offsetSeconds: 0, categoryName: "WARDOGS", title: "WARDOGS" };
+    const replaced = [
+      { offsetSeconds: 0, categoryName: "Just Chatting", title: "Just Chatting" },
+      { offsetSeconds: 3600, categoryName: "WARDOGS", title: "WARDOGS" }
+    ];
+    const progress = getDueAssetChapterBoundaries({
+      windowKey,
+      chapters: replaced,
+      firedChapterKeys: [buildAssetChapterKey(windowKey, standIn)],
+      elapsedSeconds: 1000
+    });
+    expect(progress.dueChapters).toEqual([replaced[0]]);
+
+    const next = getDueAssetChapterBoundaries({
+      windowKey,
+      chapters: replaced,
+      firedChapterKeys: progress.firedChapterKeys,
+      elapsedSeconds: 1030
+    });
+    expect(next.dueChapters).toEqual([]);
+  });
+
+  it("announces nothing when a replaced list keeps the chapter on air as it was", () => {
+    const standIn = { offsetSeconds: 0, categoryName: "WARDOGS", title: "WARDOGS" };
+    const progress = getDueAssetChapterBoundaries({
+      windowKey,
+      chapters: [standIn, { offsetSeconds: 3600, categoryName: "Just Chatting", title: "Just Chatting" }],
+      firedChapterKeys: [buildAssetChapterKey(windowKey, standIn)],
+      elapsedSeconds: 1000
+    });
+    expect(progress.dueChapters).toEqual([]);
   });
 
   it("starts a fresh fired set under a new window key when playback restarts", () => {
@@ -100,7 +195,7 @@ describe("chapter boundary detection", () => {
     const progress = getDueAssetChapterBoundaries({
       windowKey: restartedWindowKey,
       chapters,
-      firedChapterKeys: [buildAssetChapterKey(windowKey, 0), buildAssetChapterKey(windowKey, 600)],
+      firedChapterKeys: [key(0), key(600)],
       elapsedSeconds: 15
     });
     expect(progress.dueChapters.map((chapter) => chapter.offsetSeconds)).toEqual([0]);

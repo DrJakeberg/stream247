@@ -43,7 +43,7 @@ How this file works:
 | M105 Review Fixes Before 2.3 | Reliability + Docs | Now | Complete | The defects the 2026-10-05 review of M84-M104 confirmed are fixed before the next candidate, and the repository stops advertising a 2.2.0 that does not exist | A dated or one-off block takes the air at its start and gives it back at its end, cutting the item on air (owner decision 5.1 Q1, 2026-10-01); a scheduled insert from a source outside the block's pool plays to its end; an upgrade and rollback section for everything since 2.1.0 with a pre-rollback step for dated blocks, the downgrade-note rule back in AGENTS.md; compose and env defaults pin a release that exists; the CHANGELOG lists no 2.2.0; the confirmed minor findings fixed or recorded with a reason (list: `planning/review-2026-10-05.md`); `pnpm validate`, baselines and smokes green | worker, core, web, db, docs | medium | revert the merge |
 | M106 Release 2.3.0 | Release | Now | Planned | Ship 2.2.0-rc.1 (M64, M75, M76, M78-M80, M82) and M84-M105 as 2.3.0 (owner decision 2026-10-05) | `v2.3.0-rc.1` on the DUT after a PostgreSQL backup, migrations counted, channel language set to German, the DUT checks run, a 24-h soak, then 2.3.0 tagged with its GitHub release and repinned | release, docs | medium | repin v2.1.0 after the dated-block step |
 | M107 The Overlay Shows The Next Video | UX | Now | Complete | The on-air "Next" card names the video that airs next, as `!next` does (owner request 2026-10-06: "the overlay shows the next programme block, what comes at 16:00, but what interests me is what !next says, the next video") (ships in 2.3.1 after 2.3.0; owner decision 2026-10-06, so the running 2.3.0-rc.1 soak is not reset) | One prediction of the item that will actually air next serves the scene payload, text mode and `!next`: the playout's next queue item while something plays, from the block that will be current when the item on air ends (the next block's pool when the item runs past the block end, a dated block's first pick when it takes over first), with its expected start time; the next block only when nothing plays or no next item is known; both languages; tests that the card and `!next` agree | core, worker, tests, docs | low | revert the merge |
-| M108 Twitch Archives Get Their Whole Chapter List | Reliability | Now | Planned | A Twitch archive whose chapter probe found only its first chapter (one chapter at offset 0) is probed again until the list is stable, and chapters that arrive while the item is on air move the category to the chapter that is current, not through every past boundary at once (found on the DUT 2026-10-06: the overlay said "Just Chatting" for a VOD that had moved on to another game) | A probe-filled single chapter at offset 0 of a `twitch-channel` asset is re-probed after a cooldown, a bounded number of times, oldest probe first, inside the existing per-cycle budget; a longer list replaces it, two equal answers make it final; chapters an operator edited are never re-probed or replaced; when an asset on air gains chapters, only the boundary containing the current offset fires (one category update, one as-run/audit line); unit tests for the selection and the boundary, docs updated | worker (chapter backfill, chapter boundary), db if a marker is needed, tests, docs | low: a few more yt-dlp probes per hour | revert the merge |
+| M108 Twitch Archives Get Their Whole Chapter List | Reliability | Now | Complete | A Twitch archive whose chapter probe found only its first chapter (one chapter at offset 0) is probed again until the list is stable, and chapters that arrive while the item is on air move the category to the chapter that is current, not through every past boundary at once (found on the DUT 2026-10-06: the overlay said "Just Chatting" for a VOD that had moved on to another game) | A probe-filled single chapter at offset 0 of a `twitch-channel` asset is re-probed after a cooldown, a bounded number of times, oldest probe first, inside the existing per-cycle budget; a longer list replaces it, two equal answers make it final; chapters an operator edited are never re-probed or replaced; when an asset on air gains chapters, only the boundary containing the current offset fires (one category update, one runtime log line); unit tests for the selection and the boundary, docs updated | worker (chapter backfill, chapter boundary), db if a marker is needed, tests, docs | low: a few more yt-dlp probes per hour | revert the merge |
 
 M84-M104 were approved by the owner on 2026-10-02 (all 21, as written). Their source is `planning/proposal-2026-10.md`: references in these rows such as "decided 5.1 Q5", "2.5a", "3.3" and finding ids (S1, C3, I1, U7, …) point into that file and the research files under `planning/research/`. Order: M84 first, then the table order with M88 before M93, M93 before M100 and M91 before M99; one milestone per thread, the next starts after the previous one is merged.
 
@@ -448,6 +448,43 @@ deployed; the release that ships them records the results.
   on-air Next card names the video the next block's pool starts with and `about <its expected start>` /
   `ca. …`, not the block's window, and `!next` in the chat of `jimpanse247` names the same title with the
   same time.
+
+- M108, before the repin: the first command lists the Twitch archives whose chapter list is marked `ok`
+  although an operator saved the asset's metadata (a pre-M108 probe that finished while the operator saved
+  chapters marked the operator's list `ok`, and M108 would ask it again). For each row whose chapters are the
+  operator's (a probe-filled list has the same category and title in every chapter), save the list once more
+  under the asset's *Chapters* panel. Passes when every listed row is either probe-filled or re-saved.
+- M108, after the repin: both migrations ran (the second command prints `2`), and every Twitch archive's
+  probe-filled list is asked once more. Run the third command right after the repin and again three hours
+  later: then no provisional row (any `chapters` at `level` 0, `chapters` = 1 at `level` 1 or 2, `capped`
+  false) has its `oldest` probe more than two and a half hours old (UTC; a VOD still being recorded stays at
+  0 with recent probes), and an archive that spans several games has its whole list (the overlay names the
+  game the archive is in). A `capped` row is one whose source kept failing or answering empty or shorter;
+  expect none in the first hours (six counted rechecks take ten hours at least: a list stored before M108
+  gets its first right after the repin, the other five two hours apart). When a list arrives for the item
+  on air, or replaces what its chapter on air says, the last command shows one `playout.chapter.boundary`
+  line for that asset at that moment, not one per past chapter; each line shows time, asset and offset.
+
+  ```sh
+  ssh dut 'docker exec -i stream247-postgres-1 psql -U stream247 -d stream247' <<'SQL'
+  SELECT a.id, a.chapters_json FROM assets a JOIN sources s ON s.id = a.source_id
+   WHERE s.connector_kind = 'twitch-channel' AND a.chapters_probe_status = 'ok' AND a.chapters_json <> '[]'
+     AND EXISTS (SELECT 1 FROM audit_events e WHERE e.type = 'asset.metadata.updated'
+                 AND e.message = 'Updated asset metadata for ' || a.id || '.');
+  SQL
+  ssh dut 'docker exec -i stream247-postgres-1 psql -U stream247 -d stream247 -At' <<'SQL'
+  SELECT COUNT(*) FROM schema_migrations
+   WHERE id IN ('20261006_001_asset_chapter_probe_settle_level', '20261006_002_asset_chapter_probe_rechecks');
+  SQL
+  ssh dut 'docker exec -i stream247-postgres-1 psql -U stream247 -d stream247' <<'SQL'
+  SELECT a.chapters_probe_settle_level AS level, jsonb_array_length(a.chapters_json::jsonb) AS chapters,
+         a.chapters_probe_rechecks >= 6 AS capped, COUNT(*), MIN(a.chapters_probed_at) AS oldest
+    FROM assets a JOIN sources s ON s.id = a.source_id
+   WHERE s.connector_kind = 'twitch-channel' AND a.chapters_probe_status = 'ok'
+   GROUP BY 1, 2, 3 ORDER BY 1, 2, 3;
+  SQL
+  ssh dut 'docker logs --since 6h stream247-playout-1 2>&1 | grep playout.chapter.boundary | grep -oE "\"(ts|assetId|offsetSeconds)\":(\"[^\"]*\"|[0-9]+)" | paste - - -'
+  ```
 
 - The checks of 2.2.0-rc.1 are in the archive, sections M75-M82. That candidate never reached the DUT, so
   the 2.3.0 candidate runs them too.
@@ -1487,3 +1524,97 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   current offset fired at once (several category changes in one cycle). Only the current one should.
 - Twitch archives from `--flat-playlist` carry no publish date (`published_at` is empty), so "recent" cannot be
   read from it; use the probe count and probe time, or the VOD id order the stable comparator already uses.
+- Evidence for the rule (2026-10-06): yt-dlp's Twitch extractor (`_extract_chapters`) yields one chapter
+  named after the VOD's current game when Twitch returns no "moments", and yt-dlp gives it offset 0 and the
+  VOD's length as its end; the three DUT archives checked returned exactly that with `is_live` false,
+  `was_live` true. yt-dlp 2026.08.19 (`_extract_info_gql`, read in a local copy of that version) sets
+  `is_live` true for an archive whose preview is Twitch's `404_processing` picture, only for broadcast type
+  ARCHIVE (the highlight false positive of yt-dlp issue 14455).
+- Built: a probe-filled list (status `ok`) of a source whose chapter titles name the category
+  (`twitch-channel`) is provisional while it is one chapter at offset 0 below the settled level, or while no
+  answer taken after the recording ended backs it (level 0, any shape, an empty list included). It is probed
+  again `CHAPTER_BACKFILL_PROVISIONAL_RECHECK_SECONDS` after its last probe (default 7200, `0` off, parsed
+  like `CHAPTER_BACKFILL_EMPTY_RECHECK_SECONDS`), in one recheck bucket with the empty rechecks behind
+  never-probed assets and failure retries, oldest probe first, inside the unchanged per-cycle budget.
+- Built: a new additive column `assets.chapters_probe_settle_level` (migration
+  `20261006_001_asset_chapter_probe_settle_level`, default 0, downgrade note in `docs/deployment.md`,
+  *Upgrading Past 2.3.0*) counts the answers taken after the recording ended that produced, replaced or
+  repeated the stored list: 0 = none yet, 1-2 = that many, 3 = final. A finished answer that repeats a list a
+  finished answer produced makes it final; the third finished answer that produces or replaces it does too,
+  so a single-game archive probed after its stream ended costs one recheck and a list whose answers keep
+  changing at most two. An empty or shorter answer and a failed probe keep the list and its level: they say
+  nothing about the list, and counting them let a throttled hour make a partial list final (review of
+  2026-10-06). Such a list is asked again every interval until an answer confirms or replaces it, six
+  counted rechecks at most (next bullet). An empty answer while recording stays at 0 and is asked again
+  on the provisional interval, not after the week. yt-dlp's `is_live` counts only within 48 hours of the
+  asset's `created_at` (`isRecordingAnswerPossible`; Twitch's longest broadcast, and an archive is listed
+  only once its broadcast started), so a preview picture that never changes cannot keep a list at 0.
+  A column, not a new status value: an older image maps an unknown status to `""`, which reads as an
+  operator edit; it ignores the column. Existing rows read 0, not 1 (review of 2026-10-06): nobody noted
+  whether they were probed while their VOD was recording, and the lead's re-probe of the 41 cleared lists
+  ran while the channel may have been live, so each Twitch list is asked once more (a single chapter twice):
+  some 70 probes on the DUT, behind new items.
+- Built after the gate (2026-10-06): the acceptance asks for "a bounded number of times", but an empty or
+  shorter answer and a failed probe keep the list and its level (a failed recheck keeps `ok`), so a
+  provisional list whose rechecks never answered properly was asked every interval forever: a broken
+  yt-dlp extractor or a deleted VOD would have cost a call per provisional archive every two hours, from the
+  address the archives are also played from. A second additive column `assets.chapters_probe_rechecks`
+  (migration `20261006_002_asset_chapter_probe_rechecks`, default 0) counts the rechecks of a stored
+  non-empty probe list that came back finished (same, replacing, empty, shorter) or failed, except answers
+  yt-dlp marks as recording and failures while a recording answer is still possible
+  (`isRecordingAnswerPossible`), which the 48-hour window bounds already. At `CHAPTER_PROBE_RECHECK_CAP` = 6
+  the list is settled whatever its level (`isProvisionalProbedChapterList`), the stored list kept. Six: the
+  longest chain that settles a list is three finished answers (three replacements reach level 3; the
+  confirmations get there sooner), and as many again leaves room for answers that say nothing. The count is
+  raised in the same compare-and-swap as the level, carried by every whole-state write, upsert and hydrate
+  like the level, and starts anew when a probe fills an empty list (an operator who deletes every chapter
+  hands the archive back with a fresh count); the first probe and the weekly empty-answer recheck are not
+  counted. A migration of its own rather than a second statement in `20261006_001`: that one never shipped,
+  but a migration id that ran anywhere (a dev stack, a test database) never runs again.
+- Correction to the row (gate of 2026-10-06): the acceptance said "one as-run/audit line"; chapter
+  boundaries have no as-run or audit row, only the runtime log line `playout.chapter.boundary`, so the row
+  now says one runtime log line. The behaviour is unchanged.
+- Built: the write decides inside `withSerializedStateWrite` against the row as it is then
+  (`decideAssetChapterProbeWrite` in `packages/db`): the backfill passes the list and status the candidate
+  was selected with, and a row that differs (an operator edit resets the status to `""`; an ingest fill
+  changes the list) is left untouched, also on a first probe. A longer answer replaces the stored list, an
+  answer of the same length that differs replaces it too (the newer word; a recording VOD's game moves on),
+  the same answer keeps it, an empty or shorter answer and a failed probe never wipe it; a failed recheck
+  keeps the list, its level and `ok`, moves the probe time and counts towards `CHAPTER_PROBE_RECHECK_CAP`
+  unless a recording answer is still possible. `chooseStoredAssetChaptersJson`'s only-fill-empty rule is
+  unchanged for every other caller (source syncs, writes without a selection snapshot). A list an operator
+  saved while a pre-M108 probe ran carries `ok` (the old write marked it so); the DUT check before the repin
+  finds those.
+- Built: `getDueAssetChapterBoundaries` returns at most the chapter that contains the elapsed offset and
+  marks every crossed boundary fired, so chapters arriving mid-item, a worker restart mid-item and two
+  boundaries within one cycle log one `playout.chapter.boundary`; one crossing per cycle is unchanged. The
+  fired set is keyed on a chapter's offset, category and title (`buildAssetChapterKey`), so a recheck that
+  changes what the chapter on air says (the stand-in at 0 replaced in the first hour) logs it once. The
+  runtime log is the event's only consumer (no as-run row, no audit row, no other reader in the
+  repository); the Twitch category and title follow the current chapter by elapsed time and did not burst.
+- Tests: `tests/unit/chapter-backfill-provisional.test.ts` (selection table, empty answers while recording,
+  lists from before M108, payload parser, setting), `tests/unit/chapter-probe-settle.test.ts` (settle rule,
+  degraded answers, the recording window, write decision), six new boundary cases in
+  `tests/unit/asset-chapters.test.ts`, and the integration block "provisional Twitch chapters (M108)" in
+  `tests/integration/db-roundtrip.test.ts` (migration on an old database, replace and keep, the recording
+  window against `created_at`, operator edit between selection and write). The cap: "the recheck cap" in
+  `chapter-probe-settle.test.ts` (what counts, the recording window, a fresh count on a fill) and in
+  `chapter-backfill-provisional.test.ts`, plus "rechecks of a source that never answers properly end" there
+  (selection and write decision interval by interval: failing, empty and shorter rechecks stop after six, a
+  list from before M108 capped ten hours after its first recheck, which comes right after the repin,
+  recording answers and failures in the window do not count, the normal and the longest chain are
+  unaffected), and two integration cases (migration on an old database; the counter through the
+  compare-and-swap, a whole-state write and a sync up to the cap). Existing tests changed with the
+  behaviour: the stall test in `asset-chapters.test.ts` now expects only the later boundary (the brief's
+  rule) and builds its fired keys from the chapters, the operator-edit fixture in
+  `chapter-backfill-recheck.test.ts` now carries status `""`, which is what an operator edit stores (it said
+  `ok`, which only a probe writes); a second case keeps a probe-filled list of several chapters from a
+  finished VOD (level 1) final.
+- Follow-ups, not in this milestone: the `twitch-vod` connector stores chapters at ingest from the same
+  extractor and may store the same stand-in, which nothing rechecks; the admin's chapter editor shows no
+  sign that a list is provisional, nor that one was capped; an empty list whose probes keep failing is
+  marked `failed` and retried every 30 minutes for as long as it is listed, as before M108 (the cap counts
+  only stored non-empty lists; M108's two-hour recheck of an empty list at level 0 reaches that state
+  sooner than the weekly one did). `.env.example` and `.env.production.example` list
+  `CHAPTER_BACKFILL_PROVISIONAL_RECHECK_SECONDS` since the gate; `docker-compose.yml` passes the `.env`
+  file whole and lists none of the backfill settings.

@@ -81,6 +81,11 @@ import {
   OVERLAY_TICKER_DEFAULT_SECONDS,
   OVERLAY_TICKER_MAX_SECONDS,
   OVERLAY_TICKER_MIN_SECONDS,
+  CHAPTER_PROBE_RECHECK_CAP,
+  isRecordingAnswerPossible,
+  normalizeChapterProbeRechecks,
+  normalizeChapterProbeSettleLevel,
+  resolveChapterProbeAnswer,
 } from "@stream247/core";
 
 export type OwnerAccount = {
@@ -264,11 +269,26 @@ export type AssetRecord = {
   chaptersJson?: string;
   /**
    * Outcome of the last chapter metadata probe (the budgeted backfill for sources whose listing
-   * ingest cannot deliver chapters). "" means never probed, "ok" means the probe completed — even
-   * when the source simply has no chapters, so the budget is never spent on it again — and
-   * "failed" puts the asset into the failure cooldown before the next attempt.
+   * ingest cannot deliver chapters). "" means never probed (or chapters an operator edited), "ok"
+   * means the probe completed — an empty answer is asked again after a week, a provisional Twitch
+   * list after hours (chaptersProbeSettleLevel) — and "failed" puts the asset into the failure
+   * cooldown before the next attempt.
    */
   chaptersProbeStatus?: "" | "ok" | "failed";
+  /**
+   * How far a probe-filled chapter list has settled (M108): 0 = no answer taken after the recording
+   * ended backs it yet (taken while recording, or stored before M108), 1-2 = that many finished
+   * answers produced or replaced it, 3 = settled. Read only for a probe-filled list ("ok") of a
+   * source whose chapter titles name the category; see CHAPTER_PROBE_SETTLED_LEVEL in
+   * packages/core/src/asset-chapters.ts. Missing reads 0.
+   */
+  chaptersProbeSettleLevel?: number;
+  /**
+   * Counted rechecks of a probe-filled chapter list (M108): finished or failed answers to a recheck of
+   * a non-empty list, except recording answers and failures within the recording window. At
+   * CHAPTER_PROBE_RECHECK_CAP the list is settled whatever its level. Missing reads 0.
+   */
+  chaptersProbeRechecks?: number;
   /** Consecutive prefetch probe failures; see packages/core/src/asset-probe-quarantine.ts. */
   playbackProbeFailures?: number;
   playbackProbeError?: string;
@@ -327,8 +347,23 @@ export type AssetChapterProbeUpdateRecord = {
   id: string;
   chaptersProbeStatus: "ok" | "failed";
   chaptersProbedAt: string;
-  /** Chapters the probe discovered; applied only while the stored list is still empty. */
+  /**
+   * Chapters the probe discovered. Applied while the stored list is empty; a probe-filled list is
+   * replaced only on a recheck the backfill selected it for (`selectedWith`), see
+   * resolveChapterProbeAnswer in packages/core/src/asset-chapters.ts.
+   */
   chaptersJson?: string;
+  /**
+   * yt-dlp said the VOD was still being recorded (`is_live`). Believed only within Twitch's longest
+   * broadcast after the asset was first listed (isRecordingAnswerPossible against `created_at`).
+   */
+  recording?: boolean;
+  /**
+   * The chapter list and probe status the asset had when the backfill selected it. When given, the
+   * write is a compare-and-swap against the row as it is inside the write lock: if either changed
+   * since (an operator edit, an ingest fill), the row is left exactly as it is.
+   */
+  selectedWith?: { chaptersJson: string; chaptersProbeStatus: "" | "ok" | "failed" };
 };
 
 export type AssetCollectionMembershipUpdateRecord = {
@@ -2294,6 +2329,8 @@ function normalizeState(state: AppState): AppState {
         chaptersJson: normalizeAssetChaptersJson(asset.chaptersJson ?? "[]"),
         chaptersProbeStatus: normalizeAssetChapterProbeStatus(asset.chaptersProbeStatus),
         chaptersProbedAt: asset.chaptersProbedAt ?? "",
+        chaptersProbeSettleLevel: normalizeChapterProbeSettleLevel(asset.chaptersProbeSettleLevel),
+        chaptersProbeRechecks: normalizeChapterProbeRechecks(asset.chaptersProbeRechecks),
         includeInProgramming: asset.includeInProgramming ?? true,
         cachePath: asset.cachePath ?? "",
         cacheStatus: asset.cacheStatus ?? "",
@@ -2857,6 +2894,8 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       chapters_json TEXT NOT NULL DEFAULT '[]',
       chapters_probe_status TEXT NOT NULL DEFAULT '',
       chapters_probed_at TEXT NOT NULL DEFAULT '',
+      chapters_probe_settle_level INTEGER NOT NULL DEFAULT 0,
+      chapters_probe_rechecks INTEGER NOT NULL DEFAULT 0,
       playback_probe_failures INTEGER NOT NULL DEFAULT 0,
       playback_probe_error TEXT NOT NULL DEFAULT '',
       playback_probed_at TEXT NOT NULL DEFAULT '',
@@ -3237,6 +3276,8 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS playback_probe_error TEXT NOT NULL DEFAULT '';
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS playback_probed_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE assets ADD COLUMN IF NOT EXISTS chapters_probed_at TEXT NOT NULL DEFAULT '';
+    ALTER TABLE assets ADD COLUMN IF NOT EXISTS chapters_probe_settle_level INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE assets ADD COLUMN IF NOT EXISTS chapters_probe_rechecks INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS desired_asset_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS transition_state TEXT NOT NULL DEFAULT 'idle';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS queue_version INTEGER NOT NULL DEFAULT 0;
@@ -4371,6 +4412,52 @@ if (!schemaMigrations.some((migration) => migration.id === chatReplySwitchesMigr
   schemaMigrations.push(chatReplySwitchesMigration);
 }
 
+/**
+ * How far a probe-filled chapter list has settled (M108), for installs that already ran the baseline.
+ *
+ * A column, not a new `chapters_probe_status` value: the status already tells probe-filled ("ok")
+ * from operator-edited ("") lists, and an older image maps any status it does not know to "", which
+ * would turn every provisional list into an operator edit it never re-probes. An older image ignores
+ * the column instead. Existing rows read 0: nobody noted whether their VOD was still being recorded
+ * when they were probed, so each Twitch list is asked once more (see CHAPTER_PROBE_SETTLED_LEVEL in
+ * packages/core/src/asset-chapters.ts). Word for word the base-schema line.
+ */
+export const assetChapterProbeSettleLevelMigration: MigrationDefinition = {
+  id: "20261006_001_asset_chapter_probe_settle_level",
+  description: "Remember how far each probe-filled chapter list has settled, so provisional Twitch chapters are asked again.",
+  apply: async (client) => {
+    await client.query(`
+      ALTER TABLE assets ADD COLUMN IF NOT EXISTS chapters_probe_settle_level INTEGER NOT NULL DEFAULT 0;
+    `);
+  }
+};
+
+if (!schemaMigrations.some((migration) => migration.id === assetChapterProbeSettleLevelMigration.id)) {
+  schemaMigrations.push(assetChapterProbeSettleLevelMigration);
+}
+
+/**
+ * The counted rechecks of each probe-filled chapter list (M108), for installs that already ran the
+ * baseline. A migration of its own rather than a second statement in 20261006_001: a migration id
+ * that ran anywhere (a dev stack, a test database) never runs again, so a column added to it later
+ * would be missing there. An older image ignores the column. Existing rows read 0, so every list gets
+ * the whole budget (see CHAPTER_PROBE_RECHECK_CAP in packages/core/src/asset-chapters.ts). Word for
+ * word the base-schema line.
+ */
+export const assetChapterProbeRechecksMigration: MigrationDefinition = {
+  id: "20261006_002_asset_chapter_probe_rechecks",
+  description: "Count the rechecks of each probe-filled chapter list, so a source that never answers properly stops being asked.",
+  apply: async (client) => {
+    await client.query(`
+      ALTER TABLE assets ADD COLUMN IF NOT EXISTS chapters_probe_rechecks INTEGER NOT NULL DEFAULT 0;
+    `);
+  }
+};
+
+if (!schemaMigrations.some((migration) => migration.id === assetChapterProbeRechecksMigration.id)) {
+  schemaMigrations.push(assetChapterProbeRechecksMigration);
+}
+
 async function ensureSchemaMigrationsTable(client: PoolClient): Promise<void> {
   await client.query(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -5113,9 +5200,10 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
           id, source_id, title, path, cache_path, cache_status, cache_updated_at, cache_error, folder_path, tags_json, status,
           title_prefix, hashtags_json, platform_notes, chapters_json, chapters_probe_status, chapters_probed_at, include_in_programming, external_id, category_name, duration_seconds, published_at,
           fallback_priority, is_global_fallback, created_at, updated_at,
-          playback_probe_failures, playback_probe_error, playback_probed_at, duration_probe_key
+          playback_probe_failures, playback_probe_error, playback_probed_at, duration_probe_key,
+          chapters_probe_settle_level, chapters_probe_rechecks
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32)
       `,
       [
         asset.id,
@@ -5153,7 +5241,11 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         (asset.playbackProbeError ?? "").slice(0, 500),
         asset.playbackProbedAt ?? "",
         // Same reason: without it every app-state write would send each local file back to ffprobe.
-        asset.durationProbeKey ?? ""
+        asset.durationProbeKey ?? "",
+        // And without these two every app-state write would set a chapter list back to level 0 and its
+        // counted rechecks to none (M108), asking a settled list again or a capped one six times more.
+        normalizeChapterProbeSettleLevel(asset.chaptersProbeSettleLevel),
+        normalizeChapterProbeRechecks(asset.chaptersProbeRechecks)
       ]
     );
   }
@@ -5640,6 +5732,8 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     chapters_json: string;
     chapters_probe_status: string;
     chapters_probed_at: string;
+    chapters_probe_settle_level: number;
+    chapters_probe_rechecks: number;
     playback_probe_failures: number;
     playback_probe_error: string;
     playback_probed_at: string;
@@ -6000,6 +6094,8 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
       chaptersJson: row.chapters_json || "[]",
       chaptersProbeStatus: normalizeAssetChapterProbeStatus(row.chapters_probe_status),
       chaptersProbedAt: row.chapters_probed_at || "",
+      chaptersProbeSettleLevel: normalizeChapterProbeSettleLevel(row.chapters_probe_settle_level),
+      chaptersProbeRechecks: normalizeChapterProbeRechecks(row.chapters_probe_rechecks),
       playbackProbeFailures: Number(row.playback_probe_failures ?? 0),
       playbackProbeError: row.playback_probe_error || "",
       playbackProbedAt: row.playback_probed_at || "",
@@ -6524,6 +6620,8 @@ export async function replaceAssetsForSourceIds(
       chapters_json: string;
       chapters_probe_status: string;
       chapters_probed_at: string;
+      chapters_probe_settle_level: number;
+      chapters_probe_rechecks: number;
       include_in_programming: boolean;
       fallback_priority: number;
       is_global_fallback: boolean;
@@ -6535,7 +6633,7 @@ export async function replaceAssetsForSourceIds(
       duration_seconds: number;
       duration_probe_key: string;
     }>(
-      "SELECT id, source_id, path, external_id, cache_path, cache_status, cache_updated_at, cache_error, folder_path, tags_json, title_prefix, hashtags_json, platform_notes, chapters_json, chapters_probe_status, chapters_probed_at, include_in_programming, fallback_priority, is_global_fallback, playback_probe_failures, playback_probe_error, playback_probed_at, created_at, published_at, duration_seconds, duration_probe_key FROM assets WHERE source_id = ANY($1::text[])",
+      "SELECT id, source_id, path, external_id, cache_path, cache_status, cache_updated_at, cache_error, folder_path, tags_json, title_prefix, hashtags_json, platform_notes, chapters_json, chapters_probe_status, chapters_probed_at, chapters_probe_settle_level, chapters_probe_rechecks, include_in_programming, fallback_priority, is_global_fallback, playback_probe_failures, playback_probe_error, playback_probed_at, created_at, published_at, duration_seconds, duration_probe_key FROM assets WHERE source_id = ANY($1::text[])",
       [sourceIds]
     );
 
@@ -6582,9 +6680,10 @@ export async function replaceAssetsForSourceIds(
             id, source_id, title, path, cache_path, cache_status, cache_updated_at, cache_error, folder_path, tags_json, status,
             title_prefix, hashtags_json, platform_notes, chapters_json, chapters_probe_status, chapters_probed_at, include_in_programming, external_id, category_name, duration_seconds, published_at,
             fallback_priority, is_global_fallback, created_at, updated_at,
-            playback_probe_failures, playback_probe_error, playback_probed_at, duration_probe_key
+            playback_probe_failures, playback_probe_error, playback_probed_at, duration_probe_key,
+            chapters_probe_settle_level, chapters_probe_rechecks
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32)
         `,
         [
           asset.id,
@@ -6626,7 +6725,10 @@ export async function replaceAssetsForSourceIds(
           existing?.playback_probe_error ?? "",
           existing?.playback_probed_at ?? "",
           // The local-library scan sends the file version it probed; other syncs never set it.
-          asset.durationProbeKey ?? existing?.duration_probe_key ?? ""
+          asset.durationProbeKey ?? existing?.duration_probe_key ?? "",
+          // Probe bookkeeping like the status above (M108); syncs never set these.
+          normalizeChapterProbeSettleLevel(asset.chaptersProbeSettleLevel ?? existing?.chapters_probe_settle_level),
+          normalizeChapterProbeRechecks(asset.chaptersProbeRechecks ?? existing?.chapters_probe_rechecks)
         ]
       );
     }
@@ -6866,14 +6968,6 @@ export async function updateAssetMetadataRecords(updates: AssetMetadataUpdateRec
   });
 }
 
-/**
- * Record the outcome of a chapter metadata probe.
- *
- * Discovered chapters go through chooseStoredAssetChaptersJson against the row as it is *now*, so
- * an operator edit that landed between the probe and this write wins exactly like it does on
- * re-ingest. A vanished asset is skipped rather than raised: the probe is bookkeeping about a row
- * that no longer exists, and failing the worker cycle over it would hurt the broadcast, not help.
- */
 export type AssetPlaybackProbeUpdateRecord = {
   id: string;
   playbackProbeFailures: number;
@@ -6909,6 +7003,123 @@ export async function updateAssetPlaybackProbeRecords(updates: AssetPlaybackProb
   });
 }
 
+/**
+ * What a chapter probe outcome writes to the row as it is inside the write lock, or null to leave
+ * the row alone.
+ *
+ * - `selectedWith` (the backfill) makes the write a compare-and-swap: a row whose chapter list or
+ *   probe status differs from what the candidate was selected with was changed in between, by an
+ *   operator (who resets the status to "") or an ingest fill, and that write wins (M108). Before
+ *   M108 a probe landing after an operator edit still marked the edited list "ok", which would now
+ *   make it look probe-filled and open it to a recheck.
+ * - An empty list, or a list that was not probe-filled, follows chooseStoredAssetChaptersJson's
+ *   only-fill-empty rule, as for every caller without `selectedWith`.
+ * - A probe-filled list ("ok", only reachable with a matching `selectedWith`, so only on a recheck
+ *   the backfill chose) goes through resolveChapterProbeAnswer: a longer answer replaces it, an
+ *   empty or failed one never wipes it. A failed recheck keeps the list, its level and its "ok" (it
+ *   is still the probe's answer) and moves the probe time, so the next recheck waits a full interval;
+ *   it counts towards CHAPTER_PROBE_RECHECK_CAP unless a recording answer is still possible.
+ * - The answer's "still being recorded" counts only within Twitch's longest broadcast after the row
+ *   was first listed (`createdAt`, isRecordingAnswerPossible), so a stuck `is_live` cannot keep a list
+ *   provisional for as long as it is listed.
+ * - A recheck of a probe-filled list counts towards CHAPTER_PROBE_RECHECK_CAP, whatever it answered,
+ *   unless the answer is a recording one or the probe failed while a recording answer is still
+ *   possible; at the cap the backfill treats the list as settled. A probe that fills an empty list
+ *   starts the count anew, since the list is new; every other write keeps it.
+ */
+export function decideAssetChapterProbeWrite(
+  row: {
+    chaptersJson: string;
+    chaptersProbeStatus: string;
+    chaptersProbeSettleLevel: number;
+    chaptersProbeRechecks?: number;
+    createdAt: string;
+  },
+  update: AssetChapterProbeUpdateRecord
+): {
+  chaptersJson: string;
+  chaptersProbeStatus: "" | "ok" | "failed";
+  chaptersProbedAt: string;
+  chaptersProbeSettleLevel: number;
+  chaptersProbeRechecks: number;
+} | null {
+  const storedJson = normalizeAssetChaptersJson(row.chaptersJson);
+  const storedStatus = normalizeAssetChapterProbeStatus(row.chaptersProbeStatus);
+  const storedLevel = normalizeChapterProbeSettleLevel(row.chaptersProbeSettleLevel);
+  const storedRechecks = normalizeChapterProbeRechecks(row.chaptersProbeRechecks);
+
+  if (
+    update.selectedWith &&
+    (normalizeAssetChaptersJson(update.selectedWith.chaptersJson) !== storedJson ||
+      normalizeAssetChapterProbeStatus(update.selectedWith.chaptersProbeStatus) !== storedStatus)
+  ) {
+    return null;
+  }
+
+  const stored = parseAssetChaptersJson(storedJson);
+  const recheck = update.selectedWith !== undefined && stored.length > 0 && storedStatus === "ok";
+  if (update.selectedWith !== undefined && stored.length > 0 && !recheck) {
+    // An operator-edited or ingest-filled list: the backfill never selects one, and never touches one.
+    return null;
+  }
+
+  const recordingPossible = isRecordingAnswerPossible({ listedAt: row.createdAt, probedAt: update.chaptersProbedAt });
+  const counted = Math.min(CHAPTER_PROBE_RECHECK_CAP, storedRechecks + 1);
+
+  if (update.chaptersProbeStatus === "failed") {
+    return recheck
+      ? {
+          chaptersJson: storedJson,
+          chaptersProbeStatus: "ok",
+          chaptersProbedAt: update.chaptersProbedAt,
+          chaptersProbeSettleLevel: storedLevel,
+          // A failure while the VOD may still be recording is bounded by the recording window.
+          chaptersProbeRechecks: recordingPossible ? storedRechecks : counted
+        }
+      : {
+          chaptersJson: storedJson,
+          chaptersProbeStatus: "failed",
+          chaptersProbedAt: update.chaptersProbedAt,
+          chaptersProbeSettleLevel: storedLevel,
+          chaptersProbeRechecks: storedRechecks
+        };
+  }
+
+  if (!recheck && stored.length > 0) {
+    return {
+      chaptersJson: chooseStoredAssetChaptersJson(storedJson, update.chaptersJson),
+      chaptersProbeStatus: normalizeAssetChapterProbeStatus(update.chaptersProbeStatus),
+      chaptersProbedAt: update.chaptersProbedAt,
+      chaptersProbeSettleLevel: storedLevel,
+      chaptersProbeRechecks: storedRechecks
+    };
+  }
+
+  const recording = update.recording === true && recordingPossible;
+  const resolved = resolveChapterProbeAnswer({
+    stored,
+    settleLevel: storedLevel,
+    answer: parseAssetChaptersJson(update.chaptersJson),
+    recording
+  });
+  return {
+    chaptersJson: JSON.stringify(resolved.chapters),
+    chaptersProbeStatus: "ok",
+    chaptersProbedAt: update.chaptersProbedAt,
+    chaptersProbeSettleLevel: resolved.settleLevel,
+    // Not a recheck here means the stored list was empty: the answer starts a new list.
+    chaptersProbeRechecks: !recheck ? 0 : recording ? storedRechecks : counted
+  };
+}
+
+/**
+ * Record the outcome of a chapter metadata probe.
+ *
+ * Decided by decideAssetChapterProbeWrite against the row as it is inside the write lock, so an
+ * operator edit that landed between the selection, the probe and this write wins. A vanished asset
+ * is skipped rather than raised: the probe is bookkeeping about a row that no longer exists, and
+ * failing the worker cycle over it would hurt the broadcast, not help.
+ */
 export async function updateAssetChapterProbeRecords(updates: AssetChapterProbeUpdateRecord[]): Promise<void> {
   if (updates.length === 0) {
     return;
@@ -6916,21 +7127,44 @@ export async function updateAssetChapterProbeRecords(updates: AssetChapterProbeU
 
   await withSerializedStateWrite("updateAssetChapterProbeRecords", async (client) => {
     for (const update of updates) {
-      const existing = await client.query<{ chapters_json: string }>("SELECT chapters_json FROM assets WHERE id = $1", [
-        update.id
-      ]);
+      const existing = await client.query<{
+        chapters_json: string;
+        chapters_probe_status: string;
+        chapters_probe_settle_level: number;
+        chapters_probe_rechecks: number;
+        created_at: string;
+      }>(
+        "SELECT chapters_json, chapters_probe_status, chapters_probe_settle_level, chapters_probe_rechecks, created_at FROM assets WHERE id = $1",
+        [update.id]
+      );
       const row = existing.rows[0];
       if (!row) {
         continue;
       }
 
+      const write = decideAssetChapterProbeWrite(
+        {
+          chaptersJson: row.chapters_json,
+          chaptersProbeStatus: row.chapters_probe_status,
+          chaptersProbeSettleLevel: row.chapters_probe_settle_level,
+          chaptersProbeRechecks: row.chapters_probe_rechecks,
+          createdAt: row.created_at
+        },
+        update
+      );
+      if (!write) {
+        continue;
+      }
+
       await client.query(
-        "UPDATE assets SET chapters_probe_status = $2, chapters_probed_at = $3, chapters_json = $4, updated_at = $5 WHERE id = $1",
+        "UPDATE assets SET chapters_probe_status = $2, chapters_probed_at = $3, chapters_json = $4, chapters_probe_settle_level = $5, chapters_probe_rechecks = $6, updated_at = $7 WHERE id = $1",
         [
           update.id,
-          normalizeAssetChapterProbeStatus(update.chaptersProbeStatus),
-          update.chaptersProbedAt,
-          chooseStoredAssetChaptersJson(row.chapters_json, update.chaptersJson),
+          write.chaptersProbeStatus,
+          write.chaptersProbedAt,
+          write.chaptersJson,
+          write.chaptersProbeSettleLevel,
+          write.chaptersProbeRechecks,
           new Date().toISOString()
         ]
       );

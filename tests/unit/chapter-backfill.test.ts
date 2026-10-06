@@ -13,6 +13,7 @@ import {
 const NOW = Date.parse("2026-08-25T12:00:00.000Z");
 const COOLDOWN_MS = 30 * 60 * 1000;
 const RECHECK_MS = 7 * 24 * 60 * 60 * 1000;
+const PROVISIONAL_RECHECK_MS = 2 * 60 * 60 * 1000;
 
 const sources: ChapterBackfillSource[] = [
   { id: "src_yt_playlist", connectorKind: "youtube-playlist", enabled: true },
@@ -41,6 +42,7 @@ function select(assets: ChapterBackfillAsset[], budget = 10, nowMs = NOW) {
     budget,
     failureCooldownMs: COOLDOWN_MS,
     emptyResultRecheckMs: RECHECK_MS,
+    provisionalRecheckMs: PROVISIONAL_RECHECK_MS,
     nowMs
   });
 }
@@ -215,7 +217,8 @@ describe("probeAssetChapters", () => {
     assetId: "a1",
     path: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
     probe: "yt-dlp",
-    chapterTitleNamesCategory: false
+    chapterTitleNamesCategory: false,
+    selectedWith: { chaptersJson: "[]", chaptersProbeStatus: "" }
   } as const;
 
   it("runs a metadata-only yt-dlp probe and returns the chapters json", async () => {
@@ -243,7 +246,13 @@ describe("probeAssetChapters", () => {
     };
 
     const result = await probeAssetChapters(
-      { assetId: "a2", path: "https://cdn.example.com/movie.mp4", probe: "ffprobe", chapterTitleNamesCategory: false },
+      {
+        assetId: "a2",
+        path: "https://cdn.example.com/movie.mp4",
+        probe: "ffprobe",
+        chapterTitleNamesCategory: false,
+        selectedWith: { chaptersJson: "[]", chaptersProbeStatus: "" }
+      },
       config,
       exec
     );
