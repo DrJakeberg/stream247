@@ -57,6 +57,8 @@ describe("nobody writes the label themselves any more", () => {
     "apps/web/lib/server/scene-preview-renderer.ts",
     "apps/web/lib/server/state.ts",
     "apps/worker/src/index.ts",
+    // M107: the Next card's title and time for the video that airs next.
+    "apps/worker/src/next-on-air.ts",
     "apps/worker/src/standby-slate.ts"
   ];
 

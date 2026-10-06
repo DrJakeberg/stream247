@@ -9473,15 +9473,96 @@ export async function acknowledgeIncident(fingerprint: string, acknowledgedBy: s
 }
 
 /**
- * What the playout row says plays now and next, without the whole state: the chat bot reads it when it
- * answers !now or !next (review finding R22), which can be any second between two worker cycles.
+ * What the playout row says plays now, since when, and what its queue and the operator have next, without
+ * the whole state: the chat bot reads it when it answers !now or !next (review finding R22), which can be any
+ * second between two worker cycles. Since M107 !next predicts from it what the on-air Next card names, so
+ * it carries the start, the queue's next item, the operator's Move next, Play now and Pin, and the
+ * schedule run the last cycle recorded as well.
  */
-export async function readPlayoutProgrammeTitles(): Promise<{ status: string; currentTitle: string; nextTitle: string }> {
-  const result = await getPool().query<{ status: string; current_title: string; next_title: string }>(
-    "SELECT status, current_title, next_title FROM playout_runtime WHERE singleton_id = 1"
+export type PlayoutProgrammeRow = {
+  status: string;
+  currentTitle: string;
+  currentAssetId: string;
+  processStartedAt: string;
+  /** The head of the queue's kind ("live", "insert", "asset", …); "" when the queue is empty. */
+  queueKind: string;
+  nextAssetId: string;
+  nextTitle: string;
+  manualNextAssetId: string;
+  insertAssetId: string;
+  insertStatus: string;
+  /** The Pin or Temporary fallback: its item and until when (the prediction names no video under it). */
+  overrideAssetId: string;
+  overrideUntil: string;
+  /** The schedule run the last cycle recorded, which a dated block's start or end is judged against. */
+  cuepointWindowKey: string;
+};
+
+/** The same fields from a playout record the caller already holds (the chat cycle's state). */
+export function playoutProgrammeRowOf(playout: PlayoutRuntimeRecord): PlayoutProgrammeRow {
+  return {
+    status: playout.status,
+    currentTitle: playout.currentTitle,
+    currentAssetId: playout.currentAssetId,
+    processStartedAt: playout.processStartedAt,
+    queueKind: playout.queueItems[0]?.kind ?? "",
+    nextAssetId: playout.nextAssetId,
+    nextTitle: playout.nextTitle,
+    manualNextAssetId: playout.manualNextAssetId,
+    insertAssetId: playout.insertAssetId,
+    insertStatus: playout.insertStatus,
+    overrideAssetId: playout.overrideAssetId,
+    overrideUntil: playout.overrideUntil,
+    cuepointWindowKey: playout.cuepointWindowKey
+  };
+}
+
+function queueKindOf(queueItems: string | null | undefined): string {
+  try {
+    const items = JSON.parse(queueItems || "[]") as unknown;
+    const kind = Array.isArray(items) ? (items[0] as { kind?: unknown } | undefined)?.kind : undefined;
+    return typeof kind === "string" ? kind : "";
+  } catch {
+    return "";
+  }
+}
+
+export async function readPlayoutProgrammeTitles(): Promise<PlayoutProgrammeRow> {
+  const result = await getPool().query<{
+    status: string;
+    current_title: string;
+    current_asset_id: string;
+    process_started_at: string;
+    queue_items: string;
+    next_asset_id: string;
+    next_title: string;
+    manual_next_asset_id: string;
+    insert_asset_id: string;
+    insert_status: string;
+    override_asset_id: string;
+    override_until: string;
+    cuepoint_window_key: string;
+  }>(
+    `SELECT status, current_title, current_asset_id, process_started_at, queue_items, next_asset_id, next_title,
+       manual_next_asset_id, insert_asset_id, insert_status, override_asset_id, override_until, cuepoint_window_key
+     FROM playout_runtime WHERE singleton_id = 1`
   );
   const row = result.rows[0];
-  return { status: row?.status ?? "", currentTitle: row?.current_title ?? "", nextTitle: row?.next_title ?? "" };
+  return {
+    status: row?.status ?? "",
+    currentTitle: row?.current_title ?? "",
+    currentAssetId: row?.current_asset_id ?? "",
+    processStartedAt: row?.process_started_at ?? "",
+    queueKind: queueKindOf(row?.queue_items),
+    nextAssetId: row?.next_asset_id ?? "",
+    nextTitle: row?.next_title ?? "",
+    manualNextAssetId: row?.manual_next_asset_id ?? "",
+    insertAssetId: row?.insert_asset_id ?? "",
+    insertStatus: row?.insert_status ?? "",
+    overrideAssetId: row?.override_asset_id ?? "",
+    overrideUntil: row?.override_until ?? "",
+    cuepointWindowKey: row?.cuepoint_window_key ?? ""
+  };
 }
 
 export async function updatePlayoutRuntime(

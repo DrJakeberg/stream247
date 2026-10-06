@@ -194,5 +194,20 @@ describe("German viewer texts fit the on-air panels", () => {
         expect({ label, key, fits: Math.max(measured.german, measured.english) <= NEXT_INNER, ...measured }).toMatchObject({ label, key, fits: true });
       }
     }
+
+    // M107: a video's heading carries the time it is expected to start ("ALS NÄCHSTES · CA. 20:00"), every
+    // label the card can carry, at the widest clock digits.
+    for (const label of ["overlay.nextLabel.asset", "overlay.nextLabel.reconnect", "overlay.nextLabel.insert", "overlay.nextLabel.live"] as const) {
+      const measured = await row(
+        (locale) =>
+          inkWidth(viewerUpperCase(locale, `${text(locale, label)} · ${text(locale, "overlay.next.expectedAt", { time: "20:00" })}`), {
+            fontSize: 16,
+            fontWeight: 700,
+            letterSpacing: 2
+          }),
+        NEXT_INNER
+      );
+      expect({ label, fits: Math.max(measured.german, measured.english) <= NEXT_INNER, ...measured }).toMatchObject({ label, fits: true });
+    }
   });
 });

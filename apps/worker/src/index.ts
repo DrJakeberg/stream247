@@ -42,7 +42,6 @@ import {
   carryCuepointFiredKeys,
   describePresenceStatus,
   findCurrentScheduleOccurrence,
-  findNextScheduleOccurrence,
   getDestinationFailureSecondsRemaining as getDestinationFailureHoldSecondsRemaining,
   getCurrentScheduleMoment,
   isDestinationFailureCoolingDown,
@@ -100,8 +99,6 @@ import {
   redactSecrets,
   resolveChatSettingsWrite,
   describeTickerCrawlStaleness,
-  overlayNextTimeLabel,
-  getScheduleStartsInMinutes,
   buildLiveBridgeOverlayText,
   viewerText,
   type ViewerLocale,
@@ -200,7 +197,8 @@ import {
   recordAsRunEnd,
   closeOpenAsRunRecords,
   resolveTwitchAccountsForState,
-  readPlayoutProgrammeTitles
+  readPlayoutProgrammeTitles,
+  playoutProgrammeRowOf
 } from "@stream247/db";
 import {
   ON_AIR_SCENE_PIPE_FD,
@@ -440,6 +438,7 @@ import { buildTwitchMetadataTitle, resolveTwitchFallbackTitle } from "./twitch-m
 import { ActiveChatterRoster } from "./active-chatters.js";
 import { ChatViewerRequestPass } from "./chat-viewer-requests.js";
 import { buildChatProgrammeInfo, readChatProgrammeInfoNow } from "./chat-programme-info.js";
+import { nextOnAirCardText, predictNextOnAir, type NextOnAirPlayout, type NextOnAirPrediction } from "./next-on-air.js";
 import { answerChatEffect, replyToChatRequest } from "./chat-answers.js";
 import { EngagementGameTracker } from "./engagement-game.js";
 import {
@@ -716,10 +715,11 @@ function viewerLanguage(): ViewerLocale {
 }
 // What !now and !next answer (M104), rebuilt by every reconcileChatInteraction from the state it reads: the
 // fallback when the playout row cannot be read at the moment a viewer asks (R22).
-let latestChatProgrammeInfo: ChatProgrammeInfo = { nowTitle: "", nextTitle: "", nextStartsAt: "", channelUrl: "" };
-// What an answer needs beside the playout row, from the last chat cycle: the blocks for "next" while nothing
-// plays, and the link to /channel. Null before the first chat cycle, which answers from the fallback.
-let latestChatProgrammeContext: { schedule: Pick<AppState, "managedConfig" | "scheduleBlocks">; appUrl: string } | null = null;
+let latestChatProgrammeInfo: ChatProgrammeInfo = { nowTitle: "", nextTitle: "", nextStartsAt: "", nextExpectedAt: "", channelUrl: "" };
+// What an answer needs beside the playout row, from the last chat cycle: the schedule, pools and assets the
+// next item is predicted from (M107), and the link to /channel. Null before the first chat cycle, which
+// answers from the fallback.
+let latestChatProgrammeContext: { state: AppState; appUrl: string } | null = null;
 
 /** What !now and !next answer from, read when asked (R22). Never throws. */
 function readChatProgrammeForAnswer(): Promise<ChatProgrammeInfo> {
@@ -729,7 +729,8 @@ function readChatProgrammeForAnswer(): Promise<ChatProgrammeInfo> {
   }
   return readChatProgrammeInfoNow({
     readTitles: readPlayoutProgrammeTitles,
-    nextScheduleItem: () => getNextScheduleItem(context.schedule),
+    predictNext: (playout) => predictWorkerNextOnAir(context.state, playout),
+    timeZone: resolveChannelTimeZone(context.state.managedConfig),
     appUrl: context.appUrl,
     locale: viewerLanguage(),
     fallback: latestChatProgrammeInfo
@@ -3673,7 +3674,7 @@ async function writeStandbySlate(
     queuePreviewCount: state.overlay.queuePreviewCount,
     queueKind
   });
-  const payload = buildWorkerScenePayload({ state, ...slate });
+  const payload = buildWorkerScenePayload({ state, ...slate, ...slateNextVideo(state, slate.queueKind) });
 
   // The scene picture draws the cached payload, so the slate has to be that payload while it is on
   // air (M102); before, it kept the lower third of the item that played last. Not when a programme is
@@ -3729,22 +3730,82 @@ async function reportTickerCrawlStaleness(payload: OverlayScenePayloadView): Pro
   });
 }
 
+/**
+ * When the item on air started (M107: its expected end is this plus its length): the running process's start
+ * when it plays this item, else the playout row's when it names it, else now, as the caller is about to start
+ * it. Items play from their start; nothing resumes mid-item (M77).
+ */
+function onAirItemStartedAt(state: AppState, asset: AssetRecord | null): string {
+  if (!asset) {
+    return "";
+  }
+  if (playoutAssetId === asset.id && playoutProcessStartedAtMs > 0) {
+    return new Date(playoutProcessStartedAtMs).toISOString();
+  }
+  if (state.playout.currentAssetId === asset.id && state.playout.processStartedAt) {
+    return state.playout.processStartedAt;
+  }
+  return new Date().toISOString();
+}
+
 async function writeOnAirOverlay(
   state: AppState,
   asset: AssetRecord | null,
   queueKind: AppState["playout"]["queueItems"][number]["kind"] | "" = state.playout.queueItems[0]?.kind || "asset",
   overrides: {
     currentTitle?: string;
-    nextTitle?: string;
-    nextTimeLabel?: string;
     currentCategory?: string;
     currentSourceName?: string;
     queueTitles?: string[];
+    /** A Live Bridge on air: the lower third is the bridge's (buildLiveBridgeOverlayText). */
+    liveBridge?: { title: string; inputType: string };
+    /**
+     * The next item of the queue this cycle is about to write into the playout row. Without it the row's,
+     * which names the item on air itself in the cycle that starts it (the prediction then steps over it).
+     */
+    queueNext?: { assetId: string; title: string } | null;
+    /**
+     * The schedule run this cycle is about to record. Without it the row's, which in the cycle that cut the
+     * item on air for a dated block is still the run before the boundary.
+     */
+    cuepointWindowKey?: string;
   } = {}
 ): Promise<void> {
   const currentItem = getCurrentScheduleItem(state);
-  const nextItem = getNextScheduleItem(state);
   const locale = resolveChannelLanguage(state.managedConfig);
+  const now = new Date();
+  // The Next card names the video that airs next, as !next does (M107), not the next schedule block.
+  const next = nextOnAirCardText({
+    prediction: predictWorkerNextOnAir(
+      state,
+      {
+        playing: true,
+        queueKind: queueKind || (asset ? "asset" : ""),
+        currentAssetId: asset?.id ?? "",
+        processStartedAt: onAirItemStartedAt(state, asset),
+        nextAssetId: overrides.queueNext === undefined ? state.playout.nextAssetId : overrides.queueNext?.assetId ?? "",
+        nextTitle: overrides.queueNext === undefined ? state.playout.nextTitle : overrides.queueNext?.title ?? "",
+        manualNextAssetId: state.playout.manualNextAssetId,
+        insertAssetId: state.playout.insertAssetId,
+        insertStatus: state.playout.insertStatus,
+        overrideAssetId: state.playout.overrideAssetId,
+        overrideUntil: state.playout.overrideUntil,
+        cuepointWindowKey: overrides.cuepointWindowKey ?? state.playout.cuepointWindowKey
+      },
+      now
+    ),
+    locale,
+    timeZone: resolveChannelTimeZone(state.managedConfig),
+    now
+  });
+  const liveBridge = overrides.liveBridge
+    ? buildLiveBridgeOverlayText({
+        locale,
+        title: overrides.liveBridge.title,
+        inputType: overrides.liveBridge.inputType,
+        nextTitle: next.nextTitle
+      })
+    : null;
   const queueTitles =
     overrides.queueTitles ??
     state.playout.queuedAssetIds
@@ -3758,6 +3819,7 @@ async function writeOnAirOverlay(
       state,
       queueKind,
       currentTitle:
+        liveBridge?.currentTitle ||
         overrides.currentTitle ||
         overlayOnAirChapterTitle({
           currentAssetId: state.playout.currentAssetId,
@@ -3768,13 +3830,11 @@ async function writeOnAirOverlay(
         state.playout.currentTitle ||
         currentItem?.title ||
         viewerText(locale, "overlay.title.standby"),
-      nextTitle: overrides.nextTitle || nextItem?.title || viewerText(locale, "overlay.next.comingUp"),
-      nextScheduleItem: nextItem,
-      nextTimeLabel:
-        overrides.nextTimeLabel ||
-        overlayNextTimeLabel(nextItem, locale, getScheduleStartsInMinutes(nextItem, new Date(), resolveChannelTimeZone(state.managedConfig))),
-      currentCategory: overrides.currentCategory || currentItem?.categoryName || asset?.categoryName,
+      nextTitle: liveBridge?.nextTitle || next.nextTitle || viewerText(locale, "overlay.next.comingUp"),
+      nextTimeLabel: next.nextTimeLabel,
+      currentCategory: liveBridge?.currentCategory || overrides.currentCategory || currentItem?.categoryName || asset?.categoryName,
       currentSourceName:
+        liveBridge?.currentSourceName ||
         overrides.currentSourceName ||
         currentItem?.sourceName ||
         (asset ? state.sources.find((source) => source.id === asset.sourceId)?.name : ""),
@@ -4848,30 +4908,6 @@ function getScheduleTakeover(
   });
 }
 
-function getNextScheduleItem(
-  state: Pick<AppState, "managedConfig" | "scheduleBlocks">
-): ReturnType<typeof buildScheduleOccurrences>[number] | null {
-  const timeZone = resolveChannelTimeZone(state.managedConfig);
-  const scheduleMoment = getCurrentScheduleMoment({
-    now: new Date(),
-    timeZone
-  });
-
-  const occurrences = buildScheduleOccurrences({
-    date: scheduleMoment.date,
-    blocks: state.scheduleBlocks
-  });
-  const current = findCurrentScheduleOccurrence({
-    occurrences,
-    currentTime: scheduleMoment.time
-  });
-  return findNextScheduleOccurrence({
-    occurrences,
-    currentTime: scheduleMoment.time,
-    currentOccurrence: current
-  });
-}
-
 // What the worker may pick from a pool right now. Positions are taken in each source's full list
 // (packages/core/src/pool-rotation.ts), so an item this rejects is stepped over, never a reason to start
 // the pool again from its oldest item: the skip hold is exactly the item that just played. The Remove next
@@ -4946,6 +4982,107 @@ function resolveScheduleOccurrenceOverlayTitle(state: AppState, item: WorkerSche
   }
 
   return item.poolId ? lookaheadVideoTitleFromPool(state, item.poolId) || item.title : item.title;
+}
+
+// The pick of a block without a pool: the first ready item of the block's source (by the source's name, as
+// the block stores it). Shared by the selection and the next-item prediction (M107).
+function selectScheduledSourceAsset(
+  state: AppState,
+  sourceName: string | undefined,
+  skippedAssetId: string,
+  removedNextAssetId: string
+): AssetRecord | null {
+  return (
+    state.assets.find((entry) => {
+      if (entry.status !== "ready") {
+        return false;
+      }
+      if (entry.id === skippedAssetId || entry.id === removedNextAssetId) {
+        return false;
+      }
+      if (entry.includeInProgramming === false) {
+        return false;
+      }
+      if (isAssetBlockedForAutomaticSelection(entry)) {
+        return false;
+      }
+      const matchingSource = state.sources.find((source) => source.id === entry.sourceId);
+      return matchingSource?.name === sourceName;
+    }) ?? null
+  );
+}
+
+/**
+ * What airs next (M107: next-on-air.ts), with the worker's own picks: a block picks through selectPoolAsset or
+ * selectScheduledSourceAsset under the skip and Remove next holds, exactly as the selection does when the item
+ * on air ends. The on-air Next card and the chat bot's !next both call this, so they name the same video.
+ */
+function predictWorkerNextOnAir(state: AppState, playout: NextOnAirPlayout, now: Date = new Date()): NextOnAirPrediction {
+  const skippedAssetId = isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "";
+  const removedNextAssetId = isTimestampActive(state.playout.removeNextUntil) ? state.playout.removeNextAssetId : "";
+  // The override arm's own rule (resolveOperatorOverrideHold): a Pin whose item is not ready, is held out by a
+  // Skip, or sits under a Live Bridge selects nothing, so the prediction is not told about it.
+  const overrideHold = resolveOperatorOverrideHold({
+    ...state.playout,
+    overrideAssetId: playout.overrideAssetId,
+    overrideUntil: playout.overrideUntil,
+    assets: state.assets,
+    nowMs: now.getTime()
+  });
+  return predictNextOnAir({
+    playout: overrideHold === "" ? { ...playout, overrideAssetId: "", overrideUntil: "" } : playout,
+    now,
+    timeZone: resolveChannelTimeZone(state.managedConfig),
+    scheduleBlocks: state.scheduleBlocks,
+    sources: {
+      asset: (assetId) => {
+        const asset = state.assets.find((entry) => entry.id === assetId);
+        return asset ? { title: buildAssetDisplayTitle(asset), durationSeconds: asset.durationSeconds ?? 0 } : null;
+      },
+      pickForBlock: (block) => {
+        const asset = block.poolId
+          ? selectPoolAsset(state, block.poolId, skippedAssetId, removedNextAssetId)
+          : selectScheduledSourceAsset(state, block.sourceName, skippedAssetId, removedNextAssetId);
+        return asset ? { assetId: asset.id, title: buildAssetDisplayTitle(asset) } : null;
+      },
+      blockTitle: (block) => resolveScheduleOccurrenceOverlayTitle(state, block)
+    }
+  });
+}
+
+/**
+ * The slate's next line when the shared prediction names a video (M107): an operator's Play now waiting to
+ * start, or, under the text slate of a Live Bridge, the queue's next item. Otherwise nothing, and the slate
+ * keeps the next block it names itself, which is the prediction's own answer while nothing plays (today's
+ * next block), so the slate and !next agree either way.
+ */
+function slateNextVideo(state: AppState, slateKind: string): { nextTitle: string; nextTimeLabel: string; nextScheduleItem: null } | null {
+  const locale = resolveChannelLanguage(state.managedConfig);
+  const now = new Date();
+  const live = slateKind === "live";
+  const prediction = predictWorkerNextOnAir(
+    state,
+    {
+      playing: live,
+      queueKind: slateKind,
+      currentAssetId: "",
+      processStartedAt: "",
+      nextAssetId: live ? state.playout.nextAssetId : "",
+      nextTitle: live ? state.playout.nextTitle : "",
+      manualNextAssetId: state.playout.manualNextAssetId,
+      insertAssetId: state.playout.insertAssetId,
+      insertStatus: state.playout.insertStatus,
+      overrideAssetId: state.playout.overrideAssetId,
+      overrideUntil: state.playout.overrideUntil,
+      cuepointWindowKey: state.playout.cuepointWindowKey
+    },
+    now
+  );
+  if (prediction.kind !== "item") {
+    return null;
+  }
+  const card = nextOnAirCardText({ prediction, locale, timeZone: resolveChannelTimeZone(state.managedConfig), now });
+  return { ...card, nextScheduleItem: null };
 }
 
 function selectPoolAsset(state: AppState, poolId: string, skippedAssetId: string, removedNextAssetId = ""): AssetRecord | null {
@@ -5832,22 +5969,7 @@ function choosePlaybackCandidate(
   const currentPool = currentScheduleItem?.poolId ? state.pools.find((pool) => pool.id === currentScheduleItem.poolId) ?? null : null;
   // The pick of a block without a pool: an item of the block's source.
   const findScheduledSourceAsset = (): AssetRecord | null =>
-    state.assets.find((entry) => {
-      if (entry.status !== "ready") {
-        return false;
-      }
-      if (entry.id === skippedAssetId || entry.id === removedNextAssetId) {
-        return false;
-      }
-      if (entry.includeInProgramming === false) {
-        return false;
-      }
-      if (isAssetBlockedForAutomaticSelection(entry)) {
-        return false;
-      }
-      const matchingSource = state.sources.find((source) => source.id === entry.sourceId);
-      return matchingSource?.name === currentScheduleItem?.sourceName;
-    }) ?? null;
+    selectScheduledSourceAsset(state, currentScheduleItem?.sourceName, skippedAssetId, removedNextAssetId);
   // The same test as the boundary's "nothing on air" (M105): a handle on a child that has already ended no
   // longer keeps its item, or the boundary bridged the fallback for the item this arm still called on air.
   const processRunning = isPlayoutProcessRunning();
@@ -7879,17 +8001,12 @@ async function runPlayoutCycle(): Promise<void> {
   if (state.playout.pendingAction === "refresh") {
     if (playoutProcess && !playoutProcess.killed && state.playout.liveBridgeStatus === "active") {
       if (state.overlay.enabled) {
-        await writeOnAirOverlay(
-          state,
-          null,
-          "live",
-          buildLiveBridgeOverlayText({
-            locale: resolveChannelLanguage(state.managedConfig),
+        await writeOnAirOverlay(state, null, "live", {
+          liveBridge: {
             title: state.playout.liveBridgeLabel || state.playout.currentTitle,
-            inputType: state.playout.liveBridgeInputType,
-            nextTitle: state.playout.nextTitle
-          })
-        );
+            inputType: state.playout.liveBridgeInputType
+          }
+        });
       } else {
         await writeStandbySlate(state, "live", { scene: false });
       }
@@ -8280,19 +8397,8 @@ async function runPlayoutCycle(): Promise<void> {
 
   if (selection.queueKind === "live") {
     if (state.overlay.enabled) {
-      const locale = resolveChannelLanguage(state.managedConfig);
       await writeOnAirOverlay(state, null, "live", {
-        ...buildLiveBridgeOverlayText({
-          locale,
-          title: selection.liveBridgeLabel,
-          inputType: selection.liveBridgeInputType,
-          nextTitle: getNextScheduleItem(state)?.title || ""
-        }),
-        nextTimeLabel: overlayNextTimeLabel(
-          getNextScheduleItem(state),
-          locale,
-          getScheduleStartsInMinutes(getNextScheduleItem(state), new Date(), resolveChannelTimeZone(state.managedConfig))
-        )
+        liveBridge: { title: selection.liveBridgeLabel, inputType: selection.liveBridgeInputType }
       });
     }
     await resolveIncident("playout.no-asset", "Live Bridge is on air.");
@@ -8833,38 +8939,38 @@ async function runPlayoutCycle(): Promise<void> {
       }));
       return;
     }
-  } else if (selection.queueKind === "live" && state.overlay.enabled) {
-    await writeOnAirOverlay(
-      state,
-      null,
-      "live",
-      buildLiveBridgeOverlayText({
-        locale: resolveChannelLanguage(state.managedConfig),
-        title: selection.liveBridgeLabel,
-        inputType: selection.liveBridgeInputType,
-        nextTitle: nextQueueItem?.title || ""
-      })
-    );
-  } else if (selection.asset && state.overlay.enabled) {
-    await writeOnAirOverlay(
-      state,
-      selection.asset,
-      selection.reasonCode === "operator_insert" || selection.reasonCode === "scheduled_insert" ? "insert" : "asset"
-    );
-  } else if (!selection.asset) {
+  } else if (!selection.asset && !(selection.queueKind === "live" && state.overlay.enabled)) {
     await writeStandbySlate(state, selection.lifecycleStatus === "reconnecting" ? "reconnect" : "standby");
   }
 
-  const computedPrefetchedAt = prefetchedAsset ? new Date().toISOString() : "";
-  const transitionTargetKind = nextQueueItem?.kind ?? "";
-  const transitionTargetAssetId = nextQueueItem?.assetId ?? "";
-  const transitionTargetTitle = nextQueueItem?.title ?? "";
+  // The Next card from the queue this cycle writes (M107), also in the cycle that started or switched the
+  // item: the write before the start only had the playout row's queue, which is the one of the item before.
+  const queueNext = nextQueueItem ? { assetId: nextQueueItem.assetId, title: nextQueueItem.title } : null;
   // A takeover that waits keeps the run before the boundary, so the next cycle sees it again.
   const cuepointWindowKey = waitingTakeover
     ? state.playout.cuepointWindowKey
     : currentScheduleItem
       ? getScheduleOccurrenceRunKey(currentScheduleItem)
       : "";
+  if (state.overlay.enabled && selection.queueKind === "live") {
+    await writeOnAirOverlay(state, null, "live", {
+      liveBridge: { title: selection.liveBridgeLabel, inputType: selection.liveBridgeInputType },
+      queueNext,
+      cuepointWindowKey
+    });
+  } else if (state.overlay.enabled && selection.asset) {
+    await writeOnAirOverlay(
+      state,
+      selection.asset,
+      selection.reasonCode === "operator_insert" || selection.reasonCode === "scheduled_insert" ? "insert" : "asset",
+      { queueNext, cuepointWindowKey }
+    );
+  }
+
+  const computedPrefetchedAt = prefetchedAsset ? new Date().toISOString() : "";
+  const transitionTargetKind = nextQueueItem?.kind ?? "";
+  const transitionTargetAssetId = nextQueueItem?.assetId ?? "";
+  const transitionTargetTitle = nextQueueItem?.title ?? "";
   // The previous run's keys stay with the new run's (R8): a block that comes back after another one (the
   // October fall-back night) does not fire its cuepoints again.
   const cuepointFiredKeys = carryCuepointFiredKeys({
@@ -10810,15 +10916,13 @@ async function reconcileChatInteraction(): Promise<void> {
 
   const state = await readAppState();
   latestChatProgrammeInfo = buildChatProgrammeInfo({
-    playout: state.playout,
-    nextScheduleItem: getNextScheduleItem(state),
+    playout: playoutProgrammeRowOf(state.playout),
+    predictNext: (playout) => predictWorkerNextOnAir(state, playout),
+    timeZone: resolveChannelTimeZone(state.managedConfig),
     appUrl: resolveAppBaseUrl(state.managedConfig),
     locale: resolveChannelLanguage(state.managedConfig)
   });
-  latestChatProgrammeContext = {
-    schedule: { managedConfig: state.managedConfig, scheduleBlocks: state.scheduleBlocks },
-    appUrl: resolveAppBaseUrl(state.managedConfig)
-  };
+  latestChatProgrammeContext = { state, appUrl: resolveAppBaseUrl(state.managedConfig) };
 
   const outcome = chatControl.settleVoteIfDue(config);
   if (outcome?.winnerAssetId) {
