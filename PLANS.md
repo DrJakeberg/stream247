@@ -1379,3 +1379,44 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   chat runtime and the bridge with a fake socket (`!now` twice gives one line, at most 15 PRIVMSG writes in
   30 s, each one IRC line, a raid of refusals leaves the other lines theirs) instead of grepping the
   worker's source. The M80 language guard knows the three new helpers.
+
+### M106 Release 2.3.0
+
+- 2026-10-05: the review of M84-M104 (eight groups, each finding re-checked by a skeptic; 45 findings, 35
+  confirmed) and its fixes are M105, merged as #32 (`46b2c8d`). `283d31c` gave the first-run bootstrap test
+  the time limit its neighbours have (5004 ms against the default 5 s under the full suite).
+- 2026-10-05 23:59 UTC: `release: v2.3.0-rc.1` (`65ac201`), push CI green; tag `v2.3.0-rc.1` pushed by the
+  lead from the local checkout. The release workflow published the three images and, for the first time,
+  created the GitHub release itself ("Stream247 2.3.0-rc.1", pre-release; v2.1.0 stays Latest).
+- 2026-10-06 00:02:37 UTC, the nightly blip: the uplink restarted once (SIGKILL) and healed. In the same
+  second the lead's workstation lost an open HTTPS connection to GitHub (`connection reset by peer`), so
+  the blip cuts existing connections across the home network, not only the DUT's way in. Together with
+  2026-10-02 (new outbound connections from the playout container succeeded throughout) this fits a daily
+  forced reconnect of the internet line (new public IP; long-lived connections such as the RTMP uplink die;
+  the way in via Cloudflare returns only after the tunnel follows). Not proven: compare the public IP before
+  and after the next blip. If it holds, the owner can move the reconnect to a fixed quiet hour in the router.
+- 2026-10-06 00:05 UTC: `pg_dump` to `~/backups/stream247-pre-v2.3.0-rc.1.dump` (39 tables), `repin.sh
+  v2.3.0-rc.1` (dry run first: the three app pins `v2.1.0` -> `v2.3.0-rc.1`, 62 env vars, `prune=False`; then
+  `PUT ok: stack 148`). All six containers healthy after 19 s; relay `mediamtx:1.15.4` untouched. Programme:
+  4 s of the global fallback at boot, then the Twitch archive `v2883427989` as `scheduled_match` (the item
+  that ran before the repin is not resumed: M77). `jimpanse247` live.
+- Checks after the repin: the seven migrations of *Upgrading To 2.3* present
+  (`20261001_002_source_breakers` … `20261004_001_chat_reply_switches`), the new tables and columns present,
+  `as_run_log` written from the first start (the boot fallback ended `switch`), no source breaker, no dated
+  block, pool positions kept; no new critical incident (the open warnings date from the 00:02 blip).
+- 2026-10-06 00:07:44 UTC: 24-h soak started from a checkout of the tag on the DUT
+  (`~/stream247-v2.3.0-rc.1`: `scripts/` and `docker-compose.yml` from `git archive v2.3.0-rc.1`), `tmux`
+  session `soak`, run log `~/stream247-v2.3.0-rc.1/logs/soak-20261006-000744.log`. Its baseline line has
+  numbers for the first time (`web=0 worker=0 playout=0 uplink=0 relay=0`), so a container restart is seen.
+  First sample `status=ok broadcastReady=true`. It ends 2026-10-07 00:07:44 UTC and includes the next blip.
+- Two corrections for `docs/deployment.md` step 10 of *Safe Upgrade Flow*, found while starting it:
+  - the Portainer stack does not publish `web`'s port on the host, so `CHECK_BASE_URL=http://127.0.0.1:3000`
+    fails (`Failed to connect`); the soak measures `web`'s address on the stack network instead
+    (`docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' stream247-web-1`; here
+    `http://172.22.0.6:3000`). It changes only when the container is recreated, which fails the soak anyway.
+  - the tmux log name has minute precision, so two starts in one minute append to one file
+    (`~/logs/soak-20261006-0007.log` holds the failed first start and the real one); the run log the
+    script writes itself is per second and is the one to read.
+- Open: the soak result; set `Admin → Settings → Channel language` to German (owner; until then the poll
+  and the skip bar are English); the DUT checks under *DUT checks for the next release candidate*; then
+  2.3.0 as `HANDOFF.md` describes.
