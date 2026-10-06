@@ -692,6 +692,50 @@ is built by the web app; a later milestone moves it over.
 The time is an estimate (`about`): an item's length is what the library says, and a stall or a slow
 start moves the real start.
 
+### A Twitch archive names the wrong game (since M108)
+
+Twitch archives are listed without chapters; the chapter backfill asks yt-dlp for each one's chapter list,
+a few probes per worker cycle. When Twitch returns no chapter list, yt-dlp makes up one chapter named after
+the VOD's current game, from offset 0 to the end, and while the VOD is still being recorded that is the game
+being played at that moment. Before M108 that answer was final: on the DUT on 2026-10-06, 41 of 46 archives
+held one such chapter, and the overlay named "Just Chatting" for an archive that had moved on to another game.
+
+- A probe-filled list of one chapter at offset 0, any list probed while the VOD was still being recorded
+  (an empty one included) and any list stored before M108 is provisional. It is probed again two hours
+  after its last probe (`CHAPTER_BACKFILL_PROVISIONAL_RECHECK_SECONDS`, `0` turns this off). A longer
+  answer replaces it at once, an answer of the same length that differs replaces it as the newer word. A
+  list of several chapters is final once an answer taken after the recording ended has produced, replaced
+  or repeated it; a single chapter once a second such answer repeats it, or after the third answer that
+  produced or replaced it.
+- An empty or shorter answer and a failed probe leave the list as it is and do not move it towards final (a
+  throttled hour must not make a partial list final); the list is asked again every two hours until an
+  answer confirms or replaces it. yt-dlp's "still being recorded" is believed only within 48 hours of the
+  archive's first listing, Twitch's longest broadcast.
+- Six counted rechecks at most: every recheck counts, whatever it answered and also when it failed, except
+  an answer yt-dlp marks as still being recorded and a failure within those 48 hours. A list that reaches
+  six is kept as it is and never asked again, so a broken extractor or a deleted VOD does not cost a yt-dlp
+  call every two hours, from the address the archives are also played from. Six leaves room for the
+  longest chain that settles a list (three answers) and as many that say nothing.
+- These rechecks wait behind new items and failure retries, inside the same per-cycle budget.
+- A list edited under the asset's *Chapters* panel is never probed again and never replaced, also when the
+  edit is saved while a probe runs. Deleting every chapter hands the archive back to the backfill, which
+  probes it within a few cycles and counts its rechecks anew. One exception from before M108: a list an
+  operator saved while a probe was running could end up marked as probe-filled; *Before the repin* under
+  *Upgrading Past 2.3.0* in `docs/deployment.md` finds those, and saving the list once more makes it the
+  operator's.
+- When chapters arrive for the item on air, change what the chapter on air says, or the worker restarts in
+  the middle of an item, the runtime log shows one `playout.chapter.boundary`, for the chapter on air; the
+  boundaries before it are not replayed. When two boundaries pass within one cycle, only the later one is
+  logged. The Twitch category follows the chapter on air either way.
+
+Where the probe-filled lists of the Twitch archives stand (`level` 0 = no answer taken after the recording backs
+the list yet, 1-2 = that many such answers produced or replaced it, 3 = final; any list at 0 and a single chapter
+below 3 are still provisional unless `capped`, which means six counted rechecks used up and final as well):
+
+```bash
+docker compose exec -T postgres psql -U stream247 -d stream247 -c "SELECT a.chapters_probe_settle_level AS level, jsonb_array_length(a.chapters_json::jsonb) AS chapters, a.chapters_probe_rechecks >= 6 AS capped, COUNT(*) FROM assets a JOIN sources s ON s.id = a.source_id WHERE s.connector_kind = 'twitch-channel' AND a.chapters_probe_status = 'ok' GROUP BY 1, 2, 3 ORDER BY 1, 2, 3"
+```
+
 ### The clock change (since M101)
 
 The schedule runs on the wall clock of the channel zone, also on the two nights the clocks change (owner

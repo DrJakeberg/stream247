@@ -725,6 +725,56 @@ What 2.1.0 then does with what 2.3 left behind; none of it needs a step:
 - Everything else (M84, M87, M90-M92, M94, M95, M97-M99, M102) changes behaviour
   only: 2.1.0 brings the old behaviour back and misreads nothing that 2.3 stored.
 
+### Upgrading Past 2.3.0
+
+Changes merged after 2.3.0, for the release that ships them; it renames this section after itself.
+
+- **Schema.** Two additive migrations, applied on the first start; the base schema has the same statements
+  for a fresh install:
+
+  | Migration | Milestone | Change |
+  | --- | --- | --- |
+  | `20261006_001_asset_chapter_probe_settle_level` | M108 | `assets.chapters_probe_settle_level`, default `0`: nobody noted whether a chapter list probed so far was taken while its VOD was still being recorded, so each Twitch archive's list is asked once more |
+  | `20261006_002_asset_chapter_probe_rechecks` | M108 | `assets.chapters_probe_rechecks`, default `0`: the counted rechecks of a probe-filled chapter list; at six the list is final, so a source that never answers properly stops being asked |
+
+  After the first start the first command prints `2`. The count query of *Upgrading To 2.3* above
+  (`id >= '20261001_002'`) prints `9` from this release on, its seven migrations and these two.
+
+  ```bash
+  docker compose exec -T postgres psql -U stream247 -d stream247 -At -c "SELECT COUNT(*) FROM schema_migrations WHERE id IN ('20261006_001_asset_chapter_probe_settle_level', '20261006_002_asset_chapter_probe_rechecks')"
+  ```
+
+- **Before the repin (M108).** Before M108 a probe that finished after an operator had saved chapters for
+  the same archive (a window of up to 30 seconds) kept the operator's list but marked it `ok`, as if the
+  probe had filled it. From this release on, such a list is asked again like a probe-filled one and may be
+  replaced by a longer or different answer. The query lists the Twitch archives whose list is marked `ok`
+  and whose metadata an operator saved, as far back as the audit trail reaches (it keeps only its newest
+  entries); a list the probe filled has the same category and title in every chapter, so a list with a
+  chapter whose title differs from its category is the operator's in any case. Save each list that is the
+  operator's once more under the asset's *Chapters* panel, which marks it as the operator's (status `""`).
+
+  ```bash
+  docker compose exec -T postgres psql -U stream247 -d stream247 -c "SELECT a.id, a.chapters_json FROM assets a JOIN sources s ON s.id = a.source_id WHERE s.connector_kind = 'twitch-channel' AND a.chapters_probe_status = 'ok' AND a.chapters_json <> '[]' AND EXISTS (SELECT 1 FROM audit_events e WHERE e.type = 'asset.metadata.updated' AND e.message = 'Updated asset metadata for ' || a.id || '.')"
+  ```
+
+- **On air in the first hours (M108).** Every Twitch archive the chapter probe has answered (an empty
+  answer included) is probed once more right after the start, behind new items and inside the unchanged
+  per-cycle budget; a single chapter at offset 0 twice, two hours apart
+  (`CHAPTER_BACKFILL_PROVISIONAL_RECHECK_SECONDS`). An archive that spans several games gets its whole
+  list; a list the second answer repeats is final. A list whose rechecks keep failing or coming back empty
+  or shorter is asked six times at most and then kept as it is. When chapters arrive for the item on air,
+  or change what the chapter on air says, the runtime log shows one `playout.chapter.boundary`, for the
+  current chapter.
+- **Rollback.** A reverse repin to 2.3.0 or older needs no step before it. The older image ignores both
+  columns: its backfill treats every stored chapter list as final again, as before M108, and the lists
+  M108 replaced stay replaced. Its source syncs and whole-state writes (a moderator's `!game` start or
+  stop, a blueprint apply) delete asset rows and write them again without the columns, which sets both
+  back to `0`, so after a later roll forward those lists are asked once more, as on the first upgrade, and
+  a list that had used up its six rechecks gets six more. A probe of the older image that finishes while
+  an operator saves chapters marks the operator's list `ok` again; run the query of *Before the repin*
+  before the roll forward. Chapters that arrive mid-item log every past boundary again (the log only: the
+  Twitch category follows the current chapter either way).
+
 ### Patch vs Minor Upgrades
 
 - Patch upgrades should be the default production path.
@@ -823,7 +873,7 @@ The Twitch cache also enforces basic retention and disk guardrails:
 
 The defaults prune stale partial downloads, evict older cached VOD files when the cache exceeds its byte budget, and refuse a new download when free disk falls below the configured floor.
 
-Chapters for assets whose listing ingest cannot deliver them (YouTube playlist/channel items, Twitch channel archives, direct media) are backfilled by a budgeted per-cycle probe: `CHAPTER_BACKFILL_PER_CYCLE` metadata-only yt-dlp/ffprobe calls per reconciliation cycle (default 3, `0` disables), with failed probes held for `CHAPTER_BACKFILL_FAILURE_COOLDOWN_SECONDS` (default 1800) before the next attempt. A probe that finds chapters is never repeated. A probe that comes back valid but empty is trusted for `CHAPTER_BACKFILL_EMPTY_RECHECK_SECONDS` (default 604800, one week; `0` disables rechecks) and then probed once more — a rate limit, a geo- or subscriber-restricted variant and a yt-dlp extractor regression all report "no chapters" as well, and an asset stuck on that answer goes on air with the wrong category and title. Rechecks come last in the per-cycle budget, behind never-probed assets and failure retries, so they never delay a newly ingested item. Operator-edited chapter lists are never overwritten and never re-probed.
+Chapters for assets whose listing ingest cannot deliver them (YouTube playlist/channel items, Twitch channel archives, direct media) are backfilled by a budgeted per-cycle probe: `CHAPTER_BACKFILL_PER_CYCLE` metadata-only yt-dlp/ffprobe calls per reconciliation cycle (default 3, `0` disables), with failed probes held for `CHAPTER_BACKFILL_FAILURE_COOLDOWN_SECONDS` (default 1800) before the next attempt. A probe that comes back valid but empty is trusted for `CHAPTER_BACKFILL_EMPTY_RECHECK_SECONDS` (default 604800, one week; `0` disables rechecks) and then probed once more — a rate limit, a geo- or subscriber-restricted variant and a yt-dlp extractor regression all report "no chapters" as well, and an asset stuck on that answer goes on air with the wrong category and title. A probe that finds chapters is not repeated, with one exception since M108: a Twitch archive's provisional list. When Twitch returns no chapter list (while the VOD is still being recorded, before Twitch has computed one, on a throttled answer, or for a stream that stayed in one game), yt-dlp makes up one chapter named after the VOD's current game, from offset 0 to the end; and anything yt-dlp says about a VOD it marks `is_live` (still being recorded) is incomplete. Such a list is probed again `CHAPTER_BACKFILL_PROVISIONAL_RECHECK_SECONDS` after the last probe (default 7200, two hours; `0` disables these rechecks), and so is an empty answer of a VOD still being recorded, instead of after the week. A longer answer replaces the list, and an answer of the same length that differs replaces it as the newer word. A list with more than one chapter is final once an answer taken after the recording ended has produced, replaced or repeated it; a single chapter once a second such answer repeats it, or after the third answer that produced or replaced it. An empty or shorter answer and a failed probe never remove a list and do not move it towards final; the list is asked again every interval until an answer confirms or replaces it, six counted rechecks at most: every finished or failed answer to a recheck counts, except an answer yt-dlp marks as still being recorded and a failure within 48 hours of the archive's first listing, and a list that reaches six is kept as it is and never asked again (a broken extractor or a deleted VOD would otherwise cost a yt-dlp call every interval, from the address the archives are also played from). yt-dlp's "still being recorded" is believed only within 48 hours of the archive's first listing (Twitch's longest broadcast), so a VOD whose preview picture never changes cannot stay provisional. A single-game archive probed after its stream ended therefore costs one extra probe; lists stored before M108 are asked once more after the upgrade (*Upgrading Past 2.3.0*). Rechecks of both kinds come last in the per-cycle budget, oldest probe first, behind never-probed assets and failure retries, so they never delay a newly ingested item. Operator-edited chapter lists are never overwritten and never re-probed: the replacement is decided inside the state write against the row as it is then, so an edit made while a probe runs wins.
 
 Output settings are available in `/output` with built-in profiles for 720p30, 1080p30, 480p30, and 360p30 plus a custom mode. The saved stream profile is stored in PostgreSQL and applies when the playout worker starts its next FFmpeg process. Each destination can either inherit that stream profile or pin one of the fixed named presets. Destinations that resolve to the same effective rendition share one persistent uplink process; mixed renditions spawn parallel uplink processes from the shared relay/program feed. Deployment-level `STREAM_OUTPUT_WIDTH`, `STREAM_OUTPUT_HEIGHT`, and `STREAM_OUTPUT_FPS` override the saved stream profile for standby slate generation, scene-renderer capture size, and inherited uplink output normalization. `SCENE_RENDER_WIDTH` and `SCENE_RENDER_HEIGHT` still have precedence for scene capture if you need a temporary render-specific override. Set `STREAM_SCALE_ENABLED=0` only as a rollback if the scale/pad/fps filter causes unexpected encoder load. Avoid pinning a destination above the stream profile unless you explicitly want to pay the CPU cost of upscaling the shared feed.
 
