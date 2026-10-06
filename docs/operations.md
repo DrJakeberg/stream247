@@ -208,7 +208,8 @@ When a change arrives:
 What follows the language:
 
 - the on-air picture: the chip on the lower third (`Now Playing` / `Läuft gerade`), the next card
-  (`Next` / `Als Nächstes`, its time range, `Nothing scheduled` / `Noch nichts geplant`), the countdown,
+  (`Next` / `Als Nächstes`, the next video's expected start `about 17:30` / `ca. 17:30` or a block's time
+  range, `Nothing scheduled` / `Noch nichts geplant`), the countdown,
   the next-item poll and the skip bar, and the chat game panels
 - text mode and the standby slate (the `Now:` / `Jetzt:` and `Next:` / `Als Nächstes:` lines ffmpeg draws
   when no scene picture is on air)
@@ -646,8 +647,50 @@ The operator's queue (*Play now*, *Insert*) is not shown in *Up next*; the proje
 A pool's own inserts (an ident every N items) are not listed or counted as videos either (since M105,
 review finding R24), but the time they take is kept: the video after one starts when it ends. The *Now*
 card still names an insert while it is on air.
-On air, the next card adds how soon the next block starts: `20:00-22:00 · in 25 min` under an hour,
-`· in 3 h` under a day.
+While nothing plays, the on-air next card names the next block and adds how soon it starts:
+`20:00-22:00 · in 25 min` under an hour, `· in 3 h` under a day. While a video plays it names the next
+video instead (since M107, below).
+
+### What the on-air Next card and `!next` name (since M107)
+
+The next card on the picture, the `Next:` / `Als Nächstes:` line of text mode and the slate, and the chat
+bot's `!next` all name the same thing: the video that airs when the one on air ends. Before M107 the card
+named the next schedule block (its first video and its window, `16:00-00:00`) while `!next` named the next
+video, so during a long archive the picture announced the programme at 16:00 and the chat the next video.
+
+- Normally that is the next item of the playout's queue, from the time the item on air
+  is expected to end: its start plus its length, `about 17:30` / `ca. 17:30`. Without a known length (a
+  library file whose length was never read, a Live Bridge) the card shows the label alone and `!next`
+  names the video without a time.
+- An item is not cut where its weekly block ends. When it is expected to end in the next block, the next
+  block's pool picks what follows, as the worker will (the same rotation and holds), and the card names
+  that video.
+- A dated or one-off block cuts the item on air at its start and at its end (M105). When it starts before
+  the item on air ends, its first video is next, from the block's start. A dated block whose first video
+  cannot take the air yet (still downloading, its source held by the breaker) waits as the worker waits:
+  its video is next without a time while it can still cut in, and with nothing to take the air with the item
+  on air plays to its end and the block current then follows it.
+- A *Play now* / *Insert* that is waiting to start is next, without a time; a *Move next* follows the item
+  on air whatever block is current then; after an insert, the video the schedule continues with is next. A
+  *Play now* / *Insert* on air is not cut by a dated block, so what follows it is the pick of the block
+  current at its end.
+- When the next block's pool has the video on air as its next item (two pools that share a source keep
+  their own positions), the worker starts it again at its end, and the card names it.
+- While a *Pin on air* or a *Temporary fallback* holds the air, no video is named: the item may start again
+  or be cut when the minutes run out, which the worker decides then. The card shows today's next block with
+  its window, and `!next` names the same title with the block's start.
+- While nothing plays (the standby or reconnect slate), or when nothing can be predicted, the card falls
+  back to today's next block with its window, and `!next` names the same title with the block's start. A
+  block card is never titled with the video on air; the block's name stands in for it.
+- `!next` counts an item as playing in every state the card is drawn over it, `recovering` included (a Pin,
+  a fallback, the first cycle of a *Move next*), where `!now` says the channel is on a short break.
+
+Not yet the same: the admin's scene preview (the overlay studio, `/api/scenes`) still names the queue's next
+item under the next block's window, as before M107. The prediction needs the worker's picks, and the preview
+is built by the web app; a later milestone moves it over.
+
+The time is an estimate (`about`): an item's length is what the library says, and a stall or a slow
+start moves the real start.
 
 ### The clock change (since M101)
 
@@ -941,7 +984,9 @@ bot answers none of them):
   `!next`, `!request title`, `!skip`, `!1–!N during a poll`, `!game`); a switched-off command is left out.
 - `!now` names what is on air, or says the channel is on a short break while the standby or reconnect
   slate runs, playout is (re)starting, or nothing plays.
-- `!next` names the next item; while nothing plays, the next schedule block of today with its start time.
+- `!next` names what the on-air Next card names (since M107, see *What the on-air Next card and `!next`
+  name*): the next video, with `about 17:30` when the item on air has a known length; while nothing plays,
+  the next schedule block of today with its start time.
 - Both end with `Programme: <APP_URL>/channel` when the app URL is set (`APP_URL` or the wizard's value).
 - Every `!request` gets one answer: queued with its position in the queue, no matching video, the
   viewer's cooldown (in seconds under a minute, else minutes), the queue is full, or already queued.
@@ -960,8 +1005,9 @@ other lines (moderator check-ins, accepted requests, `!game`, the answers): it i
 `!now` and `!next` read what the playout runs at the moment they are asked (since M105, review finding
 R22), so an answer right after a change of item names the new one. Before, the words came from the
 worker's last cycle and lagged a whole cycle (over two minutes with source syncs) plus 30 s. When the
-database does not answer within 2 s, the bot answers from the last cycle as before; the next schedule
-block, for when nothing plays, comes from the blocks the last cycle read.
+database does not answer within 2 s, the bot answers from the last cycle as before. What follows the item
+on air is predicted at the moment of asking from that row and the schedule, pools and assets the last
+cycle read.
 
 ### Owner password lost (since M91)
 

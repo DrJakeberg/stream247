@@ -42,6 +42,8 @@ How this file works:
 | M104 Wording Pass And Chat Answers | UX | Later | Complete | Admin text names no milestone ids; viewers can ask the bot | U13: render test fails on `\bM\d{2}\b` in admin text. U14: the admin preview and (i) show the localized standby text. S19 (lead from the stopped planning branch, re-checked): overlay output is one checkbox among many (`apps/web/components/overlay-settings-form.tsx:890`) and the Scene tab shows "unknown" / "never" before a first publish; Scene gets an on/off banner at the top and "Not published yet"; render test. V5/V6 (decided 5.1 Q7): `!commands` (only enabled commands), `!now`, `!next` with the `/channel` link, one reply per `!request` (queued with position, no match, cooldown, queue full), each with its own switch, 60 s per viewer and 10 s global cooldown, en + de; unit tests per reply | `apps/web`, `apps/worker`, `packages/core`, tests, baselines | medium: chat volume and Twitch rate limits | revert the commit |
 | M105 Review Fixes Before 2.3 | Reliability + Docs | Now | Complete | The defects the 2026-10-05 review of M84-M104 confirmed are fixed before the next candidate, and the repository stops advertising a 2.2.0 that does not exist | A dated or one-off block takes the air at its start and gives it back at its end, cutting the item on air (owner decision 5.1 Q1, 2026-10-01); a scheduled insert from a source outside the block's pool plays to its end; an upgrade and rollback section for everything since 2.1.0 with a pre-rollback step for dated blocks, the downgrade-note rule back in AGENTS.md; compose and env defaults pin a release that exists; the CHANGELOG lists no 2.2.0; the confirmed minor findings fixed or recorded with a reason (list: `planning/review-2026-10-05.md`); `pnpm validate`, baselines and smokes green | worker, core, web, db, docs | medium | revert the merge |
 | M106 Release 2.3.0 | Release | Now | Planned | Ship 2.2.0-rc.1 (M64, M75, M76, M78-M80, M82) and M84-M105 as 2.3.0 (owner decision 2026-10-05) | `v2.3.0-rc.1` on the DUT after a PostgreSQL backup, migrations counted, channel language set to German, the DUT checks run, a 24-h soak, then 2.3.0 tagged with its GitHub release and repinned | release, docs | medium | repin v2.1.0 after the dated-block step |
+| M107 The Overlay Shows The Next Video | UX | Now | Complete | The on-air "Next" card names the video that airs next, as `!next` does (owner request 2026-10-06: "the overlay shows the next programme block, what comes at 16:00, but what interests me is what !next says, the next video") (ships in 2.3.1 after 2.3.0; owner decision 2026-10-06, so the running 2.3.0-rc.1 soak is not reset) | One prediction of the item that will actually air next serves the scene payload, text mode and `!next`: the playout's next queue item while something plays, from the block that will be current when the item on air ends (the next block's pool when the item runs past the block end, a dated block's first pick when it takes over first), with its expected start time; the next block only when nothing plays or no next item is known; both languages; tests that the card and `!next` agree | core, worker, tests, docs | low | revert the merge |
+| M108 Twitch Archives Get Their Whole Chapter List | Reliability | Now | Planned | A Twitch archive whose chapter probe found only its first chapter (one chapter at offset 0) is probed again until the list is stable, and chapters that arrive while the item is on air move the category to the chapter that is current, not through every past boundary at once (found on the DUT 2026-10-06: the overlay said "Just Chatting" for a VOD that had moved on to another game) | A probe-filled single chapter at offset 0 of a `twitch-channel` asset is re-probed after a cooldown, a bounded number of times, oldest probe first, inside the existing per-cycle budget; a longer list replaces it, two equal answers make it final; chapters an operator edited are never re-probed or replaced; when an asset on air gains chapters, only the boundary containing the current offset fires (one category update, one as-run/audit line); unit tests for the selection and the boundary, docs updated | worker (chapter backfill, chapter boundary), db if a marker is needed, tests, docs | low: a few more yt-dlp probes per hour | revert the merge |
 
 M84-M104 were approved by the owner on 2026-10-02 (all 21, as written). Their source is `planning/proposal-2026-10.md`: references in these rows such as "decided 5.1 Q5", "2.5a", "3.3" and finding ids (S1, C3, I1, U7, …) point into that file and the research files under `planning/research/`. Order: M84 first, then the table order with M88 before M93, M93 before M100 and M91 before M99; one milestone per thread, the next starts after the previous one is merged.
 
@@ -441,6 +443,11 @@ deployed; the release that ships them records the results.
     AND updated_at > to_char(now() - interval '25 hours', 'YYYY-MM-DD"T"HH24:MI:SS') ORDER BY created_at;
   SQL
   ```
+
+- M107, during a long archive in the TwitchYoutube block that is expected to end after the block does: the
+  on-air Next card names the video the next block's pool starts with and `about <its expected start>` /
+  `ca. …`, not the block's window, and `!next` in the chat of `jimpanse247` names the same title with the
+  same time.
 
 - The checks of 2.2.0-rc.1 are in the archive, sections M75-M82. That candidate never reached the DUT, so
   the 2.3.0 candidate runs them too.
@@ -1420,3 +1427,63 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
 - Open: the soak result; set `Admin → Settings → Channel language` to German (owner; until then the poll
   and the skip bar are English); the DUT checks under *DUT checks for the next release candidate*; then
   2.3.0 as `HANDOFF.md` describes.
+
+### M107 The Overlay Shows The Next Video
+
+- **Cause.** The scene payload's next card came from the next schedule block (`getNextScheduleItem`: its
+  pool's first video as the title, the block's window `16:00-00:00` as the time), the Live Bridge's from the
+  same; `!next` came from the playout row's next queue item. During a multi-hour archive the picture
+  announced the programme at 16:00 and the chat the next video (owner, 2026-10-06).
+- **The rule** (`apps/worker/src/next-on-air.ts`, one pure prediction): a pending Play now / Insert; else,
+  while something plays, what the selection does when the item on air ends at its start plus its length: a
+  dated block that takes the air before that cuts it (its first pick, from its start; a takeover with
+  nothing to pick waits as in the worker); a Move next; the queue's next item when the item ends in its own
+  block (or one with the same pool); else the pick of the block current at its end (the worker's
+  `selectPoolAsset` / source pick under the skip and Remove next holds). Unknown end (no length, a Live
+  Bridge, past its length): the queue's next item without a time. Nothing plays or nothing predictable:
+  today's next block, as before. A candidate equal to the item on air is stepped over (a row of the cycle
+  before it started). The card shows `about 17:30` / `ca. 17:30` (new keys `overlay.next.expectedAt`,
+  `chat.next.around`) or the label alone; `buildOverlayScenePayload` now reads an empty time label as "no
+  time" and only a missing one as `Nothing scheduled`.
+- **Wiring.** `writeOnAirOverlay` predicts from the item on air (the running process's start) and, in the
+  cycle, from the queue it is about to write; the cycle now also writes the overlay after it started or
+  switched an item, so a new item's card does not wait 15 s for the next cycle. The slate takes the
+  prediction when it names a video. `!next` reads `readPlayoutProgrammeTitles` (now with the start, the
+  queue's head and next item, Move next and the pending insert) at ask time (R22 kept) and predicts with
+  the last chat cycle's state; while nothing plays it names the card's block title (the pool's first video,
+  where M104 named the block's own title).
+- **Tests.** `tests/unit/next-on-air.test.ts` (the prediction as a table, the card and the payload, text mode
+  and the drawn heading in en and de, the card and `!next` agree), `chat-answers.test.ts` (the new inputs,
+  `about`), the M80 fit test (the heading with `ca. 20:00` under every label), the label and language
+  guards know the new file. Golden frames unchanged: their fixtures build the payload view by hand.
+- **Review fixes** (the prediction followed the schedule where the worker's operator arms decide):
+  a Pin or Temporary fallback that holds the air (core `resolveOperatorOverrideHold`) names no video, the
+  card shows today's next block, as `!next` did, and a Play now pending under it is not next (the arm drops
+  it as preempted); a Play now / Insert on air is cut by no dated block (its arm returns first), so the
+  block current at its end picks; a dated block's start or end is judged against the run the cycle recorded
+  (`cuepointWindowKey`, now in `readPlayoutProgrammeTitles` with the override fields), so a takeover that
+  waits for its pick does not announce a cut at the dated block's end, and one whose pick exists is next
+  without a time; the next block's pool picking the video on air (a second pool on the same source) is
+  named, since the worker starts it again, and a block card is never titled with the video on air; `!next`
+  counts `recovering` as playing for the prediction (`isPlayingForPrediction`), as the card does, while
+  `!now` keeps its wording. Deferred: the admin's scene preview (`buildActiveScenePayload`, `/api/scenes`)
+  still shows the queue's next item under the next block's window; it needs the worker's picks in the web
+  app (documented in `docs/operations.md`).
+- **DUT check:** under *DUT checks for the next release candidate*.
+
+### M108 Twitch Archives Get Their Whole Chapter List
+
+- 2026-10-06, on the DUT (v2.3.0-rc.1): the overlay named "Just Chatting" for a Twitch archive that had moved on
+  to another game. 41 of the 46 archives of the `twitch-channel` source held exactly one chapter at offset 0,
+  filled by the chapter backfill's earlier probes; a fresh `yt-dlp --dump-single-json` returned the whole list
+  for most of them. The backfill treats any stored chapters as final (`chapter-backfill.ts`, "operator edits and
+  earlier fills are final"), so it never asked again.
+- Owner decision 2026-10-06 ("Ja, jetzt zurücksetzen"): the 41 lists were cleared on the DUT
+  (`chapters_json = '[]'`, status and probe time empty, under the state write lock; audit
+  `assets.chapters.reset`). The backfill probed them again within 8 minutes (3 per worker cycle): 25 archives now
+  hold a full list, 21 still one chapter (a single category, or the same incomplete answer again; M108 must tell
+  these apart by asking again later). The overlay showed the right game right after.
+- Seen in the same hour: when the item on air gained its chapters, every boundary between offset 0 and the
+  current offset fired at once (several category changes in one cycle). Only the current one should.
+- Twitch archives from `--flat-playlist` carry no publish date (`published_at` is empty), so "recent" cannot be
+  read from it; use the probe count and probe time, or the VOD id order the stable comparator already uses.

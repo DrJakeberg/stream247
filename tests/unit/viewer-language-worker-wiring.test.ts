@@ -78,7 +78,9 @@ const LOCALE_SLOT = new Map<string, LocaleSlot>(
     // M105 (R22, R23, R27): the answers taken out of index.ts into chat-answers.ts, and the read when asked.
     answerChatEffect: field,
     replyToChatRequest: field,
-    readChatProgrammeInfoNow: field
+    readChatProgrammeInfoNow: field,
+    // M107: the Next card's title and time from the prediction !next shares (next-on-air.ts).
+    nextOnAirCardText: field
   })
 );
 
@@ -370,7 +372,8 @@ describe("the worker gives every viewer text the channel language", () => {
       "formatChatGameNoRoomReply",
       "buildOverlayScenePayload",
       "buildLiveBridgeOverlayText",
-      "overlayNextTimeLabel",
+      // Since M107 the Next card's time is written in next-on-air.ts; index.ts passes it the language.
+      "nextOnAirCardText",
       "buildEngagementOverlayViewFromVoteSession",
       "buildEngagementOverlayViewFromSkipVote",
       "buildChatGameOverlayViewFromRuntimeRecord",
@@ -390,7 +393,8 @@ describe("the worker gives every viewer text the channel language", () => {
       "formatChatNextReply",
       "formatChatRequestReply"
     ],
-    "chat-programme-info.ts": ["buildChatProgrammeInfo", "localizeViewerBuiltInText"]
+    "chat-programme-info.ts": ["buildChatProgrammeInfo", "localizeViewerBuiltInText", "formatViewerClock"],
+    "next-on-air.ts": ["viewerText", "formatViewerClock", "overlayNextTimeLabel"]
   };
 
   it("reads the files the gate named and finds the viewer text each one writes", () => {
