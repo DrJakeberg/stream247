@@ -1,5 +1,24 @@
 # Changelog
 
+## 2.3.0-rc.2 - 2026-10-14
+
+The second candidate for 2.3.0: `2.3.0-rc.1` (below) plus M109. rc.1 ran eight days on the production host;
+its 24-hour soak passed with one tolerated outage of 60 s, the nightly reconnect of the line. No migration
+and no setting are added; upgrading from 2.1.0 is still *Upgrading To 2.3* in `docs/deployment.md`, and from
+2.3.0-rc.1 it is the repin alone.
+
+### Fixed
+
+- The uplink rides out the nightly reconnect of the line without a restart hold (M109). The production
+  host's daily blip is a forced reconnect: the public IP changes, the line is back within seconds and the
+  ingest host answers, but Twitch refuses the new publish for 40 s to 3 min. The outage check of 2.3.0-rc.1
+  never saw it (every host reachable), so the restarts counted: on 2026-10-09 the restart backoff held the
+  uplink 15 s and 30 s on top of a 3-min refusal, on 2026-10-14 another 15 s. An output that had been on
+  air for 10 min before it went dark now gets a five-minute grace from the fault's beginning: every
+  restart in it is immediate, uncounted and holds nothing (`uplink.watchdog.reconnect_grace.uncounted`, and a sentence in the restart
+  incident). An output that never delivered (a wrong stream key from the start) gets none, and after the
+  grace the backoff applies as before.
+
 ## 2.3.0-rc.1 - 2026-10-05
 
 The candidate for 2.3.0. It carries everything of `2.2.0-rc.1` (below; tagged but never deployed - source
