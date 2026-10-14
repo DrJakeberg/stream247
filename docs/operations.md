@@ -453,6 +453,27 @@ row; the restart policy
   `uplink.watchdog.network_check_failed`). When a publish host answers again after such an outage, every hold
   ends and every streak starts over (`uplink.watchdog.network_back`). Without a public publish host
   (a local restreamer) there is nothing to ask, and the restarts count as before
+- the reconnect after a dropped connection does not count either (since M109). The DUT's nightly blip
+  (about 00:02 UTC) is not such an outage: it is a forced reconnect of the internet line (a new public
+  IP), every open connection dies, and the line is back within seconds, so the check above finds the
+  publish host and says the network is up. Twitch can still refuse the new publish for minutes (ffmpeg:
+  `Error opening rtmp://…: I/O error`; 3 min 14 s on 2026-10-09, when the restarts counted and held the
+  uplink 15 s and 30 s). When a profile had been on air for ten minutes (its process had encoded and run
+  that long, so no streak was running) and then gets a dark fault, every dark-fault restart of that
+  profile in the five minutes from the fault's beginning restarts at once, is not counted and holds
+  nothing, also for the processes started in those five minutes (`uplink.watchdog.reconnect_grace.uncounted`
+  with `outputProfile`, `fault` and `faultAgeMs`, the time since the fault began; the incident says so and
+  names the five minutes in UTC). After the five minutes the backoff applies as above, counting from the
+  first counted restart. A profile that never delivered (a wrong stream key from the start, a new output)
+  gets no grace, and an output changed during the five minutes ends it: the new output's restarts count
+  from a new streak. With the default thresholds the five minutes hold at most 8 uncounted restarts (a
+  blip costs one to three); a refusal that lasts gets one such window, and then the holds grow as above.
+  The window also begins under a network outage the check sees, but the end of the outage does not
+  lengthen it. A blip within ten minutes of any other start of the uplink gets no grace either, the planned
+  reconnect in particular (every 48 h by default, `PLAYOUT_RECONNECT_HOURS`, counted from the running
+  process's start): since a blip that costs a restart restarts that count, the night after a blip without
+  any restart has its planned reconnect due at the blip. A blip that costs a single restart now logs that
+  line instead of nothing
 - a hold ends early when that output's destinations, address or stream key change under Studio →
   Output → Output destinations (`uplink.watchdog.hold_ended`, reason `output-changed`; the restart
   incident says so), and with a restart of the uplink container (`docker compose restart uplink`)
