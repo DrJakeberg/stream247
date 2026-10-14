@@ -1432,6 +1432,52 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
 - Open: the soak result; set `Admin → Settings → Channel language` to German (owner; until then the poll
   and the skip bar are English); the DUT checks under *DUT checks for the next release candidate*; then
   2.3.0 as `HANDOFF.md` describes.
+- 2026-10-07 00:07:50 UTC, the soak of 2.3.0-rc.1 **passed with failure**: `soak-monitor-complete outages=1
+  outageSecondsMax=60 outageSecondsTotal=60`; the one outage was the nightly reconnect (00:02:48, recovered
+  00:03:48), `uplinkUnplannedRestartsDelta=1`, container restarts 0, 1431 ok samples, no incident opened in
+  the window. The channel language was set to German by then. rc.1 then aired eight days; on 2026-10-10
+  10:55 UTC every container restarted with the Docker daemon (an apt upgrade of docker-ce and containerd on
+  the host, not the stack); warnings in the week: one source breaker (closed again), one EventSub sync failure.
+- The nightly blip is a forced reconnect of the line: a hash of the public IP differed at 23:56:51 and
+  00:08:26 UTC on 2026-10-13. The line is back within seconds and live.twitch.tv answers TCP, but Twitch
+  refuses the new publish for 40 s to 3 min, so R35's outage check never fired; on 2026-10-09 and 2026-10-14
+  M103 held the uplink (15 s + 30 s, then 15 s). The owner chose a fix before 2.3.0 (2026-10-13): M109,
+  shipped as 2.3.0-rc.2.
+- DUT checks on rc.1 (2026-10-13), each run by the lead with the command of its entry under *DUT checks for
+  the next release candidate*:
+  - pass: M85 (`1|0|0`, no channel-timezone incident), M86 (PostgreSQL stopped 45 s while on air; playout
+    and uplink kept their start times, `worker.loop.database_unreachable` ×3 each, no
+    `database_outage_exit`), M90 readiness part (worker stopped 5 min: `"worker":"degraded"` from minute 4,
+    `ok` 15 s after the start, playout and uplink untouched), M91 (`3|2|21`, `present`), M93 database part
+    (`1|0`), M96 (`0|2`; no local file aired to its end in the week, so the duration-bound part had nothing
+    to measure; `feed_audio.restart` 0), M100 (`item`, 4 Up-next groups, 21 calendar events; `/channel` at
+    375×812 shows the Now card with its bar on the first screen in the phone's time zone), M103
+    (`worker.health.self_restart` 0/0/0). No stream key in plain text in the logs of web, worker, playout
+    and uplink (counts 0).
+  - fail: M105 part D on 2026-10-09 (see above; fixed by M109, its check rewritten for rc.2).
+  - left for the owner (they need the admin sign-in): M89, the M90 admin part, M93 on air, M97, M99, M102,
+    M104, M105 R22; M101 belongs in the week before 2026-10-25.
+  - seen in passing: while the worker was stopped (M90) readiness also said `broadcastReady=false` although
+    the channel aired, so a soak would count a worker stop as an outage (follow-up, not for rc.2).
+- 2026-10-14: M109 merged as #35 (`144ed20`); `release: v2.3.0-rc.2` (`a22514d`); backup
+  `~/backups/stream247-pre-v2.3.0-rc.2.dump` (41 tables; no migration in rc.2).
+- 2026-10-14: the merge commit's push CI failed before any test (`public.ecr.aws` answered the metadata
+  request for `node:22-alpine` with an unexpected status); it was not re-run, since a later run of an older
+  commit would move `latest` back. The release commit's push CI went green (12:38 UTC); tag
+  `v2.3.0-rc.2`, the release workflow published the images and the pre-release "Stream247 2.3.0-rc.2".
+  `~/repin.sh` on DT failed first (`Could not resolve host: portainer`): Portainer was recreated on
+  2026-10-11 and no longer carries the `portainer` alias on `traefik_proxy`; the script now uses the
+  container name `portainer2-portainer-1`. Dry run (the three app pins only, 62 env vars, `prune=False`),
+  then `PUT ok`; all six containers healthy 20 s after the start (12:46:12), relay `mediamtx:1.15.4`
+  untouched, 7 migrations as before, no breaker, no incident; 4 s of the global fallback, then a YouTube
+  pair. `jimpanse247` live.
+- 2026-10-14 12:46:54 UTC: 24-h soak of rc.2 from `~/stream247-v2.3.0-rc.2` (`git archive v2.3.0-rc.2 scripts
+  docker-compose.yml`), `tmux` session `soak`, `CHECK_BASE_URL=http://172.22.0.6:3000`, run log
+  `~/stream247-v2.3.0-rc.2/logs/soak-20261014-124654.log`, baseline `web=0 worker=0 playout=0 uplink=0
+  relay=0`, uplink unplanned restarts 3959; first sample `status=ok broadcastReady=true`. It ends 2026-10-15
+  12:46 UTC and spans the nightly reconnect, where the rewritten M105 part D check reads M109's lines.
+- Open: the rc.2 soak result and its M105 D/M109 check at the blip; the owner's admin checks listed above;
+  then 2.3.0 as `HANDOFF.md` describes (the release commit moves the pins to v2.3.0).
 
 ### M109 The Uplink Rides Out The Nightly Reconnect
 
