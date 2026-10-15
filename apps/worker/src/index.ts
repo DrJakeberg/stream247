@@ -254,7 +254,7 @@ import { logRuntimeEvent } from "./runtime-log.js";
 import { decideHealthcheck } from "./healthcheck.js";
 import { HealthSelfRestartWatch, HEALTH_SELF_RESTART_AFTER_MS, selfRestartReason } from "./health-self-restart.js";
 import { RestartBackoff, describeCrashLoopHold, type RestartBackoffPlan } from "./restart-backoff.js";
-import { UplinkWatchdog, type UplinkWatchdogFault } from "./uplink-watchdog.js";
+import { UplinkWatchdog, uplinkDarkRestartLogLine, type UplinkWatchdogFault } from "./uplink-watchdog.js";
 import { planSourceBreakerIncidents } from "./source-breaker-incidents.js";
 import { createBreakerOutcomeCarry, sourceBreakerOutcomesOf, type QueueProbeOutcome } from "./source-breaker-outcomes.js";
 import { createNetworkOutageCheck, ProbeOutageLogLimiter, withoutNetworkOutageOutcomes, networkLookingFailuresOf } from "./probe-network-outage.js";
@@ -9427,8 +9427,9 @@ function uplinkOutputSignature(targets: DestinationRuntimeTarget[]): string {
 /**
  * The watchdog's restart of a running profile for a fault that is dark already (never encoded, `out_time`
  * frozen, every destination in error): held for its pause on a working network (M103), at once and
- * uncounted when the channel's network was down since the fault began (R35). Returns the sentence the
- * restart incident appends.
+ * uncounted when the channel's network was down since the fault began (R35) or within five minutes of the
+ * fault of a profile that had been on air (M109, the reconnect grace). Returns the sentence the restart
+ * incident appends.
  */
 async function planUplinkDarkRestart(
   running: UplinkProcessRuntime,
@@ -9443,22 +9444,17 @@ async function planUplinkDarkRestart(
     fault,
     nowMs,
     troubleSinceMs,
-    output: uplinkOutputSignature(running.runtimeTargets)
+    output: uplinkOutputSignature(running.runtimeTargets),
+    // On air since its start once it has encoded: the fault's beginning is the last advance of `out_time`
+    // or the first cycle with every destination in error, so until about then the process encoded and a
+    // destination took its stream. A process that never encoded was never on air.
+    onAirSinceMs: running.progress.seenProgress ? new Date(running.startedAt).getTime() : Number.NaN
   });
-  if (decision.action !== "restart") {
-    return "";
+  const line = uplinkDarkRestartLogLine(decision, { outputProfile: running.key, fault });
+  if (line) {
+    logRuntimeEvent(line.event, line.fields);
   }
-  if (!decision.counted) {
-    logRuntimeEvent("uplink.watchdog.network_outage.uncounted", { outputProfile: running.key, fault });
-  } else if (decision.holdUntilMs > 0) {
-    logRuntimeEvent("uplink.watchdog.backoff", {
-      outputProfile: running.key,
-      fault,
-      attempt: decision.plan.attempt,
-      backoffMs: decision.plan.delayMs
-    });
-  }
-  return decision.note;
+  return decision.action === "restart" ? decision.note : "";
 }
 
 async function runUplinkCycle(): Promise<void> {

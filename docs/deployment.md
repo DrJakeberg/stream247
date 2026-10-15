@@ -172,7 +172,7 @@ Production Compose is intended to pull from:
 - `ghcr.io/drjakeberg/stream247-playout:<tag>`
 - `bluenviron/mediamtx:<tag>` for the local RTMP relay
 
-`docker-compose.yml` carries its own default tags; `.env.production.example` pins `v2.1.0` for a stable
+`docker-compose.yml` carries its own default tags; `.env.production.example` pins `v2.3.0` for a stable
 deployment, and the defaults move with each release.
 See `docs/operations.md` for the runbook and backup procedures.
 
@@ -645,10 +645,17 @@ What changes on air in the first cycles, without touching a setting (besides the
   input cannot be opened is started once more with the next format candidate; the trial of a quarantined
   Twitch archive that is not in the cache asks Twitch only and downloads nothing (the M95 trials of the
   first cycles included). The uplink watchdog does not count a restart while the hosts it publishes to
-  cannot be reached and ends every hold once one answers again, so the nightly network blip adds no
-  backoff wait after the network is back; a timestamp storm keeps the picture on air while its restart
-  waits. `/channel` lists no pool insert as a video, `!now` and `!next` name what plays when asked, and a
-  step that fails for 30 minutes or a refused Twitch token sends an alert.
+  cannot be reached and ends every hold once one answers again, so a network outage adds no backoff wait
+  after the network is back; a timestamp storm keeps the picture on air while its restart waits.
+  `/channel` lists no pool insert as a video, `!now` and `!next` name what plays when asked, and a step
+  that fails for 30 minutes or a refused Twitch token sends an alert.
+- **M109.** The uplink rides out the reconnect after a dropped connection: for five minutes from the
+  fault of an output that had been on air for ten minutes, its watchdog restarts are immediate and not
+  counted toward the backoff (`uplink.watchdog.reconnect_grace.uncounted`). The DUT's nightly blip is a
+  forced reconnect of the internet line, not an outage the check above sees: the publish host answers
+  while Twitch refuses the new publish for up to about three minutes, and under 2.3.0-rc.1 those restarts
+  counted (on 2026-10-09 the backoff held the uplink dark for 15 s and 30 s more). Nothing is stored, so a
+  repin back to `v2.3.0-rc.1` or `v2.1.0` needs no step for it.
 
 #### Rollback to 2.1.0
 
