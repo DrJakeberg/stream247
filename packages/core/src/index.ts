@@ -2166,6 +2166,11 @@ export function buildOverlayScenePayload(args: {
   currentCategory?: string;
   currentSourceName?: string;
   nextTitle: string;
+  /**
+   * The next card's time. Missing means there is no next block ("Nothing scheduled"); an empty string means
+   * the next item is known but not when it starts (M107: a video after one of unknown length), and the
+   * heading is the label alone.
+   */
   nextTimeLabel?: string;
   queueTitles?: string[];
   modeSubtitle?: string;
@@ -2259,7 +2264,8 @@ export function buildOverlayScenePayload(args: {
     metaLine,
     nextLabel,
     nextTitle: nextTitle || viewerText(locale, "overlay.next.noTitle"),
-    nextTimeLabel: normalizeOverlayVisibleText(args.nextTimeLabel) || viewerText(locale, "overlay.next.noBlock"),
+    nextTimeLabel:
+      args.nextTimeLabel === undefined ? viewerText(locale, "overlay.next.noBlock") : normalizeOverlayVisibleText(args.nextTimeLabel),
     queueTitleLine: queueTitles.join(" · "),
     queueTitles,
     scheduleLabel: "Scene",

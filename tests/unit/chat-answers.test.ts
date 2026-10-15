@@ -20,11 +20,13 @@ import {
   sanitizeChatLine,
   type ChatInteractionConfig,
   type ChatProgrammeInfo,
-  type RequestVerdict
+  type RequestVerdict,
+  type ScheduleOccurrence
 } from "@stream247/core";
 import { ChatControlRuntime } from "../../apps/worker/src/chat-control.js";
 import { answerChatEffect, replyToChatRequest } from "../../apps/worker/src/chat-answers.js";
-import { buildChatProgrammeInfo, readChatProgrammeInfoNow } from "../../apps/worker/src/chat-programme-info.js";
+import { buildChatProgrammeInfo, readChatProgrammeInfoNow, type ChatPlayoutRow } from "../../apps/worker/src/chat-programme-info.js";
+import type { NextOnAirPlayout, NextOnAirPrediction } from "../../apps/worker/src/next-on-air.js";
 import { TwitchChatBridge } from "../../apps/worker/src/twitch-engagement.js";
 
 // M104 V5/V6 (owner decision 5.1 Q7): viewers can ask the bot !commands, !now and !next, and every
@@ -103,6 +105,7 @@ const programme = (overrides: Partial<ChatProgrammeInfo> = {}): ChatProgrammeInf
   nowTitle: "Retro Night",
   nextTitle: "Coding Marathon",
   nextStartsAt: "",
+  nextExpectedAt: "",
   channelUrl: "https://tv.example.org/channel",
   ...overrides
 });
@@ -129,6 +132,15 @@ describe("!now and !next", () => {
       "@Ada als Nächstes um 20:00: Coding Marathon. Programm: https://tv.example.org/channel"
     );
     expect(formatChatNextReply("Ada", programme({ nextTitle: "" }), "de")).toBe("@Ada als Nächstes ist noch nichts geplant. Programm: https://tv.example.org/channel");
+  });
+
+  it("!next names when the next video is expected to start, as an estimate (M107)", () => {
+    expect(formatChatNextReply("Ada", programme({ nextExpectedAt: "17:30" }), "en")).toBe(
+      "@Ada next at about 17:30: Coding Marathon. Programme: https://tv.example.org/channel"
+    );
+    expect(formatChatNextReply("Ada", programme({ nextExpectedAt: "17:30" }), "de")).toBe(
+      "@Ada als Nächstes um ca. 17:30: Coding Marathon. Programm: https://tv.example.org/channel"
+    );
   });
 });
 
@@ -229,27 +241,59 @@ describe("the cooldowns: 60 s per viewer, 10 s in the room", () => {
 });
 
 describe("what !now and !next answer from", () => {
-  const base = {
-    playout: { status: "running", currentTitle: "Retro Night", nextTitle: "Coding Marathon" },
-    nextScheduleItem: { title: "Evening block", startTime: "20:00" },
-    appUrl: "https://tv.example.org/",
-    locale: "en"
-  };
+  // The row as packages/db readPlayoutProgrammeTitles returns it.
+  const row = (overrides: Partial<ChatPlayoutRow> = {}): ChatPlayoutRow => ({
+    status: "running",
+    currentTitle: "Retro Night",
+    currentAssetId: "a1",
+    processStartedAt: "",
+    queueKind: "asset",
+    nextAssetId: "a2",
+    nextTitle: "Coding Marathon",
+    manualNextAssetId: "",
+    insertAssetId: "",
+    insertStatus: "",
+    overrideAssetId: "",
+    overrideUntil: "",
+    cuepointWindowKey: "",
+    ...overrides
+  });
+  // !next asks the worker's prediction (next-on-air.ts, M107; its own table is next-on-air.test.ts): here
+  // one that names the queue's next item while a programme plays, and the evening block while none does.
+  const evening = { title: "Evening block", startTime: "20:00" } as ScheduleOccurrence;
+  const predictNext = vi.fn((playout: NextOnAirPlayout): NextOnAirPrediction =>
+    playout.playing && playout.nextTitle
+      ? { kind: "item", assetId: playout.nextAssetId, title: playout.nextTitle, startsAt: null }
+      : { kind: "block", title: evening.title, block: evening }
+  );
+  const base = { playout: row(), predictNext, timeZone: "UTC", appUrl: "https://tv.example.org/", locale: "en" };
 
   it("takes the playout's titles while a programme plays, and links /channel", () => {
     expect(buildChatProgrammeInfo(base)).toEqual({
       nowTitle: "Retro Night",
       nextTitle: "Coding Marathon",
       nextStartsAt: "",
+      nextExpectedAt: "",
       channelUrl: "https://tv.example.org/channel"
     });
+    expect(predictNext).toHaveBeenLastCalledWith(expect.objectContaining({ playing: true, currentAssetId: "a1", nextAssetId: "a2" }));
+  });
+
+  it("gives the prediction's expected start in the channel zone", () => {
+    const info = buildChatProgrammeInfo({
+      ...base,
+      timeZone: "Europe/Berlin",
+      predictNext: () => ({ kind: "item", assetId: "a2", title: "Coding Marathon", startsAt: new Date("2026-10-06T15:30:00.000Z") })
+    });
+    expect(info).toMatchObject({ nextTitle: "Coding Marathon", nextStartsAt: "", nextExpectedAt: "17:30" });
   });
 
   it("counts the standby slate as nothing on air and names the next block with its time", () => {
-    const info = buildChatProgrammeInfo({ ...base, playout: { status: "standby", currentTitle: "Replay standby", nextTitle: "" } });
-    expect(info).toMatchObject({ nowTitle: "", nextTitle: "Evening block", nextStartsAt: "20:00" });
-    // A running slate is still a slate.
-    expect(buildChatProgrammeInfo({ ...base, playout: { ...base.playout, currentTitle: "Stand by" } }).nowTitle).toBe("");
+    const info = buildChatProgrammeInfo({ ...base, playout: row({ status: "standby", currentTitle: "Replay standby", nextTitle: "" }) });
+    expect(info).toMatchObject({ nowTitle: "", nextTitle: "Evening block", nextStartsAt: "20:00", nextExpectedAt: "" });
+    // A running slate is still a slate, and the prediction is told nothing plays.
+    expect(buildChatProgrammeInfo({ ...base, playout: row({ currentTitle: "Stand by" }) }).nowTitle).toBe("");
+    expect(predictNext).toHaveBeenLastCalledWith(expect.objectContaining({ playing: false }));
   });
 
   it("puts built-in titles into the channel language and leaves the link out without an app URL", () => {
@@ -257,18 +301,17 @@ describe("what !now and !next answer from", () => {
       ...base,
       appUrl: "",
       locale: "de",
-      playout: { status: "running", currentTitle: "Live Bridge", nextTitle: "Local Media Library" }
+      playout: row({ status: "running", currentTitle: "Live Bridge", nextTitle: "Local Media Library" })
     });
     expect(info.channelUrl).toBe("");
     expect(info.nowTitle).not.toBe("Live Bridge");
     expect(info.nextTitle).not.toBe("Local Media Library");
   });
 
-  it("has nothing next when neither the playout nor today's schedule knows", () => {
-    expect(buildChatProgrammeInfo({ ...base, playout: { status: "idle", currentTitle: "", nextTitle: "" }, nextScheduleItem: null })).toMatchObject({
-      nowTitle: "",
-      nextTitle: ""
-    });
+  it("has nothing next when the prediction knows nothing", () => {
+    expect(
+      buildChatProgrammeInfo({ ...base, playout: row({ status: "idle", currentTitle: "", nextTitle: "" }), predictNext: () => ({ kind: "none" }) })
+    ).toMatchObject({ nowTitle: "", nextTitle: "", nextStartsAt: "", nextExpectedAt: "" });
   });
 });
 
@@ -397,6 +440,24 @@ describe("a flood of refused requests cannot crowd out the bot's other lines (R2
 
 describe("the IRC handler's answers (chat-answers.ts)", () => {
   const nowPlaying = programme({ nowTitle: "Retro Night", nextTitle: "Coding Marathon" });
+  const playoutRow = (overrides: Partial<ChatPlayoutRow>): ChatPlayoutRow => ({
+    status: "running",
+    currentTitle: "",
+    currentAssetId: "a1",
+    processStartedAt: "",
+    queueKind: "asset",
+    nextAssetId: "a2",
+    nextTitle: "",
+    manualNextAssetId: "",
+    insertAssetId: "",
+    insertStatus: "",
+    overrideAssetId: "",
+    overrideUntil: "",
+    cuepointWindowKey: "",
+    ...overrides
+  });
+  const queueNext = (playout: NextOnAirPlayout): NextOnAirPrediction =>
+    playout.nextTitle ? { kind: "item", assetId: playout.nextAssetId, title: playout.nextTitle, startsAt: null } : { kind: "none" };
 
   function answerer() {
     let nowMs = Date.parse("2026-10-05T20:00:00.000Z");
@@ -433,24 +494,28 @@ describe("the IRC handler's answers (chat-answers.ts)", () => {
   it("names the item on air when asked, not the one the last cycle read (R22)", async () => {
     // The cycle read "Retro Night"; the playout has since started "Coding Marathon".
     const cycleRead = buildChatProgrammeInfo({
-      playout: { status: "running", currentTitle: "Retro Night", nextTitle: "Coding Marathon" },
-      nextScheduleItem: null,
+      playout: playoutRow({ currentTitle: "Retro Night", nextTitle: "Coding Marathon" }),
+      predictNext: queueNext,
+      timeZone: "UTC",
       appUrl: "",
       locale: "en"
     });
     const { ask, said } = answerer();
-    await ask("ada", "!now", () =>
+    const readNow = () =>
       readChatProgrammeInfoNow({
-        readTitles: async () => ({ status: "running", currentTitle: "Coding Marathon", nextTitle: "Late Show" }),
-        nextScheduleItem: () => null,
+        readTitles: async () => playoutRow({ currentTitle: "Coding Marathon", nextTitle: "Late Show" }),
+        predictNext: queueNext,
+        timeZone: "UTC",
         appUrl: "",
         locale: "en",
         fallback: cycleRead
-      })
-    );
+      });
+    await ask("ada", "!now", readNow);
     expect(said).toHaveLength(1);
     expect(said[0]).toContain("Coding Marathon");
     expect(said[0]).not.toContain("Retro Night");
+    // !next predicts from the row read now as well (M107), not from the row the cycle read.
+    expect((await readNow()).nextTitle).toBe("Late Show");
   });
 
   it("answers from what the cycle read when the row cannot be read in time", async () => {
@@ -459,7 +524,8 @@ describe("the IRC handler's answers (chat-answers.ts)", () => {
       readTitles: async () => {
         throw new Error("connection refused");
       },
-      nextScheduleItem: () => null,
+      predictNext: queueNext,
+      timeZone: "UTC",
       appUrl: "",
       locale: "en",
       fallback
@@ -467,7 +533,8 @@ describe("the IRC handler's answers (chat-answers.ts)", () => {
     expect(failing).toBe(fallback);
     const hanging = await readChatProgrammeInfoNow({
       readTitles: () => new Promise(() => undefined),
-      nextScheduleItem: () => null,
+      predictNext: queueNext,
+      timeZone: "UTC",
       appUrl: "",
       locale: "en",
       fallback,

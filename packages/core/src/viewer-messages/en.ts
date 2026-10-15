@@ -31,6 +31,9 @@ export const EN_VIEWER_MESSAGES = {
   // M100 (V7): the bare range said nothing about how soon; under an hour minutes, under a day hours.
   "overlay.next.timeRangeInMinutes": "{start}-{end} · in {count} min",
   "overlay.next.timeRangeInHours": "{start}-{end} · in {count} h",
+  // M107: when the next video is expected to start, i.e. when the one on air is expected to end. Only
+  // "about": a video starts when the one before it ends, and that is a planned length, not a timetable.
+  "overlay.next.expectedAt": "about {time}",
   // Was "No next block configured" (an operator's word on air) and, as the payload's own fallback,
   // "Nothing scheduled next" — two sentences for one state.
   "overlay.next.noBlock": "Nothing scheduled",
@@ -130,6 +133,8 @@ export const EN_VIEWER_MESSAGES = {
   "chat.now.nothing": "@{actor} nothing is playing right now — stand by, we’ll be right back.",
   "chat.next.at": "@{actor} next at {time}: {title}.",
   "chat.next.item": "@{actor} up next: {title}.",
+  // M107: the next video with the time it is expected to start (overlay.next.expectedAt's estimate).
+  "chat.next.around": "@{actor} next at about {time}: {title}.",
   "chat.next.nothing": "@{actor} nothing further is scheduled yet.",
   "chat.programmeLink": "Programme: {url}",
   "chat.request.queued": "@{actor} “{title}” is in the queue at position {position}.",
