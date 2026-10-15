@@ -1,5 +1,43 @@
 # Changelog
 
+## 2.3.0 - 2026-10-15
+
+The release the candidates `2.3.0-rc.1` and `2.3.0-rc.2` were for; it also carries `2.2.0-rc.1` (tagged,
+never deployed). Since 2.1.0: dated and one-off schedule blocks, a public programme on `/channel`, a bot
+that answers `!commands`, `!now`, `!next` and every request, a source circuit breaker, an as-run log, one
+channel language (English or German) for everything viewers see, operator actions that always take effect
+and end what they replace, a database outage of up to five minutes that leaves the air running, restarts
+that back off, and an uplink that rides out the line's nightly reconnect (a refusal of up to five
+minutes) without a hold. The sections 2.3.0-rc.2, 2.3.0-rc.1 and 2.2.0-rc.1 of `CHANGELOG.md`, and their
+GitHub pre-releases, list every change. Upgrading from 2.1.0: read `docs/deployment.md` → *Upgrading To
+2.3* first, back up PostgreSQL before the repin (seven migrations, all additive except the one-way
+stream-key scrub), and set `Admin → Settings → Channel language` afterwards. Rolling back means deleting
+dated and one-off blocks first, or restoring the pre-upgrade dump, before 2.1.0 is pinned again.
+
+Measured before tagging, on the device under test:
+
+- `2.3.0-rc.1` aired eight days (2026-10-06 to 2026-10-14). Its 24-h soak (2026-10-06 00:07 to 2026-10-07
+  00:07 UTC) passed with failure: one outage of 60 s at the nightly reconnect of the line, one unplanned
+  uplink restart, no container restart, no incident in the window.
+- `2.3.0-rc.2`, 24-h soak 2026-10-14 12:46 to 2026-10-15 12:47 UTC: 1430 readiness samples `status=ok`;
+  passed with failure: one outage of 60 s at the nightly reconnect (00:03:14 to 00:04:14 UTC), one
+  unplanned uplink restart (3959 -> 3960), no container restart, no incident in the window. The reconnect
+  grace took that restart (`uplink.watchdog.reconnect_grace.uncounted`, encoder stall, 51 s after the
+  fault) and no backoff held the uplink; under rc.1 the backoff had held it 15 s and 30 s on 2026-10-09
+  and 15 s on 2026-10-14.
+- Checks passed on rc.1 (2026-10-13): the stream-key scrub (no key in the audit trail, the incidents or
+  the container logs), a 45-s PostgreSQL stop and a 5-min worker stop while on air (playout and uplink
+  kept running), existing rows kept through the upgrade, the schedule-date migration, local files with
+  their real length, the public programme on a phone in German, no self-restart of any process. On rc.2
+  (2026-10-15): the source breaker (none opened, YouTube resolving), the as-run log (one row per process
+  start, the repin's item ended `process-gone`), no network outage taken for a source fault, the
+  quarantine trial (one item cleared), no stop deadline and no restart nobody pressed.
+- Not run, open for the owner (they need the admin or the chat): Soft restart during a cycle, the
+  worker-stopped entry in the admin, a one-off block on air, a cuepoint insert from another source, the
+  week view, the stream-key location, the standby slate, Skip during a Pin, chat skips during a Pin and an
+  insert, the German chat answers, the viewer-control commands; the duration bound of a local file (none
+  aired to its end); the clock-change check belongs in the week before 2026-10-25.
+
 ## 2.3.0-rc.2 - 2026-10-14
 
 The second candidate for 2.3.0: `2.3.0-rc.1` (below) plus M109. rc.1 ran eight days on the production host;
