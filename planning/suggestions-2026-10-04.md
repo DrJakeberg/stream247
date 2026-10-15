@@ -10,11 +10,12 @@ broken or noisy source crash or stall the playout loop.
 1. **Noisy ffmpeg output crashes the playout loop.** Every ffmpeg output line triggers an unawaited write,
    every error line an incident. In a test an mp4 without range support (about 800 error lines a minute)
    exhausted the connection pool and the loop crashed.
-   Source: M98, follow-up 2 in `PLANS.md`. Recommendation: do it, as a small milestone with 2 and 3.
+   Source: M98, follow-up 2 in `planning/archive/plans-m84-m109.md`. Recommendation: do it, as a small
+   milestone with 2 and 3.
 2. **A pool sticks on a broken item.** The fallback bridges every boundary, the rotation never moves on,
    breaker and quarantine learn almost nothing. In a test a pool stayed on a 404 item for over four
    minutes.
-   Source: M98, follow-up 1 in `PLANS.md`. Recommendation: do it, with 1 and 3.
+   Source: M98, follow-up 1 in `planning/archive/plans-m84-m109.md`. Recommendation: do it, with 1 and 3.
 3. **A dead host stalls the whole worker cycle.** The yt-dlp timeout is per call; with three or more
    sources on the same dead host the cycle runs long enough for the stall guard to fire.
    Source: M87. Recommendation: do it, with 1 and 2.
@@ -26,18 +27,18 @@ broken or noisy source crash or stall the playout loop.
 6. **A frozen process does not restart.** Since M103 a process exits after five minutes of failing its own
    healthcheck; a stopped process or one with a blocked event loop cannot, and Compose does not restart
    unhealthy containers. The optional relay healthcheck (R3) is missing too.
-   Source: M103, *Limits* in `PLANS.md`. Recommendation: owner decides first whether a watchdog outside
-   the process should restart frozen containers; recommended answer yes, together with the relay
-   healthcheck.
+   Source: M103, *Limits* in `planning/archive/plans-m84-m109.md`. Recommendation: owner decides first
+   whether a watchdog outside the process should restart frozen containers; recommended answer yes,
+   together with the relay healthcheck.
 
 ## Installation and access
 
 7. **A self-hosted RTMP target can hang.** The uplink first sends an empty H.264 header, MediaMTX rejects
    it, and the output never sends again. Measured only with stand-in images; Twitch accepts the header on
    the DUT.
-   Source: M98, follow-up 3 in `PLANS.md`; the M99 wizard offers "Another RTMP service". Recommendation:
-   owner decides whether targets other than Twitch must work reliably; recommended yes, re-measure with
-   the real image first and fix only if confirmed.
+   Source: M98, follow-up 3 in `planning/archive/plans-m84-m109.md`; the M99 wizard offers "Another RTMP
+   service". Recommendation: owner decides whether targets other than Twitch must work reliably;
+   recommended yes, re-measure with the real image first and fix only if confirmed.
 8. **The setup text about `CHANNEL_TIMEZONE` is not always true.** The form says the variable overrides
    the stored value; for an invalid value it does not.
    Source: M85. Recommendation: do it, as a small wording milestone with 12 and 13.
