@@ -323,7 +323,8 @@ const OCTOBER_9: NightRestart[] = [
 ];
 
 function week(failure: string, stallAfterS: number): Array<{ night: string; restarts: NightRestart[] }> {
-  // On air since the restart of the 2026-10-06 blip at 00:02:37 (PLANS.md, M106), the new process 5 s later.
+  // On air since the restart of the 2026-10-06 blip at 00:02:37 (planning/archive/plans-m84-m109.md, M106),
+  // the new process 5 s later.
   let onAirSince = "2026-10-06T00:02:42";
   return ["2026-10-07", "2026-10-08", "2026-10-09", "2026-10-10", "2026-10-11", "2026-10-12", "2026-10-13"].map((night) => {
     const restarts =
@@ -525,7 +526,8 @@ describe("the uplink rides out the nightly reconnect (M109)", () => {
     // As before M109, the hold set on the new key ends when the output changes again.
     expect(watchdog.holdOf("720p", at(375), "sha256-with-a-third-stream-key")).toEqual({ untilMs: 0, outputChanged: true });
     // v2.3.0-rc.1 (no on-air signal) counted the restart before the change and, no hold running at the
-    // change, went on with that streak: each restart of the new key one step longer (PLANS.md, M109).
+    // change, went on with that streak: each restart of the new key one step longer
+    // (planning/archive/plans-m84-m109.md, M109).
     const rc1 = new UplinkWatchdog();
     darkRestart(rc1, { fault: "encoder-stall", nowMs: at(45), troubleSinceMs: fault });
     const rc1Holds = [
