@@ -1,6 +1,6 @@
 # Agent Rules
 
-The only rule file for every session, local or cloud. `PLANS.md` says what to build; history up to M83
+The only rule file for every session, local or cloud. `PLANS.md` says what to build; history up to 2.3.0
 is in `planning/archive/`. If a brief, a plan or another file disagrees with this file, this file wins
 unless the owner says otherwise in the brief; name the conflict in the report.
 
