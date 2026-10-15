@@ -44,6 +44,7 @@ How this file works:
 | M106 Release 2.3.0 | Release | Now | Planned | Ship 2.2.0-rc.1 (M64, M75, M76, M78-M80, M82) and M84-M105 as 2.3.0 (owner decision 2026-10-05) | `v2.3.0-rc.1` on the DUT after a PostgreSQL backup, migrations counted, channel language set to German, the DUT checks run, a 24-h soak, then 2.3.0 tagged with its GitHub release and repinned | release, docs | medium | repin v2.1.0 after the dated-block step |
 | M107 The Overlay Shows The Next Video | UX | Now | Complete | The on-air "Next" card names the video that airs next, as `!next` does (owner request 2026-10-06: "the overlay shows the next programme block, what comes at 16:00, but what interests me is what !next says, the next video") (ships in 2.3.1 after 2.3.0; owner decision 2026-10-06, so the running 2.3.0-rc.1 soak is not reset) | One prediction of the item that will actually air next serves the scene payload, text mode and `!next`: the playout's next queue item while something plays, from the block that will be current when the item on air ends (the next block's pool when the item runs past the block end, a dated block's first pick when it takes over first), with its expected start time; the next block only when nothing plays or no next item is known; both languages; tests that the card and `!next` agree | core, worker, tests, docs | low | revert the merge |
 | M108 Twitch Archives Get Their Whole Chapter List | Reliability | Now | Planned | A Twitch archive whose chapter probe found only its first chapter (one chapter at offset 0) is probed again until the list is stable, and chapters that arrive while the item is on air move the category to the chapter that is current, not through every past boundary at once (found on the DUT 2026-10-06: the overlay said "Just Chatting" for a VOD that had moved on to another game) | A probe-filled single chapter at offset 0 of a `twitch-channel` asset is re-probed after a cooldown, a bounded number of times, oldest probe first, inside the existing per-cycle budget; a longer list replaces it, two equal answers make it final; chapters an operator edited are never re-probed or replaced; when an asset on air gains chapters, only the boundary containing the current offset fires (one category update, one as-run/audit line); unit tests for the selection and the boundary, docs updated | worker (chapter backfill, chapter boundary), db if a marker is needed, tests, docs | low: a few more yt-dlp probes per hour | revert the merge |
+| M109 The Uplink Rides Out The Nightly Reconnect | Reliability | Now | Complete | The DUT's nightly forced reconnect costs the uplink its restarts, not a growing backoff hold: Twitch may refuse the new publish for minutes while its host answers TCP, so R35's outage check says "up" and the restarts counted (owner decision 2026-10-13: fixed before 2.3.0 and shipped as 2.3.0-rc.2 = v2.3.0-rc.1 + M109; M107 and M108 stay for 2.3.1) | A dark fault of an output profile whose process had encoded and run for `RESTART_BACKOFF_QUIET_MS` before the fault began, with no restart in that time, begins a grace episode of `UPLINK_RECONNECT_GRACE_MS` (5 min) from the fault's beginning; every dark-fault restart of the profile in it, of the processes started in it too, restarts at once, is not counted, sets no hold and logs `uplink.watchdog.reconnect_grace.uncounted` (`outputProfile`, `fault`, `faultAgeMs`), the incident with a note sentence in UTC; after it M103 unchanged, the streak counting from the first counted restart; a profile that never delivered and an output changed during the episode get no grace; storm (R4) and outage (R35) paths and their tests unchanged. Tests in `tests/unit/uplink-watchdog.test.ts`, failing without the change: the seven nights 2026-10-07..13 (normal nights one uncounted restart, no hold; 2026-10-09 with the measured offsets three uncounted restarts, no hold, no backoff line), a refusal past 5 min, a never-delivered profile, a second fault shortly after an episode, an output change, the bound (a refusal of an hour: at most 8 uncounted restarts with the default thresholds, all in the first 5 min, then M103's holds), the worker's on-air signal; `pnpm validate` green | `apps/worker/src/uplink-watchdog.ts`, `apps/worker/src/index.ts`, tests, docs | low: worker only, no schema; a profile that had been on air restarts at once up to 8 times (20 with any thresholds) in the five minutes after a fault | revert the merge; repin `v2.3.0-rc.1` |
 
 M84-M104 were approved by the owner on 2026-10-02 (all 21, as written). Their source is `planning/proposal-2026-10.md`: references in these rows such as "decided 5.1 Q5", "2.5a", "3.3" and finding ids (S1, C3, I1, U7, …) point into that file and the research files under `planning/research/`. Order: M84 first, then the table order with M88 before M93, M93 before M100 and M91 before M99; one milestone per thread, the next starts after the previous one is merged.
 
@@ -404,18 +405,29 @@ deployed; the release that ships them records the results.
   SQL
   ```
 
-- M105 (part D, R35 and R4), through the candidate's soak, which spans the DUT's nightly network blip (about
-  00:02 UTC): the uplink's restarts during the blip are not counted and nothing holds the uplink once the
-  network is back. Passes when the first command shows `uplink.watchdog.network_outage` at the blip, an
-  `uplink.watchdog.network_outage.uncounted` line for each watchdog restart until
-  `uplink.watchdog.network_back`, and no `uplink.watchdog.backoff` line from the blip until ten minutes after
-  `network_back`; a `restart_waits` line (a timestamp storm kept on air) is reported with its time. The
-  soak's outage lines of the blip (second command) are reported with their seconds next to the uplink
-  lines; under 2.1.0 the uplink was back 50 to 70 s after a blip. A blip without any
-  `uplink.watchdog.network_outage` line (the uplink never restarted, so it never asked) passes too.
+- M105 (part D, R35 and R4) and M109, through the candidate's soak, which spans the DUT's nightly blip (about
+  00:02 UTC, a forced reconnect of the internet line: the publish host answers while Twitch may refuse the
+  new publish for minutes, so the R35 outage check says "up"; see *M109* in the milestone notes): the
+  uplink's restarts at the blip are not counted and nothing holds the uplink. The check is anchored to the
+  grace episode, not to `destination.failure`: the episode begins when the fault began (for an encoder
+  stall the last `out_time` advance, up to about half a minute before the first `destination.failure`)
+  and ends 5 min later; its beginning is the first `uplink.watchdog.reconnect_grace.uncounted` line's `ts`
+  minus its `faultAgeMs`. Passes when the first command shows, for the blip, a `reconnect_grace.uncounted`
+  line for each watchdog restart before the episode's end and no `uplink.watchdog.backoff` line before
+  it; restarts after the end are M103's (the first without a line of its own) and are reported with their
+  times. Where the check did see an outage, an `uplink.watchdog.network_outage` line followed by
+  `uplink.watchdog.network_outage.uncounted` lines instead passes too (R35, unchanged). No grace by
+  design, so reported and judged as under v2.3.0-rc.1, not failed: a blip whose uplink process had started
+  less than 10 min before it (the last `uplink.process.start`), in particular when the scheduled reconnect
+  (an `uplink.process.exit` with `"planned":true` and no watchdog restart line before it) falls on the
+  blip, as it does on the night after a blip without any restart (*M109*, Not covered). A `restart_waits`
+  line (a timestamp storm kept on air) is reported with its time. The soak's outage lines of the blip
+  (second command) are reported with their seconds next to the uplink lines; under 2.1.0 the uplink was
+  back 50 to 70 s after a blip, under v2.3.0-rc.1 45 to 60 s, and on 2026-10-09 3 min 14 s with 45 s of
+  them holds. A blip without any watchdog restart passes too.
 
   ```sh
-  ssh dut 'docker logs --since 25h stream247-uplink-1 2>&1 | grep -E "uplink.watchdog.(network_outage|network_back|backoff|hold_ended)|uplink.(encoder_stall|destination_stall|encoder.no_progress|discontinuity_storm).restart" | tail -40'
+  ssh dut 'docker logs --since 25h stream247-uplink-1 2>&1 | grep -E "uplink.watchdog.(network_outage|network_back|reconnect_grace|backoff|hold_ended)|destination.failure|uplink.process.(start|exit)|uplink.(encoder_stall|destination_stall|encoder.no_progress|discontinuity_storm).restart" | tail -40'
   ssh dut 'log=$(ls -t ~/logs/soak-*.log | head -1); grep -E "outage" "$log" | tail -20'
   ```
 
@@ -1427,6 +1439,52 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
 - Open: the soak result; set `Admin → Settings → Channel language` to German (owner; until then the poll
   and the skip bar are English); the DUT checks under *DUT checks for the next release candidate*; then
   2.3.0 as `HANDOFF.md` describes.
+- 2026-10-07 00:07:50 UTC, the soak of 2.3.0-rc.1 **passed with failure**: `soak-monitor-complete outages=1
+  outageSecondsMax=60 outageSecondsTotal=60`; the one outage was the nightly reconnect (00:02:48, recovered
+  00:03:48), `uplinkUnplannedRestartsDelta=1`, container restarts 0, 1431 ok samples, no incident opened in
+  the window. The channel language was set to German by then. rc.1 then aired eight days; on 2026-10-10
+  10:55 UTC every container restarted with the Docker daemon (an apt upgrade of docker-ce and containerd on
+  the host, not the stack); warnings in the week: one source breaker (closed again), one EventSub sync failure.
+- The nightly blip is a forced reconnect of the line: a hash of the public IP differed at 23:56:51 and
+  00:08:26 UTC on 2026-10-13. The line is back within seconds and live.twitch.tv answers TCP, but Twitch
+  refuses the new publish for 40 s to 3 min, so R35's outage check never fired; on 2026-10-09 and 2026-10-14
+  M103 held the uplink (15 s + 30 s, then 15 s). The owner chose a fix before 2.3.0 (2026-10-13): M109,
+  shipped as 2.3.0-rc.2.
+- DUT checks on rc.1 (2026-10-13), each run by the lead with the command of its entry under *DUT checks for
+  the next release candidate*:
+  - pass: M85 (`1|0|0`, no channel-timezone incident), M86 (PostgreSQL stopped 45 s while on air; playout
+    and uplink kept their start times, `worker.loop.database_unreachable` ×3 each, no
+    `database_outage_exit`), M90 readiness part (worker stopped 5 min: `"worker":"degraded"` from minute 4,
+    `ok` 15 s after the start, playout and uplink untouched), M91 (`3|2|21`, `present`), M93 database part
+    (`1|0`), M96 (`0|2`; no local file aired to its end in the week, so the duration-bound part had nothing
+    to measure; `feed_audio.restart` 0), M100 (`item`, 4 Up-next groups, 21 calendar events; `/channel` at
+    375×812 shows the Now card with its bar on the first screen in the phone's time zone), M103
+    (`worker.health.self_restart` 0/0/0). No stream key in plain text in the logs of web, worker, playout
+    and uplink (counts 0).
+  - fail: M105 part D on 2026-10-09 (see above; fixed by M109, its check rewritten for rc.2).
+  - left for the owner (they need the admin sign-in): M89, the M90 admin part, M93 on air, M97, M99, M102,
+    M104, M105 R22; M101 belongs in the week before 2026-10-25.
+  - seen in passing: while the worker was stopped (M90) readiness also said `broadcastReady=false` although
+    the channel aired, so a soak would count a worker stop as an outage (follow-up, not for rc.2).
+- 2026-10-14: M109 merged as #35 (`144ed20`); `release: v2.3.0-rc.2` (`a22514d`); backup
+  `~/backups/stream247-pre-v2.3.0-rc.2.dump` (41 tables; no migration in rc.2).
+- 2026-10-14: the merge commit's push CI failed before any test (`public.ecr.aws` answered the metadata
+  request for `node:22-alpine` with an unexpected status); it was not re-run, since a later run of an older
+  commit would move `latest` back. The release commit's push CI went green (12:38 UTC); tag
+  `v2.3.0-rc.2`, the release workflow published the images and the pre-release "Stream247 2.3.0-rc.2".
+  `~/repin.sh` on DT failed first (`Could not resolve host: portainer`): Portainer was recreated on
+  2026-10-11 and no longer carries the `portainer` alias on `traefik_proxy`; the script now uses the
+  container name `portainer2-portainer-1`. Dry run (the three app pins only, 62 env vars, `prune=False`),
+  then `PUT ok`; all six containers healthy 20 s after the start (12:46:12), relay `mediamtx:1.15.4`
+  untouched, 7 migrations as before, no breaker, no incident; 4 s of the global fallback, then a YouTube
+  pair. `jimpanse247` live.
+- 2026-10-14 12:46:54 UTC: 24-h soak of rc.2 from `~/stream247-v2.3.0-rc.2` (`git archive v2.3.0-rc.2 scripts
+  docker-compose.yml`), `tmux` session `soak`, `CHECK_BASE_URL=http://172.22.0.6:3000`, run log
+  `~/stream247-v2.3.0-rc.2/logs/soak-20261014-124654.log`, baseline `web=0 worker=0 playout=0 uplink=0
+  relay=0`, uplink unplanned restarts 3959; first sample `status=ok broadcastReady=true`. It ends 2026-10-15
+  12:46 UTC and spans the nightly reconnect, where the rewritten M105 part D check reads M109's lines.
+- Open: the rc.2 soak result and its M105 D/M109 check at the blip; the owner's admin checks listed above;
+  then 2.3.0 as `HANDOFF.md` describes (the release commit moves the pins to v2.3.0).
 
 ### M107 The Overlay Shows The Next Video
 
@@ -1487,3 +1545,74 @@ Done on branch `claude/m85-audit-log-stream-keys-f7f4u2`.
   current offset fired at once (several category changes in one cycle). Only the current one should.
 - Twitch archives from `--flat-playlist` carry no publish date (`published_at` is empty), so "recent" cannot be
   read from it; use the probe count and probe time, or the VOD id order the stable comparator already uses.
+
+### M109 The Uplink Rides Out The Nightly Reconnect
+
+- **Evidence (lead, DUT, v2.3.0-rc.1, 2026-10-07..13).** The nightly blip (about 00:02 UTC) is a forced
+  reconnect of the internet line: a hash of the public IP differed between 23:56:51 and 00:08:26 UTC on
+  2026-10-13, every open TCP connection in the home network dies at that second, and the line is back
+  within seconds (2026-10-02: `live.twitch.tv:1935` reachable from the playout container in every sample of
+  the blip). Six of seven nights: `destination.failure` at 00:02:05..00:02:56, `uplink.encoder_stall.restart`
+  33 to 53 s later, a new process 5 s after it, on air; one restart, no backoff, about 45 to 60 s dark.
+  2026-10-09: `destination.failure` 00:02:18; encoder-stall restart 00:03:11; new process 00:03:16, failing
+  at once; destination-stall restart 00:03:31 with `uplink.watchdog.backoff` attempt 2, 15000 ms; new
+  process 00:03:46, failing 00:03:47; destination-stall restart 00:05:02 with attempt 3, 30000 ms; new
+  process 00:05:32, on air. Every error was ffmpeg's `Error opening rtmp://live.twitch.tv/app/…: I/O error`:
+  Twitch refused the new publish for about 3 min 14 s while its host answered TCP, and the two holds added
+  about 45 s of dark air. In no night did `uplink.watchdog.network_outage`, `network_outage.uncounted` or
+  `network_back` appear: R35's premise, that the blip makes every publish host unreachable, does not hold
+  for this blip, so the outage check said "up" and the restarts counted. R35 stays for a real outage.
+- **Rule** (`apps/worker/src/uplink-watchdog.ts`, pure). The worker passes `onAirSinceMs` with each
+  dark-fault restart: the running process's start once it has reported progress, NaN while it never has
+  (`planUplinkDarkRestart` in `apps/worker/src/index.ts`). A dark fault (never encoded, encoder stall,
+  destination stall) of a profile on air for `RESTART_BACKOFF_QUIET_MS` (10 min) before the fault began,
+  with no watchdog restart of the profile in that time, begins a grace episode of
+  `UPLINK_RECONNECT_GRACE_MS` (5 min: the 3 min 14 s of 2026-10-09 plus margin, no longer than M103's
+  longest hold) from the fault's beginning. Every dark-fault restart of that profile inside the episode,
+  of the processes started during it as well, restarts at once, is not counted and sets no hold;
+  `uplink.watchdog.reconnect_grace.uncounted` (`outputProfile`, `fault`, `faultAgeMs` since the episode's
+  fault began) and the incident's note sentence say so, the sentence with the episode's beginning and end
+  in UTC (an incident message stores no relative time, M90 U10). After the episode M103 applies unchanged,
+  its streak counting from the first counted restart; ten minutes on air since the last restart are needed
+  for the next episode. A profile that never delivered (a wrong key from the start, a new output) gets
+  none, and a fault of another output (the operator changed the key, address or destinations) ends the
+  episode: the new output gets no grace and its restarts count from a new streak, as after an output change
+  that ends a hold. Not quite as under v2.3.0-rc.1, which counted the restarts before the change and went
+  on with that streak unless a hold was running at the change, so it held each restart of a new key that
+  Twitch refuses as well one step longer per restart before the change (the test's case, one restart before
+  it: now 0 s, 15 s, 30 s, under rc.1 15 s, 30 s, 1 min). The R35 rule is asked first and keeps its
+  decision and line; an episode begins under it too, so the reconnect after a real outage is covered as far as it falls within five minutes of the
+  fault's beginning. `network_back` ends every hold and streak (R35) but does not lengthen the episode:
+  after a longer outage the restarts from the episode's end are M103's, the first at once, the next held
+  15 s, as under v2.3.0-rc.1. The storm path (R4) is untouched. A running hold is never shortened by the
+  grace: a profile with a running process has none.
+- **Bound.** One restart per profile per uplink cycle (cycles at least 15 s apart): at most 20 uncounted
+  restarts per episode. With the default thresholds (encoder stall 45 s, its start grace 60 s, destination
+  stall 60 s) at most 8, because only a destination-stall restart can follow an encoder-stall restart one
+  cycle later; at most 6 episodes an hour (48 restarts), and only on a line that is back for ten minutes
+  between faults. A refusal lasting an hour gets one episode: 5 uncounted restarts in the 2026-10-09
+  pattern, 8 in the worst case, all in the first five minutes, then holds of 0 s, 15 s, 30 s, 1, 2, 4 and
+  5 min. Simulated over every cycle phase and every refusal up to five minutes, the uplink is on air less
+  than 75 s after Twitch accepts again; with the M103 holds up to 134 s.
+- **Tests** (`tests/unit/uplink-watchdog.test.ts`, twelve fail with the grace disabled): the seven nights
+  through one watchdog (each normal night at both ends of the measured range, since the lead's summary gives
+  the six normal nights as a range; 2026-10-13 at 00:02:56), 2026-10-09 with the measured offsets (three
+  uncounted restarts, no hold, no backoff line, the incident sentence in UTC) and, without the on-air
+  signal, the measured attempts 2 and 3 with 15 s and 30 s, a refusal past five minutes, the 10-min
+  threshold and a process that never encoded, a second fault shortly after an episode, an output change
+  (with rc.1's holds for comparison), R35 first, a real outage longer than the episode, the storm, the bound,
+  the log lines, and the worker's on-air signal and log call pinned in the source as in
+  `tests/unit/restart-backoff.test.ts` (runUplinkCycle needs a database and ffmpeg). The existing R35 and
+  R4 tests are unchanged and green.
+- **Not covered.** A blip within ten minutes of any other start of the profile's process gets no grace and
+  counts as before, the uplink's scheduled reconnect in particular, and that one is tied to the blip: it is
+  due `playoutReconnectHours` (48 h by default) after the running process's start (`reconnectDue` in
+  `runUplinkCycle`, `apps/worker/src/index.ts`), and every blip that costs a restart puts that start at
+  about 00:03 UTC. On the night after a blip without any restart the scheduled reconnect is therefore due
+  within about a minute of the blip: it stops the process just before the blip (the new one on air less
+  than ten minutes when the line drops) or stops the faulted process before the watchdog decides (no
+  episode begins, and the next process never delivered), and that night is decided as under
+  v2.3.0-rc.1. A far end that refuses for longer than five minutes, or past the episode after a real
+  outage, is held by M103 from then on, as before. Follow-up, not in M109: a scheduled reconnect could
+  keep the on-air time of a profile it stops while it delivers, or begin an episode when it stops a
+  faulted process.
