@@ -4826,13 +4826,18 @@ async function syncTwitchVodSources(): Promise<void> {
  *
  * Collection connectors list their items with --flat-playlist, which never carries chapters, so
  * YouTube items, Twitch archive VODs and direct media arrive chapterless. This step spends a small
- * per-cycle probe budget on those assets (one metadata-only call each, no download) and stores the
- * result through the same only-fill-empty rule re-ingest uses — operator edits always win, and an
- * asset that has chapters is never probed again. A probe that came back empty is trusted for a
- * week and then asked once more, because "no chapters" is also what a rate limit and a broken
- * extractor return. Failures go into a short cooldown instead of an incident: a missing chapter
- * list degrades nothing on air, so the log entry is enough. The written chaptersJson feeds the
- * existing boundary emission and Helix sync untouched.
+ * per-cycle probe budget on those assets (one metadata-only call each, no download) and fills an
+ * empty list; operator edits always win. A probe that came back empty is trusted for a week and
+ * then asked once more, because "no chapters" is also what a rate limit and a broken extractor
+ * return. A Twitch archive's provisional list (M108: the one chapter yt-dlp makes up when Twitch
+ * returns no chapter list, a VOD still being recorded, or a list stored before M108) is asked again
+ * every few hours until an answer taken after the recording confirms it, and a longer answer
+ * replaces it; six counted rechecks at most (CHAPTER_PROBE_RECHECK_CAP), so a source that never
+ * answers properly stops being asked. The database decides that by compare-and-swap against what
+ * the candidate was selected with, so an operator edit made while the probe ran wins. Failures go
+ * into a short cooldown instead of an incident: a missing chapter list degrades nothing on air, so
+ * the log entry is enough. The written chaptersJson feeds the existing boundary emission and Helix
+ * sync untouched.
  */
 async function backfillAssetChapters(): Promise<void> {
   const config = getChapterBackfillConfig(process.env);
@@ -4847,6 +4852,7 @@ async function backfillAssetChapters(): Promise<void> {
     budget: config.perCycleBudget,
     failureCooldownMs: config.failureCooldownMs,
     emptyResultRecheckMs: config.emptyResultRecheckMs,
+    provisionalRecheckMs: config.provisionalRecheckMs,
     nowMs: Date.now()
   });
 
@@ -4856,12 +4862,21 @@ async function backfillAssetChapters(): Promise<void> {
 
     if (result.status === "ok") {
       await updateAssetChapterProbeRecords([
-        { id: candidate.assetId, chaptersProbeStatus: "ok", chaptersProbedAt: probedAt, chaptersJson: result.chaptersJson }
+        {
+          id: candidate.assetId,
+          chaptersProbeStatus: "ok",
+          chaptersProbedAt: probedAt,
+          chaptersJson: result.chaptersJson,
+          recording: result.recording,
+          selectedWith: candidate.selectedWith
+        }
       ]);
       continue;
     }
 
-    await updateAssetChapterProbeRecords([{ id: candidate.assetId, chaptersProbeStatus: "failed", chaptersProbedAt: probedAt }]);
+    await updateAssetChapterProbeRecords([
+      { id: candidate.assetId, chaptersProbeStatus: "failed", chaptersProbedAt: probedAt, selectedWith: candidate.selectedWith }
+    ]);
     logRuntimeEvent("asset.chapters.probe_failed", {
       assetId: candidate.assetId,
       probe: candidate.probe,
@@ -7345,14 +7360,19 @@ async function syncDestinations(): Promise<void> {
 }
 
 /**
- * Announce every chapter offset the current playback has crossed since the last cycle.
+ * Announce the chapter the current playback has entered since the last cycle.
  *
  * This is the cuepoint pattern one level down: elapsed time within the asset instead of within
  * the schedule block, measured against the playout process's own start clock because that is the
  * moment the asset began at second zero. The event always fires and is always recorded — even
  * while the Twitch metadata sync is gated waiting for the broadcaster connection — so the log
  * shows which chapters passed, and the sync (which reads elapsed time, not these events) starts
- * applying chapters the moment the broadcaster connects, without a restart.
+ * applying chapters the moment the broadcaster connects, without a restart. The runtime log is the
+ * event's only consumer. Only the chapter that contains the elapsed offset is announced: the fired
+ * set below is memory, empty after a worker restart and blind to chapters a probe adds mid-item,
+ * and replaying every earlier boundary then is what the DUT logged on 2026-10-06 (M108,
+ * getDueAssetChapterBoundaries). A recheck that changes what the chapter on air says announces it
+ * once more (buildAssetChapterKey).
  */
 function emitDueAssetChapterBoundaries(asset: AssetRecord | null): void {
   if (!asset || !isPlayoutProcessRunning() || playoutAssetId !== asset.id || playoutProcessStartedAtMs <= 0) {

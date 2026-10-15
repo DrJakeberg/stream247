@@ -42,7 +42,9 @@ import {
   saveOverlayDraftRecord,
   saveOverlayScenePresetRecord,
   updateAssetCacheRecords,
+  updateAssetChapterProbeRecords,
   updateAssetCurationRecords,
+  updateAssetMetadataRecords,
   updateAssetPlaybackProbeRecords,
   updateDestinationRecord,
   updateEngagementSettingsRecord,
@@ -67,7 +69,7 @@ import {
   writeChatOverlayMessagesRecord,
   writeChatSkipVoteRecord
 } from "@stream247/db";
-import type { AsRunRecord } from "@stream247/core";
+import { CHAPTER_PROBE_RECHECK_CAP, isProvisionalProbedChapterList, type AsRunRecord } from "@stream247/core";
 import { decideCycleEndPendingAction, decideCycleEndRestartFlag } from "../../apps/worker/src/playout-boundary";
 
 const execFileAsync = promisify(execFile);
@@ -2662,6 +2664,246 @@ describe.sequential("database roundtrip", () => {
       // A replaced file whose probe failed: unknown for the new version, not the old file's 120 s.
       await replaceAssetsForSourceIds([localSourceId], [localAsset("folge_1", 0, "2048:1759600000000")]);
       expect(await probed()).toMatchObject({ durationSeconds: 0, durationProbeKey: "2048:1759600000000" });
+    }, 60_000);
+  });
+
+  describe("provisional Twitch chapters (M108)", () => {
+    // On the DUT 2026-10-06, 41 of 46 Twitch archives held the one chapter at offset 0 that yt-dlp makes
+    // up when Twitch returns no chapter list, kept forever. A recheck may now replace such a probe-filled
+    // list, but only through a compare-and-swap inside the state write lock.
+    const settleLevelMigrationId = "20261006_001_asset_chapter_probe_settle_level";
+    const rechecksMigrationId = "20261006_002_asset_chapter_probe_rechecks";
+    const twitchSourceId = "source_m108";
+    const assetId = "asset_source_m108_2580000001";
+    const fallback = JSON.stringify([{ offsetSeconds: 0, categoryName: "WARDOGS", title: "WARDOGS" }]);
+    const twoGames = JSON.stringify([
+      { offsetSeconds: 0, categoryName: "Just Chatting", title: "Just Chatting" },
+      { offsetSeconds: 3600, categoryName: "WARDOGS", title: "WARDOGS" }
+    ]);
+    const operatorCut = JSON.stringify([{ offsetSeconds: 0, categoryName: "Just Chatting", title: "Operator cut" }]);
+    const recheck = { selectedWith: { chaptersJson: fallback, chaptersProbeStatus: "ok" as const } };
+    const archive = {
+      id: assetId,
+      sourceId: twitchSourceId,
+      title: "Archive stream",
+      path: "https://www.twitch.tv/videos/2580000001",
+      folderPath: "",
+      tags: [],
+      status: "ready" as const,
+      includeInProgramming: true,
+      externalId: "2580000001",
+      durationSeconds: 26400,
+      fallbackPriority: 100,
+      isGlobalFallback: false,
+      createdAt: "2026-10-01T00:00:00.000Z",
+      updatedAt: "2026-10-01T00:00:00.000Z"
+    };
+    const stored = async () => (await readAppState()).assets.find((asset) => asset.id === assetId);
+
+    async function seedProbeFilledFallback() {
+      await ensureDatabaseWithRetry();
+      const initial = await readAppState();
+      await writeAppState({
+        ...initial,
+        sources: [
+          {
+            id: twitchSourceId,
+            name: "M108 Twitch",
+            type: "Twitch channel",
+            connectorKind: "twitch-channel",
+            enabled: true,
+            status: "Ready",
+            externalUrl: "https://www.twitch.tv/example",
+            notes: "",
+            lastSyncedAt: "2026-10-06T00:00:00.000Z"
+          }
+        ],
+        assets: [archive]
+      });
+      // The first probe, written the way the backfill writes it.
+      await updateAssetChapterProbeRecords([
+        {
+          id: assetId,
+          chaptersProbeStatus: "ok",
+          chaptersProbedAt: "2026-10-06T08:00:00.000Z",
+          chaptersJson: fallback,
+          recording: false,
+          selectedWith: { chaptersJson: "[]", chaptersProbeStatus: "" }
+        }
+      ]);
+      expect(await stored()).toMatchObject({
+        chaptersJson: fallback,
+        chaptersProbeStatus: "ok",
+        chaptersProbeSettleLevel: 1,
+        chaptersProbeRechecks: 0
+      });
+    }
+
+    it("adds the settle column to a database whose assets predate it, and old lists read 0, asked once more", async () => {
+      await seedProbeFilledFallback();
+      await executeSql(`
+        ALTER TABLE assets DROP COLUMN IF EXISTS chapters_probe_settle_level;
+        DELETE FROM schema_migrations WHERE id = '${settleLevelMigrationId}';
+      `);
+
+      await resetDatabaseConnectionsForTests();
+      await ensureDatabaseWithRetry();
+
+      expect(
+        await executeSql(
+          "SELECT column_name || '=' || column_default FROM information_schema.columns WHERE table_name = 'assets' AND column_name = 'chapters_probe_settle_level';"
+        )
+      ).toBe("chapters_probe_settle_level=0");
+      expect(await executeSql(`SELECT COUNT(*) FROM schema_migrations WHERE id = '${settleLevelMigrationId}';`)).toBe("1");
+      expect(DECLARED_SCHEMA.assets).toContain("chapters_probe_settle_level");
+      expect(await stored()).toMatchObject({ chaptersJson: fallback, chaptersProbeStatus: "ok", chaptersProbeSettleLevel: 0 });
+    }, 60_000);
+
+    it("adds the rechecks column to a database whose assets predate it, and old lists read 0", async () => {
+      await seedProbeFilledFallback();
+      await updateAssetChapterProbeRecords([{ id: assetId, chaptersProbeStatus: "failed", chaptersProbedAt: "2026-10-06T10:00:00.000Z", ...recheck }]);
+      expect(await stored()).toMatchObject({ chaptersProbeRechecks: 1 });
+      await executeSql(`
+        ALTER TABLE assets DROP COLUMN IF EXISTS chapters_probe_rechecks;
+        DELETE FROM schema_migrations WHERE id = '${rechecksMigrationId}';
+      `);
+
+      await resetDatabaseConnectionsForTests();
+      await ensureDatabaseWithRetry();
+
+      expect(
+        await executeSql(
+          "SELECT column_name || '=' || column_default FROM information_schema.columns WHERE table_name = 'assets' AND column_name = 'chapters_probe_rechecks';"
+        )
+      ).toBe("chapters_probe_rechecks=0");
+      expect(await executeSql(`SELECT COUNT(*) FROM schema_migrations WHERE id = '${rechecksMigrationId}';`)).toBe("1");
+      expect(DECLARED_SCHEMA.assets).toContain("chapters_probe_rechecks");
+      expect(await stored()).toMatchObject({ chaptersJson: fallback, chaptersProbeSettleLevel: 1, chaptersProbeRechecks: 0 });
+    }, 60_000);
+
+    // M108 gate, 2026-10-06: an empty answer and a failed probe keep the list and its level, so without
+    // a cap a source that never answers properly would be asked every interval for as long as it is listed.
+    it("counts the rechecks in the compare-and-swap, keeps the count through a whole-state write and a sync, and stops at the cap", async () => {
+      await seedProbeFilledFallback();
+      // Listed on 2026-10-01: the recording window is over, so failures and empty answers count.
+      await updateAssetChapterProbeRecords([{ id: assetId, chaptersProbeStatus: "failed", chaptersProbedAt: "2026-10-06T10:00:00.000Z", ...recheck }]);
+      await updateAssetChapterProbeRecords([
+        { id: assetId, chaptersProbeStatus: "ok", chaptersProbedAt: "2026-10-06T12:00:00.000Z", chaptersJson: "[]", ...recheck }
+      ]);
+      expect(await stored()).toMatchObject({ chaptersJson: fallback, chaptersProbeSettleLevel: 1, chaptersProbeRechecks: 2 });
+
+      // The shape of a chat game start/stop: the whole assets table is written again.
+      await updateAppState((current) => ({ ...current, moderation: { ...current.moderation } }));
+      expect(await stored()).toMatchObject({ chaptersProbeSettleLevel: 1, chaptersProbeRechecks: 2 });
+      // A whole-state write from a state read before (a blueprint apply), and a source sync.
+      await writeAppState(await readAppState());
+      await replaceAssetsForSourceIds([twitchSourceId], [{ ...archive, updatedAt: "2026-10-06T13:00:00.000Z" }]);
+      expect(await stored()).toMatchObject({ chaptersJson: fallback, chaptersProbeStatus: "ok", chaptersProbeRechecks: 2 });
+
+      for (const hour of [14, 16, 18, 20, 22]) {
+        await updateAssetChapterProbeRecords([
+          { id: assetId, chaptersProbeStatus: "failed", chaptersProbedAt: `2026-10-06T${String(hour)}:00:00.000Z`, ...recheck }
+        ]);
+      }
+      expect(await stored()).toMatchObject({
+        chaptersJson: fallback,
+        chaptersProbeStatus: "ok",
+        chaptersProbedAt: "2026-10-06T22:00:00.000Z",
+        chaptersProbeSettleLevel: 1,
+        chaptersProbeRechecks: CHAPTER_PROBE_RECHECK_CAP
+      });
+      expect(await executeSql(`SELECT chapters_probe_rechecks FROM assets WHERE id = '${assetId}';`)).toBe(String(CHAPTER_PROBE_RECHECK_CAP));
+      expect(isProvisionalProbedChapterList(JSON.parse(fallback), 1, (await stored())?.chaptersProbeRechecks)).toBe(false);
+    }, 60_000);
+
+    it("replaces the stand-in with a longer answer, and the level survives a whole-state write and a sync", async () => {
+      await seedProbeFilledFallback();
+      await updateAssetChapterProbeRecords([
+        { id: assetId, chaptersProbeStatus: "ok", chaptersProbedAt: "2026-10-06T10:00:00.000Z", chaptersJson: twoGames, ...recheck }
+      ]);
+      expect(await stored()).toMatchObject({ chaptersJson: twoGames, chaptersProbeStatus: "ok", chaptersProbeSettleLevel: 2 });
+
+      // The shape of a chat game start/stop: the whole assets table is written again.
+      await updateAppState((current) => ({ ...current, moderation: { ...current.moderation } }));
+      expect(await stored()).toMatchObject({ chaptersJson: twoGames, chaptersProbeSettleLevel: 2 });
+      // A source sync deletes and re-inserts the archive; its listing carries no chapters.
+      await replaceAssetsForSourceIds([twitchSourceId], [{ ...archive, updatedAt: "2026-10-06T11:00:00.000Z" }]);
+      expect(await stored()).toMatchObject({ chaptersJson: twoGames, chaptersProbeStatus: "ok", chaptersProbeSettleLevel: 2 });
+    }, 60_000);
+
+    it("keeps the stand-in on an empty answer, a failed probe and the same answer", async () => {
+      await seedProbeFilledFallback();
+      await updateAssetChapterProbeRecords([
+        { id: assetId, chaptersProbeStatus: "ok", chaptersProbedAt: "2026-10-06T10:00:00.000Z", chaptersJson: "[]", ...recheck }
+      ]);
+      // An empty answer neither confirms nor counts (review of 2026-10-06): the level stays.
+      expect(await stored()).toMatchObject({
+        chaptersJson: fallback,
+        chaptersProbeStatus: "ok",
+        chaptersProbedAt: "2026-10-06T10:00:00.000Z",
+        chaptersProbeSettleLevel: 1
+      });
+
+      await updateAssetChapterProbeRecords([{ id: assetId, chaptersProbeStatus: "failed", chaptersProbedAt: "2026-10-06T12:00:00.000Z", ...recheck }]);
+      expect(await stored()).toMatchObject({
+        chaptersJson: fallback,
+        chaptersProbeStatus: "ok",
+        chaptersProbedAt: "2026-10-06T12:00:00.000Z",
+        chaptersProbeSettleLevel: 1
+      });
+
+      await updateAssetChapterProbeRecords([
+        { id: assetId, chaptersProbeStatus: "ok", chaptersProbedAt: "2026-10-06T14:00:00.000Z", chaptersJson: fallback, ...recheck }
+      ]);
+      expect(await stored()).toMatchObject({ chaptersJson: fallback, chaptersProbeStatus: "ok", chaptersProbeSettleLevel: 3 });
+    }, 60_000);
+
+    it("believes a recording answer only within 48 hours of the archive's first listing (created_at)", async () => {
+      await seedProbeFilledFallback();
+      // The archive was first listed on 2026-10-01: five days on, a stuck is_live cannot be true.
+      await updateAssetChapterProbeRecords([
+        { id: assetId, chaptersProbeStatus: "ok", chaptersProbedAt: "2026-10-06T10:00:00.000Z", chaptersJson: fallback, recording: true, ...recheck }
+      ]);
+      expect(await stored()).toMatchObject({ chaptersJson: fallback, chaptersProbeSettleLevel: 3 });
+
+      // Listed an hour before the probe: the VOD may still be being recorded, the list stays at level 0.
+      await executeSql(`UPDATE assets SET chapters_json = '[]', chapters_probe_status = '', created_at = '2026-10-06T09:00:00.000Z' WHERE id = '${assetId}';`);
+      await updateAssetChapterProbeRecords([
+        {
+          id: assetId,
+          chaptersProbeStatus: "ok",
+          chaptersProbedAt: "2026-10-06T10:00:00.000Z",
+          chaptersJson: "[]",
+          recording: true,
+          selectedWith: { chaptersJson: "[]", chaptersProbeStatus: "" }
+        }
+      ]);
+      expect(await stored()).toMatchObject({ chaptersJson: "[]", chaptersProbeStatus: "ok", chaptersProbeSettleLevel: 0 });
+    }, 60_000);
+
+    it("lets an operator edit made between the selection and the write win", async () => {
+      await seedProbeFilledFallback();
+      // What the worker selected the candidate with.
+      const selected = await stored();
+      const selectedWith = { chaptersJson: selected?.chaptersJson ?? "", chaptersProbeStatus: selected?.chaptersProbeStatus ?? "" };
+
+      // While the probe runs, the operator saves a list of their own.
+      await updateAssetMetadataRecords([{ id: assetId, chaptersJson: operatorCut }]);
+      await updateAssetChapterProbeRecords([
+        { id: assetId, chaptersProbeStatus: "ok", chaptersProbedAt: "2026-10-06T10:00:00.000Z", chaptersJson: twoGames, selectedWith }
+      ]);
+      expect(await stored()).toMatchObject({ chaptersJson: operatorCut, chaptersProbeStatus: "", chaptersProbedAt: "" });
+
+      await updateAssetChapterProbeRecords([{ id: assetId, chaptersProbeStatus: "failed", chaptersProbedAt: "2026-10-06T10:00:00.000Z", selectedWith }]);
+      expect(await stored()).toMatchObject({ chaptersJson: operatorCut, chaptersProbeStatus: "", chaptersProbedAt: "" });
+
+      // Saving the very same list the probe stored still makes it the operator's.
+      await seedProbeFilledFallback();
+      await updateAssetMetadataRecords([{ id: assetId, chaptersJson: fallback }]);
+      await updateAssetChapterProbeRecords([
+        { id: assetId, chaptersProbeStatus: "ok", chaptersProbedAt: "2026-10-06T10:00:00.000Z", chaptersJson: twoGames, ...recheck }
+      ]);
+      expect(await stored()).toMatchObject({ chaptersJson: fallback, chaptersProbeStatus: "", chaptersProbedAt: "" });
     }, 60_000);
   });
 
