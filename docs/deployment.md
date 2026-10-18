@@ -772,7 +772,8 @@ Changes merged after 2.3.0, for the release that ships them; it renames this sec
   or shorter is asked six times at most and then kept as it is. When chapters arrive for the item on air,
   or change what the chapter on air says, the runtime log shows one `playout.chapter.boundary`, for the
   current chapter.
-- **Rollback.** A reverse repin to 2.3.0 or older needs no step before it. The older image ignores both
+- **Rollback.** A reverse repin to 2.3.0 needs no step before it for these columns (back to 2.1.0, take
+  the step of *Rollback to 2.1.0* above as well). The older image ignores both
   columns: its backfill treats every stored chapter list as final again, as before M108, and the lists
   M108 replaced stay replaced. Its source syncs and whole-state writes (a moderator's `!game` start or
   stop, a blueprint apply) delete asset rows and write them again without the columns, which sets both
