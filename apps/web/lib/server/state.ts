@@ -1344,7 +1344,9 @@ export function buildActiveScenePayload(
       state.playout.nextTitle ||
       nextScheduleItem?.title ||
       viewerText(locale, "overlay.next.noTitle"),
-    // The broadcast's format, not this page's prose: the studio preview exists to show what airs.
+    // The broadcast's format, not this page's prose. Since M107 the on-air card names the predicted next
+    // video and its expected start (apps/worker/src/next-on-air.ts), which needs the worker's pool picks;
+    // this preview still shows the next block's window until it is moved over (docs/operations.md).
     nextTimeLabel: overlayNextTimeLabel(nextScheduleItem, locale, getScheduleStartsInMinutes(nextScheduleItem, new Date(), getWorkspaceTimeZone(state))),
     queueTitles,
     timeZone: getWorkspaceTimeZone(state),

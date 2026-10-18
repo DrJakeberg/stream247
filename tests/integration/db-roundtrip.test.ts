@@ -23,6 +23,8 @@ import {
   updateAppState,
   upsertUserRecord,
   updatePlayoutRuntime,
+  readPlayoutProgrammeTitles,
+  playoutProgrammeRowOf,
   deleteOverlayVideoSourceRecord,
   listOverlayVideoSourceRecords,
   readChatOverlayMessagesRecord,
@@ -3113,6 +3115,46 @@ describe.sequential("database roundtrip", () => {
       expect(await countQueuedChatViewerRequests(["asset_req_b"])).toBe(1);
       const played = await executeSql("SELECT status FROM chat_viewer_requests WHERE asset_id = 'asset_req_a';");
       expect(played).toBe("played");
+    }, 60_000);
+
+    // M107: !next predicts what airs next from the playout row it reads when asked (R22), so that read carries
+    // what the prediction needs, and says what the state the worker cycle reads says.
+    it("reads the playout row !next predicts from, as the state reads it", async () => {
+      await ensureDatabaseWithRetry();
+      await updatePlayoutRuntime((playout) => ({
+        ...playout,
+        status: "running",
+        currentAssetId: "asset_on_air",
+        currentTitle: "On Air",
+        processStartedAt: "2026-10-06T11:30:00.000Z",
+        queueItems: [
+          { id: "insert-asset_on_air-0", position: 0, kind: "insert", assetId: "asset_on_air", title: "On Air", subtitle: "", scenePreset: "" },
+          { id: "asset-asset_next-1", position: 1, kind: "asset", assetId: "asset_next", title: "Next Up", subtitle: "", scenePreset: "" }
+        ],
+        nextAssetId: "asset_next",
+        nextTitle: "Next Up",
+        manualNextAssetId: "asset_next",
+        overrideMode: "asset",
+        overrideAssetId: "asset_on_air",
+        overrideUntil: "2026-10-06T12:30:00.000Z",
+        cuepointWindowKey: "2026-10-06:block_day:600:360"
+      }));
+
+      const row = await readPlayoutProgrammeTitles();
+      expect(row).toMatchObject({
+        status: "running",
+        currentTitle: "On Air",
+        currentAssetId: "asset_on_air",
+        processStartedAt: "2026-10-06T11:30:00.000Z",
+        queueKind: "insert",
+        nextAssetId: "asset_next",
+        nextTitle: "Next Up",
+        manualNextAssetId: "asset_next",
+        overrideAssetId: "asset_on_air",
+        overrideUntil: "2026-10-06T12:30:00.000Z",
+        cuepointWindowKey: "2026-10-06:block_day:600:360"
+      });
+      expect(row).toEqual(playoutProgrammeRowOf((await readAppState()).playout));
     }, 60_000);
 
     it("never encrypts over a secret it could not read, so a rotated APP_SECRET is survivable", async () => {

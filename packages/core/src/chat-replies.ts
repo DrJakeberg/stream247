@@ -135,6 +135,11 @@ export type ChatProgrammeInfo = {
   nextTitle: string;
   /** "HH:MM" in the channel zone when the next title is a schedule block's start; empty for the next queued item. */
   nextStartsAt: string;
+  /**
+   * "HH:MM" in the channel zone when the next title is a video and the one on air has a known length: when
+   * it is expected to start (M107). An estimate, said with "about"; empty when unknown or for a block.
+   */
+  nextExpectedAt: string;
   /** The public programme page, `<app url>/channel`; empty when no app URL is configured. */
   channelUrl: string;
 };
@@ -157,7 +162,9 @@ export function formatChatNextReply(actor: string, info: ChatProgrammeInfo, loca
     ? viewerText(locale, "chat.next.nothing", { actor })
     : info.nextStartsAt
       ? viewerText(locale, "chat.next.at", { actor, time: info.nextStartsAt, title: info.nextTitle })
-      : viewerText(locale, "chat.next.item", { actor, title: info.nextTitle });
+      : info.nextExpectedAt
+        ? viewerText(locale, "chat.next.around", { actor, time: info.nextExpectedAt, title: info.nextTitle })
+        : viewerText(locale, "chat.next.item", { actor, title: info.nextTitle });
   return withProgrammeLink(text, info, locale);
 }
 
