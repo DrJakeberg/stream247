@@ -22,6 +22,7 @@ How this file works:
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | M107 The Overlay Shows The Next Video | UX | Now | Complete | The on-air "Next" card names the video that airs next, as `!next` does (owner request 2026-10-06: "the overlay shows the next programme block, what comes at 16:00, but what interests me is what !next says, the next video") (ships in 2.3.1 after 2.3.0; owner decision 2026-10-06, so the running 2.3.0-rc.1 soak is not reset) | One prediction of the item that will actually air next serves the scene payload, text mode and `!next`: the playout's next queue item while something plays, from the block that will be current when the item on air ends (the next block's pool when the item runs past the block end, a dated block's first pick when it takes over first), with its expected start time; the next block only when nothing plays or no next item is known; both languages; tests that the card and `!next` agree | core, worker, tests, docs | low | revert the merge |
 | M108 Twitch Archives Get Their Whole Chapter List | Reliability | Now | Complete | A Twitch archive whose chapter probe found only its first chapter (one chapter at offset 0) is probed again until the list is stable, and chapters that arrive while the item is on air move the category to the chapter that is current, not through every past boundary at once (found on the DUT 2026-10-06: the overlay said "Just Chatting" for a VOD that had moved on to another game) | A probe-filled single chapter at offset 0 of a `twitch-channel` asset is re-probed after a cooldown, a bounded number of times, oldest probe first, inside the existing per-cycle budget; a longer list replaces it, two equal answers make it final; chapters an operator edited are never re-probed or replaced; when an asset on air gains chapters, only the boundary containing the current offset fires (one category update, one runtime log line); unit tests for the selection and the boundary, docs updated | worker (chapter backfill, chapter boundary), db if a marker is needed, tests, docs | low: a few more yt-dlp probes per hour | revert the merge |
+| M110 Release 2.3.1 | Release | Now | Planned | Ship M107 and M108 as 2.3.1 (owner decisions 2026-10-06 and 2026-10-15: after 2.3.0, directly as 2.3.1-rc.1) | `v2.3.1-rc.1` deployed on the DUT and its 24-h soak passed (an outage is "passed with failure"); the M107/M108 DUT checks run; then `release: v2.3.1`, its tag and repin | release commit, docs | low: two additive migrations, an older image ignores them | reverse repin to `v2.3.0` |
 
 Waiting for the owner: the findings outside the milestones in `planning/suggestions-2026-10-04.md`
 (nobody starts one before the owner names its number), and for M86 the confirmation that only cycles
@@ -540,3 +541,31 @@ Sections for milestones in **Open** that need more than their row, appended in m
   `CHAPTER_BACKFILL_PROVISIONAL_RECHECK_SECONDS` since the gate; `docker-compose.yml` passes the `.env`
   file whole and lists none of the backfill settings.
 
+### M110 Release 2.3.1
+
+- 2026-10-18: #33 (M107) and #34 (M108, retargeted to `main` by the REST API: `gh pr edit` fails on the
+  Projects (classic) GraphQL deprecation) merged; `main` equals the green M108 head. A docs fix
+  (`e8e7de3`): the M108 rollback note names the extra step back to 2.1.0. `release: v2.3.1-rc.1`
+  (`08f2376`); its push CI failed first in `docker build` (`public.ecr.aws` answered the `node:22-alpine`
+  manifest with an unexpected status, the second time since 2026-10-14), the re-run of the failed job went
+  green; tag `v2.3.1-rc.1`, the pre-release "Stream247 2.3.1-rc.1".
+- 2.3.0 from its repin (2026-10-15 13:33 UTC) to 2026-10-18: each nightly reconnect (00:03:23, 00:03:25 and
+  00:03:38 UTC) cost one restart that the reconnect grace took (`faultAgeMs` 54107-56310), no backoff, the
+  uplink back 5 s later; no incident created. The owner restarted every Proxmox node on 2026-10-18 (to renew
+  the SSH certificate); the DUT came back at 14:54 UTC and the stack started by itself, on air again 4 s
+  later.
+- 2026-10-18 16:10 UTC: the M108 pre-repin query printed no row (no operator ever saved chapters on the DUT);
+  backup `~/backups/stream247-pre-v2.3.1-rc.1.dump` (41 tables); `~/repin.sh v2.3.1-rc.1` (dry run: the three
+  app pins only, 62 env vars, `prune=False`), all six containers healthy 16 s after the start, relay
+  untouched. Both M108 migrations present (the 2.3 count prints 9), both columns present, no breaker, no
+  incident, `jimpanse247` live; the chapter rechecks began at once (3 archives at settle level 1 within a
+  minute). The web container's address is `172.22.0.7` again.
+- 2026-10-18 16:11:06 UTC: 24-h soak from `~/stream247-v2.3.1-rc.1` (`git archive v2.3.1-rc.1 scripts
+  docker-compose.yml`), `tmux` session `soak`, `CHECK_BASE_URL=http://172.22.0.7:3000`, run log
+  `~/stream247-v2.3.1-rc.1/logs/soak-20261018-161106.log`, baseline `web=0 worker=0 playout=0 uplink=0
+  relay=0`, uplink unplanned restarts 3963; first sample `status=ok broadcastReady=true`.
+- M101 (the clock change on 2026-10-25) cannot run on the DUT: the Twitch metadata sync, which writes the
+  schedule, waits for `jimpanse247` to connect as the broadcast channel (open incident
+  `twitch.metadata.waiting-for-broadcaster` since 2026-08-25; only the bot `3jakec` is connected). The same
+  holds for the Twitch-schedule part of M93. Owner step: connect `jimpanse247` itself under the admin's
+  Twitch settings; then save the M101 test block.
