@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_CHAPTER_EMPTY_RECHECK_SECONDS,
+  DEFAULT_CHAPTER_PROVISIONAL_RECHECK_SECONDS,
   getChapterBackfillConfig,
   selectChapterBackfillCandidates,
   type ChapterBackfillAsset,
@@ -10,6 +11,7 @@ import {
 const NOW = Date.parse("2026-08-28T12:00:00.000Z");
 const COOLDOWN_MS = 30 * 60 * 1000;
 const RECHECK_MS = DEFAULT_CHAPTER_EMPTY_RECHECK_SECONDS * 1000;
+const PROVISIONAL_RECHECK_MS = DEFAULT_CHAPTER_PROVISIONAL_RECHECK_SECONDS * 1000;
 
 const sources: ChapterBackfillSource[] = [
   { id: "src_yt", connectorKind: "youtube-playlist", enabled: true },
@@ -34,6 +36,7 @@ function select(assets: ChapterBackfillAsset[], budget = 10, nowMs = NOW) {
     budget,
     failureCooldownMs: COOLDOWN_MS,
     emptyResultRecheckMs: RECHECK_MS,
+    provisionalRecheckMs: PROVISIONAL_RECHECK_MS,
     nowMs
   }).map((candidate) => candidate.assetId);
 }
@@ -75,14 +78,37 @@ describe("an empty chapter probe result is provisional, not final", () => {
 });
 
 describe("operator edits still win over any recheck", () => {
-  it("never selects an asset that has chapters, however old the probe", () => {
+  // M108 made one probe-filled shape provisional (a single chapter at offset 0 of a Twitch archive,
+  // status "ok"), so this fixture now carries what an operator edit actually stores: the edit
+  // resets the probe status and time to "" (updateAssetMetadataRecords in packages/db). Until M108
+  // it said "ok", which only a probe writes.
+  it("never selects an asset whose chapters an operator edited, however old the probe", () => {
     const edited = JSON.stringify([{ offsetSeconds: 0, categoryName: "Just Chatting", title: "Operator cut" }]);
     const asset = makeAsset({
       id: "a_edited",
       sourceId: "src_twitch",
       chaptersJson: edited,
+      chaptersProbeStatus: "",
+      chaptersProbedAt: ""
+    });
+
+    expect(select([asset])).toEqual([]);
+  });
+
+  it("never selects a probe-filled list of several chapters from a finished VOD, however old the probe", () => {
+    const filled = JSON.stringify([
+      { offsetSeconds: 0, categoryName: "Just Chatting", title: "Just Chatting" },
+      { offsetSeconds: 600, categoryName: "Elden Ring", title: "Elden Ring" }
+    ]);
+    const asset = makeAsset({
+      id: "a_filled",
+      sourceId: "src_twitch",
+      chaptersJson: filled,
       chaptersProbeStatus: "ok",
-      chaptersProbedAt: new Date(NOW - 100 * RECHECK_MS).toISOString()
+      chaptersProbedAt: new Date(NOW - 100 * RECHECK_MS).toISOString(),
+      // One answer taken after the recording ended produced it; without a level it would read as
+      // stored before M108 and get its one recheck.
+      chaptersProbeSettleLevel: 1
     });
 
     expect(select([asset])).toEqual([]);
@@ -143,6 +169,7 @@ describe("recheck configuration", () => {
         budget: 5,
         failureCooldownMs: COOLDOWN_MS,
         emptyResultRecheckMs: 0,
+        provisionalRecheckMs: PROVISIONAL_RECHECK_MS,
         nowMs: NOW
       })
     ).toEqual([]);
