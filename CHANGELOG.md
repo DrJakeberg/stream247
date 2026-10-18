@@ -1,5 +1,49 @@
 # Changelog
 
+## 2.3.1-rc.1 - 2026-10-18
+
+The candidate for 2.3.1: 2.3.0 plus M107 and M108. Upgrading from 2.3.0 adds two columns (two additive
+migrations, applied on the first start) and one setting with a default,
+`CHAPTER_BACKFILL_PROVISIONAL_RECHECK_SECONDS` (nothing to set). Back up PostgreSQL before the repin and
+read `docs/deployment.md` → *Upgrading Past 2.3.0*: the query to run before the repin (it finds chapter
+lists an operator saved while a probe of an older image ran), what the first hours on air look like, and
+the rollback (a reverse repin to 2.3.0 needs no step before it; run the query again before a later roll
+forward).
+
+### Changed
+
+- The on-air "Next" card names the video that airs next, as `!next` does (M107). It used to show the next
+  schedule block with its window ("16:00-00:00") while `!next` named the next video. One prediction now
+  serves the scene card, text mode, the standby slate and `!next`: the item that actually airs when the
+  one on air ends (a pending Play now, a dated block that takes over first, Move next, the queue's next
+  item, or the next block's pick when the item runs past its block), with its expected start when the
+  item on air has a known length ("about 17:30" / "ca. 17:30"); a pending Play now or Insert and an item
+  of unknown length show the label alone. The next block shows while nothing plays, while a Pin or a
+  temporary fallback holds the air (the worker decides at that moment what follows it), and when no next
+  video can be predicted. An operator insert on air is not cut by a dated block, so what follows it is
+  the pick of the block current at its end. The admin's scene preview still shows the queue's next item
+  under the next block's window.
+
+### Fixed
+
+- Twitch archives get their whole chapter list, so the overlay names the game being played (M108). When
+  Twitch returns no chapter list (while the VOD is still being recorded, before Twitch has computed it,
+  on a throttled answer), yt-dlp invents one chapter named after the VOD's current game; on the
+  production host 41 of 46 archives held such a single chapter, kept for good, and the overlay said
+  "Just Chatting" for a VOD that had moved on to another game. A probe-filled single chapter at offset 0,
+  any list taken while the VOD was being recorded, and every Twitch archive's list stored before this
+  release (asked once more right after the upgrade, behind new items) is now asked again after
+  `CHAPTER_BACKFILL_PROVISIONAL_RECHECK_SECONDS` (7200, `0` turns it off): a longer or different answer
+  of the same length replaces it, two equal finished answers make it final, and at most six counted
+  rechecks follow the recording. Chapters an operator saves are never replaced (the write checks the row
+  under the state write lock); a list an operator saved while a probe of an older image ran may carry
+  the probe's mark, which the query before the repin finds, and saving that list once more makes it the
+  operator's. New columns `assets.chapters_probe_settle_level` and `assets.chapters_probe_rechecks`
+  (migrations `20261006_001_asset_chapter_probe_settle_level` and
+  `20261006_002_asset_chapter_probe_rechecks`); an older image ignores them.
+- When chapters arrive for the item on air, or after a worker restart mid-item, only the chapter on air
+  logs its boundary (`playout.chapter.boundary`), not every past one at once (M108).
+
 ## 2.3.0 - 2026-10-15
 
 The release the candidates `2.3.0-rc.1` and `2.3.0-rc.2` were for; it also carries `2.2.0-rc.1` (tagged,
