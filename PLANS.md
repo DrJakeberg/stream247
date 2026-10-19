@@ -569,3 +569,17 @@ Sections for milestones in **Open** that need more than their row, appended in m
   `twitch.metadata.waiting-for-broadcaster` since 2026-08-25; only the bot `3jakec` is connected). The same
   holds for the Twitch-schedule part of M93. Owner step: connect `jimpanse247` itself under the admin's
   Twitch settings; then save the M101 test block.
+- 2026-10-18 22:21:40 UTC: that soak ended `outage-exceeded` (6 min of `Failed to connect to 172.22.0.7 port
+  3000`). The owner ran `apt-get dist-upgrade` on the DUT at 22:14:45 UTC; it upgraded `containerd.io`, so
+  the Docker daemon restarted (22:15:15) and every container with it, back on air 16 s later (uplink start
+  22:15:30). The containers kept their state but not their addresses: `web` came back as `172.22.0.5` and
+  `172.22.0.7` went to `worker`, so the monitor asked the wrong container. Not an app fault; the soak counts
+  as failed and starts over. Seen in the 13 h on rc.1: the nightly reconnect (2026-10-19 00:03:48 UTC) cost
+  one restart the grace took (`faultAgeMs` 50017), no backoff, no incident since the repin; the chapter
+  rechecks reached every archive but one: 29 now hold a whole list (24 before), 16 gave the same single
+  chapter twice and are final (settle level 3).
+- 2026-10-19 11:09:52 UTC: 24-h soak again, `CHECK_BASE_URL=http://172.22.0.5:3000`, run log
+  `~/stream247-v2.3.1-rc.1/logs/soak-20261019-110952.log`, baseline `web=0 worker=0 playout=0 uplink=0
+  relay=0`, uplink unplanned restarts 3964, first sample `status=ok`. Follow-up (owner to decide): the
+  monitor takes a container address that any Docker restart may hand to another container; it could
+  re-read `web`'s address on a failed fetch, or ask through `docker exec stream247-web-1`.
