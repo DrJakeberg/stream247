@@ -260,5 +260,5 @@ fi
 echo "Release preflight succeeded."
 echo "Next recommended steps:"
 echo "1. Run scripts/upgrade-rehearsal.sh <target-version>"
-echo "2. Run scripts/soak-monitor.sh --hours 24"
+echo "2. Run scripts/soak-monitor.sh --hours 24 --follow-web (step 10 of Safe Upgrade Flow in docs/deployment.md)"
 echo "3. Tag and publish only after both pass"

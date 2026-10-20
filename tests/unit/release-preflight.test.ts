@@ -293,6 +293,7 @@ STREAM247_PLAYOUT_IMAGE=ghcr.io/drjakeberg/stream247-playout:v1.0.3
 
     expect(result.status).toBe(0);
     expect(result.output).toContain("Release preflight succeeded.");
+    expect(result.output).toContain("scripts/soak-monitor.sh --hours 24 --follow-web");
   });
 
   it("rejects unquoted mutable latest image tags", () => {

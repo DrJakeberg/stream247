@@ -684,6 +684,7 @@ describe("release readiness scripts", () => {
 
     expect(result.status).toBe(0);
     expect(result.output).toContain("Upgrade rehearsal completed for v1.0.3.");
+    expect(result.output).toContain("scripts/soak-monitor.sh --hours 24 --follow-web");
   });
 
   it("soak monitor fails immediately when broadcastReady=false (destination not-ready is included in fail line for forensics)", () => {

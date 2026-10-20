@@ -295,5 +295,5 @@ curl -fsS "${APP_URL}/api/system/readiness" | node -e '
 echo "Upgrade rehearsal completed for ${TARGET_VERSION}."
 echo "Next:"
 echo "1. Review /ops for incidents or drift."
-echo "2. If this is a release candidate, run scripts/soak-monitor.sh --hours 24"
+echo "2. If this is a release candidate, run scripts/soak-monitor.sh --hours 24 --follow-web (step 10 of Safe Upgrade Flow in docs/deployment.md)"
 echo "3. Roll back by restoring prior pinned tags and rerunning docker compose up -d if needed."
