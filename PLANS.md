@@ -583,3 +583,17 @@ Sections for milestones in **Open** that need more than their row, appended in m
   relay=0`, uplink unplanned restarts 3964, first sample `status=ok`. Follow-up (owner to decide): the
   monitor takes a container address that any Docker restart may hand to another container; it could
   re-read `web`'s address on a failed fetch, or ask through `docker exec stream247-web-1`.
+- 2026-10-20 11:10:46 UTC, the soak of 2.3.1-rc.1 **passed with failure**: `soak-monitor-complete outages=1
+  outageSecondsMax=180 outageSecondsTotal=180`, 1428 samples `status=ok`; the outage was the nightly
+  reconnect (00:04:12 to 00:07:12 UTC), `uplinkUnplannedRestartsDelta=2` (3964 -> 3966), container restarts
+  0, no incident created in the window. Both restarts were the reconnect grace's
+  (`uplink.watchdog.reconnect_grace.uncounted`, `faultAgeMs` 52075 at 00:05:04 and 72392 at 00:05:25), no
+  `uplink.watchdog.backoff`: M109 held a two-restart night.
+- M108 DUT checks pass (2026-10-18/20): the pre-repin query listed no row; both migrations ran; the state
+  query on 2026-10-20 13:20 UTC: settle level 1 with 2-8 chapters 29 archives, level 3 with one chapter 16,
+  level 0 with two chapters 1 (probed 11:30 UTC), none capped, no provisional row older than two and a half
+  hours; 18 `playout.chapter.boundary` lines since the repin, at most one per asset and minute.
+- M107 DUT check not run: it needs an archive that runs past its block and `!next` typed in the chat. On
+  2026-10-20 the text mode read "Als Nächstes: Wir essen Surströmming (und machen alles falsch)", the
+  queue's next video, not a block. Owner decision 2026-10-20: ship 2.3.1 with the M107 check open; it stays
+  under *DUT checks for the next release candidate*.
