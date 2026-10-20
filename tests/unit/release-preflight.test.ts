@@ -13,8 +13,14 @@ const tempDirs: string[] = [];
 let rootEnvBackupPath: string | null = null;
 let rootEnvLockHeld = false;
 
+// The two release test files share this lock, one test at a time, and each releases and takes it again
+// between its own tests. Without a pause after the release the file that holds it can take it again
+// before the other file's next 25-ms poll, and the other file waits out the whole run of the first:
+// since M111 release-readiness runs about 30 s under the full suite, as long as the old 30-s deadline.
+const ROOT_ENV_LOCK_WAIT_MS = 120_000;
+
 function acquireRootEnvLock() {
-  const deadline = Date.now() + 30_000;
+  const deadline = Date.now() + ROOT_ENV_LOCK_WAIT_MS;
 
   while (Date.now() < deadline) {
     try {
@@ -40,6 +46,8 @@ function releaseRootEnvLock() {
 
   rmSync(rootEnvLockPath, { force: true, recursive: true });
   rootEnvLockHeld = false;
+  // Hand the lock over: the other file polls every 25 ms.
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60);
 }
 
 function createDockerStub(tempDir: string, options?: { requireRootEnvDuringConfig?: boolean }) {
@@ -143,7 +151,7 @@ function moveRootEnvOutOfTheWay(tempDir: string) {
 
 beforeEach(() => {
   acquireRootEnvLock();
-}, 30_000);
+}, ROOT_ENV_LOCK_WAIT_MS + 10_000);
 
 afterEach(() => {
   if (rootEnvBackupPath && existsSync(rootEnvBackupPath)) {

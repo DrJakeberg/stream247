@@ -62,8 +62,14 @@ const realSleep = ["/bin/sleep", "/usr/bin/sleep"].find((candidate) => existsSyn
 // call counts), as curl answers when nothing listens at the address.
 type CurlRefusal = { host: string; fromCall: number; untilCall?: number };
 
+// The two release test files share this lock, one test at a time, and each releases and takes it again
+// between its own tests. Without a pause after the release the file that holds it can take it again
+// before the other file's next 25-ms poll, and the other file waits out the whole run of the first:
+// since M111 release-readiness runs about 30 s under the full suite, as long as the old 30-s deadline.
+const ROOT_ENV_LOCK_WAIT_MS = 120_000;
+
 function acquireRootEnvLock() {
-  const deadline = Date.now() + 30_000;
+  const deadline = Date.now() + ROOT_ENV_LOCK_WAIT_MS;
 
   while (Date.now() < deadline) {
     try {
@@ -89,6 +95,8 @@ function releaseRootEnvLock() {
 
   rmSync(rootEnvLockPath, { force: true, recursive: true });
   rootEnvLockHeld = false;
+  // Hand the lock over: the other file polls every 25 ms.
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60);
 }
 
 function rememberTempDir(prefix: string) {
@@ -424,7 +432,7 @@ function extractComposeServiceBlock(serviceName: string) {
 beforeEach(() => {
   acquireRootEnvLock();
   rootEnvState = createRootEnvTestState(rootEnvPath);
-}, 30_000);
+}, ROOT_ENV_LOCK_WAIT_MS + 10_000);
 
 afterEach(() => {
   restoreManagedRootEnv(rootEnvPath, rootEnvState);
@@ -1142,7 +1150,9 @@ describe("release readiness scripts", () => {
 
   // A socket-activated dockerd that is stopped or starting leaves docker calls hanging. The off-air time must
   // still reach the outage window: the failure path asks docker nothing but the bounded lookup.
-  const DOCKER_HANGS = { SOAK_DOCKER_TIMEOUT_SECONDS: "1" };
+  // A fraction of a second (GNU timeout takes one): each blocked call costs the test that much, and these tests
+  // hold the root-env lock that tests/unit/release-preflight.test.ts waits at most 30 s for.
+  const DOCKER_HANGS = { SOAK_DOCKER_TIMEOUT_SECONDS: "0.2" };
   const blockedCalls = (dockerLog: string) => dockerLog.split("\n").filter((line) => line.startsWith("blocked: "));
 
   it("soak monitor with --follow-web keeps sampling while docker does not answer and ends outage-exceeded past the window", () => {
@@ -1161,7 +1171,7 @@ describe("release readiness scripts", () => {
 
     expect(result.status).toBe(1);
     expect(result.output).toMatch(
-      /readiness-fetch-failed-tolerated 1\/2 fetch-failed: curl: \(7\) Failed to connect to 172\.22\.0\.7 [^\n]* web-address-lookup-failed: docker did not answer within 1s \(docker compose ps -q web\)/
+      /readiness-fetch-failed-tolerated 1\/2 fetch-failed: curl: \(7\) Failed to connect to 172\.22\.0\.7 [^\n]* web-address-lookup-failed: docker did not answer within 0.2s \(docker compose ps -q web\)/
     );
     // Bad samples at 60 … 420 s; the one at 420 s is 360 s into the outage, past the 300 s window.
     expect(result.output).toMatch(/outage-exceeded elapsed=360s tolerance=300s samples=7 fetch-failed /);
