@@ -742,7 +742,7 @@ held one such chapter, and the overlay named "Just Chatting" for an archive that
   edit is saved while a probe runs. Deleting every chapter hands the archive back to the backfill, which
   probes it within a few cycles and counts its rechecks anew. One exception from before M108: a list an
   operator saved while a probe was running could end up marked as probe-filled; *Before the repin* under
-  *Upgrading Past 2.3.0* in `docs/deployment.md` finds those, and saving the list once more makes it the
+  *Upgrading To 2.3.1* in `docs/deployment.md` finds those, and saving the list once more makes it the
   operator's.
 - When chapters arrive for the item on air, change what the chapter on air says, or the worker restarts in
   the middle of an item, the runtime log shows one `playout.chapter.boundary`, for the chapter on air; the

@@ -460,7 +460,7 @@ Sections for milestones in **Open** that need more than their row, appended in m
   never-probed assets and failure retries, oldest probe first, inside the unchanged per-cycle budget.
 - Built: a new additive column `assets.chapters_probe_settle_level` (migration
   `20261006_001_asset_chapter_probe_settle_level`, default 0, downgrade note in `docs/deployment.md`,
-  *Upgrading Past 2.3.0*) counts the answers taken after the recording ended that produced, replaced or
+  *Upgrading To 2.3.1*) counts the answers taken after the recording ended that produced, replaced or
   repeated the stored list: 0 = none yet, 1-2 = that many, 3 = final. A finished answer that repeats a list a
   finished answer produced makes it final; the third finished answer that produces or replaces it does too,
   so a single-game archive probed after its stream ended costs one recheck and a list whose answers keep
