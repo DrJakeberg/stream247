@@ -1,5 +1,37 @@
 # Changelog
 
+## 2.3.1 - 2026-10-20
+
+The release the candidate `2.3.1-rc.1` was for: 2.3.0 plus M107 and M108. The on-air "Next" card names the
+video that airs next, as `!next` does, with its expected start when the item on air has a known length;
+Twitch archives get their whole chapter list, so the overlay names the game being played, and chapters
+that arrive for the item on air log one boundary, not every past one. The section 2.3.1-rc.1 of
+`CHANGELOG.md`, and its GitHub pre-release, list every change. Upgrading from 2.3.0 adds two columns (two
+additive migrations, applied on the first start) and one setting with a default,
+`CHAPTER_BACKFILL_PROVISIONAL_RECHECK_SECONDS` (nothing to set). Back up PostgreSQL before the repin and
+read `docs/deployment.md` → *Upgrading To 2.3.1* (the query to run before the repin, the first hours on
+air, the rollback). Upgrading from 2.1.0 is *Upgrading To 2.3* first.
+
+Measured before tagging, on the device under test:
+
+- `2.3.1-rc.1` repinned on 2026-10-18 16:10 UTC: both migrations ran, both columns present, no breaker, no
+  incident. Its first soak ended `outage-exceeded` at 22:21 UTC: an operating-system update on the host
+  restarted Docker at 22:15 UTC, the channel was back on air 16 s later, but the containers came back with
+  other addresses and the monitor kept asking the old one. It counted as failed and started over.
+- 24-h soak 2026-10-19 11:09 to 2026-10-20 11:10 UTC: 1428 readiness samples `status=ok`; passed with
+  failure: one outage of 180 s at the nightly reconnect of the line (00:04:12 to 00:07:12 UTC), two
+  unplanned uplink restarts (3964 -> 3966), no container restart, no incident in the window. The reconnect
+  grace took both restarts (`faultAgeMs` 52075 and 72392) and no backoff held the uplink.
+- M108 on the device: the pre-repin query listed no row (no operator ever saved chapters there); two days
+  after the repin 29 of 46 Twitch archives hold a whole chapter list (24 before), 16 gave the same single
+  chapter twice and are final, one is still being asked; no list reached the recheck cap, and no asset
+  logged more than one chapter boundary in a minute.
+- Not run, open for the owner: the M107 Next card against `!next` in the chat during a long archive that
+  runs past its block (on 2026-10-20 the text mode named the queue's next video, "Als Nächstes: <title>",
+  not a block); the checks 2.3.0 left open (its section) stay open, and of those the clock-change check
+  (M101) waits for `jimpanse247` to connect as the broadcast channel, without which no schedule reaches
+  Twitch.
+
 ## 2.3.1-rc.1 - 2026-10-18
 
 The candidate for 2.3.1: 2.3.0 plus M107 and M108. Upgrading from 2.3.0 adds two columns (two additive
