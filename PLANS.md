@@ -23,6 +23,7 @@ How this file works:
 | M107 The Overlay Shows The Next Video | UX | Now | Complete | The on-air "Next" card names the video that airs next, as `!next` does (owner request 2026-10-06: "the overlay shows the next programme block, what comes at 16:00, but what interests me is what !next says, the next video") (ships in 2.3.1 after 2.3.0; owner decision 2026-10-06, so the running 2.3.0-rc.1 soak is not reset) | One prediction of the item that will actually air next serves the scene payload, text mode and `!next`: the playout's next queue item while something plays, from the block that will be current when the item on air ends (the next block's pool when the item runs past the block end, a dated block's first pick when it takes over first), with its expected start time; the next block only when nothing plays or no next item is known; both languages; tests that the card and `!next` agree | core, worker, tests, docs | low | revert the merge |
 | M108 Twitch Archives Get Their Whole Chapter List | Reliability | Now | Complete | A Twitch archive whose chapter probe found only its first chapter (one chapter at offset 0) is probed again until the list is stable, and chapters that arrive while the item is on air move the category to the chapter that is current, not through every past boundary at once (found on the DUT 2026-10-06: the overlay said "Just Chatting" for a VOD that had moved on to another game) | A probe-filled single chapter at offset 0 of a `twitch-channel` asset is re-probed after a cooldown, a bounded number of times, oldest probe first, inside the existing per-cycle budget; a longer list replaces it, two equal answers make it final; chapters an operator edited are never re-probed or replaced; when an asset on air gains chapters, only the boundary containing the current offset fires (one category update, one runtime log line); unit tests for the selection and the boundary, docs updated | worker (chapter backfill, chapter boundary), db if a marker is needed, tests, docs | low: a few more yt-dlp probes per hour | revert the merge |
 | M110 Release 2.3.1 | Release | Now | Planned | Ship M107 and M108 as 2.3.1 (owner decisions 2026-10-06 and 2026-10-15: after 2.3.0, directly as 2.3.1-rc.1) | `v2.3.1-rc.1` deployed on the DUT and its 24-h soak passed (an outage is "passed with failure"); the M107/M108 DUT checks run; then `release: v2.3.1`, its tag and repin | release commit, docs | low: two additive migrations, an older image ignores them | reverse repin to `v2.3.0` |
+| M111 The Soak Monitor Follows The Web Container | Ops | Now | Complete | The soak monitor measures the `web` container where it is now and notices a Docker daemon restart (owner decision 2026-10-20: "ja, mach den Soak-Monitor robuster"; on 2026-10-18 a daemon restart moved `web` from `172.22.0.7` to `.5`, the soak asked the old address for 6 min and ended `outage-exceeded` although the channel was on air again 16 s later) | `--follow-web` takes the readiness URL from `web`'s address on the stack network (`docker compose ps -q web`, `docker inspect`, the project's network first), reads it again on a refused connection (curl 7) and, when it moved, logs one `web-address-changed old=… new=…` line and takes the sample there; no `web` at the start stops with a clear message; an explicit `CHECK_BASE_URL` keeps today's behaviour and is never looked up; every docker call is bounded (`SOAK_DOCKER_TIMEOUT_SECONDS`, 10 s), so a daemon that does not answer cannot hold the samples back and a long off-air time with `dockerd` down still ends `outage-exceeded`; every service's `State.StartedAt` is read after each healthy sample and once more when an outage ends the soak, never while one runs, a move of all is logged as `docker-daemon-restart startedAt=…`, of some as `container-started-again`, neither fails the soak by itself, both are counted in the completion line (`dockerRestarts=N containersStartedAgain=N`); script tests for these cases fail without the change; step 10 of *Safe Upgrade Flow* uses `--follow-web` and a log name with seconds | scripts (soak monitor), tests, docs (deployment, README), `AGENTS.md` soak line | low: an ops script only; the start-time read adds five `docker compose ps` and five `docker inspect` calls per healthy sample, each bounded | revert the merge; a soak started with `--follow-web` is started again with `CHECK_BASE_URL=http://<web address>:3000` |
 
 Waiting for the owner: the findings outside the milestones in `planning/suggestions-2026-10-04.md`
 (nobody starts one before the owner names its number), and for M86 the confirmation that only cycles
@@ -107,10 +108,6 @@ As-run log and monitoring:
   walked again (M64). Related to M92.
 - Readiness says `broadcastReady=false` while only the worker is stopped, although the channel airs, so a
   soak would count a worker stop as an outage (M106).
-- Step 10 of *Safe Upgrade Flow* in `docs/deployment.md` lacks the two corrections of the M106 notes: the
-  Portainer stack does not publish `web`'s port on the host, so the soak measures `web`'s address on the
-  stack network (it changed with the 2.3.0 repin), not `http://127.0.0.1:3000`; and the tmux log name has
-  minute precision, so two starts in one minute share a file (M106).
 
 Viewers and language:
 
@@ -311,9 +308,11 @@ with M100 but has no recorded result.
 - The candidate's soak (R31 of the 2026-10-05 review) measures the channel, not the way in, and sees
   container restarts and critical incidents. It is started as step 10 of *Safe Upgrade Flow* in `docs/deployment.md` says, from the
   release checkout on the DUT (`<checkout>`). Before it counts: the soak script is main's (the first
-  command prints `1`); the log's first line reads `Starting soak monitor for 24h at http://127.0.0.1:3000`
-  (set `CHECK_BASE_URL` to that address, or `APP_URL` in the `.env` the script reads: the 2.1.0 soak's only
-  outage was a 220 s Cloudflare `522` on the public route while the channel stayed on air); and its
+  command prints `1`); the log's first line reads `Starting soak monitor for 24h at http://<web address>:3000`,
+  `web`'s address on the stack network that `--follow-web` reads (step 10; the M111 check below compares it
+  with `docker inspect`), not the public URL: the 2.1.0 soak's only outage was a 220 s Cloudflare `522` on
+  the public route while the channel stayed on air (`CHECK_BASE_URL=http://127.0.0.1:3000` only on a stack
+  that publishes `3000`, which the DUT's Portainer stack does not); and its
   `Baseline container restarts` line shows numbers for `web`, `worker`, `playout` and `uplink`, not
   `unknown` (the counts come from `docker compose ps` in the directory above `scripts/`; without the
   stack's compose project there, restarts go unseen). Without `SESSION_COOKIE` every sample logs
@@ -369,6 +368,17 @@ with M100 but has no recorded result.
    GROUP BY 1, 2, 3 ORDER BY 1, 2, 3;
   SQL
   ssh dut 'docker logs --since 6h stream247-playout-1 2>&1 | grep playout.chapter.boundary | grep -oE "\"(ts|assetId|offsetSeconds)\":(\"[^\"]*\"|[0-9]+)" | paste - - -'
+  ```
+
+- M111, at the start of the next candidate's soak (step 10 of *Safe Upgrade Flow*, now with
+  `--follow-web`): the log line `Following the web container: address=… network=…` names `web`'s current
+  address on the stack network, the one the second command prints, and `Baseline container starts:` shows
+  a start time for every service, not `unknown` (`relay` too while the relay runs). Passes when both hold
+  and the first sample reads `status=ok`.
+
+  ```sh
+  ssh dut 'grep -E "Starting soak|Following the web|Baseline container" ~/logs/soak-<stamp>.log'
+  ssh dut 'docker inspect -f "{{range \$k, \$v := .NetworkSettings.Networks}}{{\$k}}={{\$v.IPAddress}} {{end}}" stream247-web-1'
   ```
 
 - The checks of 2.2.0-rc.1 are in the archive, sections M75-M82. That candidate never reached the DUT, so
@@ -583,3 +593,63 @@ Sections for milestones in **Open** that need more than their row, appended in m
   relay=0`, uplink unplanned restarts 3964, first sample `status=ok`. Follow-up (owner to decide): the
   monitor takes a container address that any Docker restart may hand to another container; it could
   re-read `web`'s address on a failed fetch, or ask through `docker exec stream247-web-1`.
+
+### M111 The Soak Monitor Follows The Web Container
+
+- Evidence: on 2026-10-18 at 22:15:15 UTC an `apt-get dist-upgrade` on the DUT upgraded `containerd.io`;
+  the Docker daemon restarted and every container with it, on air again 16 s later. `web` came back as
+  `172.22.0.5` and `172.22.0.7` went to `worker`, so the soak with `CHECK_BASE_URL=http://172.22.0.7:3000`
+  read `curl: (7) Failed to connect to 172.22.0.7 port 3000 after 0 ms` for 6 min and ended
+  `outage-exceeded` (M110 notes). `http://127.0.0.1:3000`, the address step 10 gave until now, fails on
+  the Portainer stack too, which does not publish `web`'s port (M106 notes in the archive).
+- Did the monitor see the daemon restart? No. Its restart check compares only `RestartCount`
+  (`docker compose ps -q <service>`, then `docker inspect`), which counts the restart policy's restarts;
+  a daemon restart starts the same containers again and leaves it at 0 (the counts stayed `web=0 …`).
+  Only a readiness sample could catch the gap, and at one sample a minute a 16 s gap at an address that
+  stays the same passes unseen.
+- Rule: `--follow-web` (without `CHECK_BASE_URL`; no `.env` needed) measures `http://<web address>:3000`,
+  the address from `docker inspect` of the project's `web` container, on the network named after the
+  project when it is on several. On a refused connection (curl exit 7, the 2026-10-18 shape; only `web`
+  listens on 3000, so an address handed to another service refuses) it reads the address again; when it
+  moved it logs `web-address-changed old=… new=… network=…` and takes the same sample there. No `web`
+  container or no address at the start stops it (`Cannot follow the web container: …`); mid-run the
+  sample counts as failed and its line carries `web-address-lookup-failed: …`. `CHECK_BASE_URL` alone
+  keeps the old behaviour exactly; the two exclude each other.
+- Decision on the daemon restart (the brief's safer reading): record and report, the outage rules
+  unchanged. After each healthy sample, and once more when an outage ends the soak, the monitor reads
+  every service's `State.StartedAt` (never while an outage runs, see the next point): all moved is logged
+  once as `docker-daemon-restart startedAt=<time> services=…`, some moved as `container-started-again …`,
+  and the completion line adds `dockerRestarts=N containersStartedAgain=N`; a pass with either above 0 is
+  "passed with failure". Recommendation: keep it so rather than failing the soak like a container
+  restart. The restart of 2026-10-18 cost 16 s of air, less than the nightly reconnect the outage window
+  carries; a host upgrade is not an app fault, and the samples still fail the soak when the stack does not
+  heal within the window. A restart by the restart policy still fails the soak as before.
+- Docker calls on the failure path (review of the first draft): with socket activation (`docker.socket`,
+  `TimeoutStartUSec=infinity` on the development host, which has the DUT's apt packaging) a docker call made while `dockerd` is
+  stopped or starting waits instead of failing. The draft read the start times before every sample, so a
+  monitor stuck there took no samples, and a long off-air time with `dockerd` down could end as a pass.
+  Rule: every docker call goes through `timeout $SOAK_DOCKER_TIMEOUT_SECONDS` (10 s; a call that does not
+  answer reads `unknown`, the follow lookup `web-address-lookup-failed: docker did not answer within …`);
+  the start times are read only after a healthy sample and at the `outage-exceeded` exit, so with
+  `CHECK_BASE_URL` the failure path asks docker nothing, as at `2ee0866`, and with `--follow-web` only the
+  one bounded lookup. The exit read lets the log of a soak that a daemon restart ended name it (the
+  2026-10-18 run would have read `docker-daemon-restart` right above `outage-exceeded`).
+- Tests in `tests/unit/release-readiness.test.ts`, with stubbed `docker` and `curl` on `PATH` and the
+  `SOAK_CLOCK_FILE` clock: the address moves mid-run (one changed line, no failed sample, no outage); a
+  public `CHECK_BASE_URL` (no `NetworkSettings` lookup, a refused connection counted as before); no `web`,
+  no address, both options (a clear message, no sample); `web` without an address at the refused sample
+  (counted, followed at the next); a daemon restart (one line, `dockerRestarts=1`); one container started
+  again (`containersStartedAgain=1`); the 2026-10-18 replay with `--follow-web` (no outage, both lines).
+  All seven fail against the script of `2ee0866`. Three more with a docker stub that hangs from the second
+  sample on (`SOAK_DOCKER_TIMEOUT_SECONDS=1`): `--follow-web` keeps sampling and ends `outage-exceeded` at
+  360 s (one bounded lookup per refused sample, then the closing read); an explicit `CHECK_BASE_URL` asks
+  docker nothing during the outage (only the five closing calls); the 2026-10-18 run as it ran (old address
+  in `CHECK_BASE_URL`) logs `docker-daemon-restart` right above `outage-exceeded`. Against the first draft
+  the two hanging ones hang until the test's 60 s limit and the third misses its line; against `2ee0866`
+  the first and the third fail, the second only on the closing read (that script's failure path asked
+  docker nothing, the behaviour it pins).
+- Not measured in this session: `curl`'s exit code at a real stale container address (the session's
+  sandbox times out on every container address, curl 28); the DUT log of 2026-10-18 shows 7. The
+  monitor's `curl` calls still have no timeout of their own (unchanged). The docker timeout is tested with
+  a hanging stub only, not against a stopped socket-activated `dockerd`. The first `--follow-web` soak is
+  under *DUT checks for the next release candidate*.

@@ -446,6 +446,7 @@ Before tagging a production release:
 Notes:
 
 - set `CHECK_BASE_URL=http://127.0.0.1:3000` if your public `APP_URL` points through an external proxy or domain that is not reachable from the host running the scripts
+- pass `--follow-web` to the soak monitor instead when the stack does not publish `web`'s port on the host (a Portainer stack): it measures the `web` container's address on the stack network and follows it when a Docker restart moves it (`docs/deployment.md`, step 10 of *Safe Upgrade Flow*)
 - set `SESSION_COOKIE="stream247_session=..."` if you want the soak monitor to fail on open critical incidents via the authenticated incidents API
 - set `RELEASE_PREFLIGHT_ENV_FILE=/path/to/production.env` if you want to validate a staged env file without replacing the local `.env`
 - set `UPGRADE_REHEARSAL_IMAGE_TAG=main-<sha>` if you need to force rehearsal against a specific pre-release snapshot tag instead of the script's automatic selection
