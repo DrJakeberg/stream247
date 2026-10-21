@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { setTimeout as wait } from "node:timers/promises";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const rootDir = path.resolve(__dirname, "../..");
@@ -44,10 +45,34 @@ type CurlResponse = {
 type DockerStubOptions = {
   manifestAvailableRefs?: string[];
   restartCounts?: Partial<Record<"web" | "worker" | "playout", number[]>>;
+  // One `State.StartedAt` per inspect, as for the restart counts; without a list a service never restarts.
+  startedAt?: Record<string, string[]>;
+  // One answer per inspect of web's networks: "project=<name> <network>=<address> …".
+  webNetworks?: string[];
+  // Services `docker compose ps -q` finds no running container for.
+  missingServices?: string[];
+  // From this second of the SOAK_CLOCK_FILE clock on, every docker call hangs (and is logged as "blocked: …"),
+  // as a call does while a socket-activated dockerd is stopped or starting.
+  blockFromEpoch?: number;
 };
 
-function acquireRootEnvLock() {
-  const deadline = Date.now() + 30_000;
+// The real sleep, for a stub that must hang: the test's own `sleep` stub on PATH returns at once.
+const realSleep = ["/bin/sleep", "/usr/bin/sleep"].find((candidate) => existsSync(candidate)) ?? "sleep";
+
+// A connection refused at that host from the given curl call on, up to untilCall if given (1-based, every
+// call counts), as curl answers when nothing listens at the address.
+type CurlRefusal = { host: string; fromCall: number; untilCall?: number };
+
+// The two release test files share this lock, one test at a time, and each releases and takes it again
+// between its own tests. Without a pause after the release the file that holds it can take it again
+// before the other file's next 25-ms poll, and the other file waits out the whole run of the first:
+// since M111 release-readiness runs about 30 s under the full suite, as long as the old 30-s deadline.
+// The waits are timers, not Atomics.wait: a test file whose tests run synchronously back to back must give
+// its event loop a turn between them, or vitest's worker RPC times out after 60 s although every test passed.
+const ROOT_ENV_LOCK_WAIT_MS = 120_000;
+
+async function acquireRootEnvLock() {
+  const deadline = Date.now() + ROOT_ENV_LOCK_WAIT_MS;
 
   while (Date.now() < deadline) {
     try {
@@ -59,20 +84,22 @@ function acquireRootEnvLock() {
       if (code !== "EEXIST") {
         throw error;
       }
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+      await wait(25);
     }
   }
 
   throw new Error(`Timed out waiting for ${rootEnvLockPath}`);
 }
 
-function releaseRootEnvLock() {
+async function releaseRootEnvLock() {
   if (!rootEnvLockHeld) {
     return;
   }
 
   rmSync(rootEnvLockPath, { force: true, recursive: true });
   rootEnvLockHeld = false;
+  // Hand the lock over: the other file polls every 25 ms.
+  await wait(60);
 }
 
 function rememberTempDir(prefix: string) {
@@ -131,12 +158,21 @@ function createDockerStub(tempDir: string, options: DockerStubOptions = {}) {
   const dockerLog = path.join(tempDir, "docker.log");
   const manifestRefsPath = path.join(tempDir, "manifest-refs.txt");
   const restartCountsDir = path.join(tempDir, "restart-counts");
+  const startedAtDir = path.join(tempDir, "started-at");
+  const webNetworksPath = path.join(tempDir, "web-networks.txt");
+  const missingServicesPath = path.join(tempDir, "missing-services.txt");
   mkdirSync(binDir, { recursive: true });
   mkdirSync(restartCountsDir, { recursive: true });
+  mkdirSync(startedAtDir, { recursive: true });
   writeFileSync(manifestRefsPath, `${(options.manifestAvailableRefs ?? []).join("\n")}\n`);
   for (const [service, counts] of Object.entries(options.restartCounts ?? {})) {
     writeFileSync(path.join(restartCountsDir, `${service}.txt`), `${counts.join("\n")}\n`);
   }
+  for (const [service, starts] of Object.entries(options.startedAt ?? {})) {
+    writeFileSync(path.join(startedAtDir, `${service}.txt`), `${starts.join("\n")}\n`);
+  }
+  writeFileSync(webNetworksPath, `${(options.webNetworks ?? ["project=stream247 stream247_default=172.30.0.2"]).join("\n")}\n`);
+  writeFileSync(missingServicesPath, `${(options.missingServices ?? []).join("\n")}\n`);
   writeFileSync(
     path.join(binDir, "docker"),
     `#!/usr/bin/env sh
@@ -145,6 +181,10 @@ last_arg=""
 for arg in "$@"; do
   last_arg="$arg"
 done
+if [ -n "${options.blockFromEpoch ?? ""}" ] && [ -n "\${SOAK_CLOCK_FILE:-}" ] && [ "$(cat "$SOAK_CLOCK_FILE")" -ge "${options.blockFromEpoch ?? 0}" ]; then
+  printf 'blocked: %s\\n' "$all_args" >> "${dockerLog}"
+  exec "${realSleep}" 30
+fi
 if [ "\${1:-}" = "manifest" ] && [ "\${2:-}" = "inspect" ]; then
   printf '%s\\n' "$all_args" >> "${dockerLog}"
   if grep -Fx "\${3:-}" "${manifestRefsPath}" >/dev/null 2>&1; then
@@ -155,7 +195,37 @@ fi
 
 if [ "\${1:-}" = "compose" ] && [ "\${2:-}" = "ps" ]; then
   printf '%s\\n' "$all_args" >> "${dockerLog}"
+  if grep -Fx "$last_arg" "${missingServicesPath}" >/dev/null 2>&1; then
+    exit 0
+  fi
   printf '%s-container\\n' "$last_arg"
+  exit 0
+fi
+
+# Reads the next line of a per-call sequence file ($1), repeating its last line; $2 is the fallback.
+next_in_sequence() {
+  if [ ! -f "$1" ]; then
+    printf '%s\\n' "$2"
+    return 0
+  fi
+  index="$(cat "$1.index" 2>/dev/null || echo 0)"
+  value="$(sed -n "$((index + 1))p" "$1")"
+  if [ -z "$value" ]; then
+    value="$(tail -n 1 "$1")"
+  fi
+  echo $((index + 1)) > "$1.index"
+  printf '%s\\n' "$value"
+}
+
+if [ "\${1:-}" = "inspect" ] && printf '%s' "$all_args" | grep -q 'NetworkSettings'; then
+  printf '%s\\n' "$all_args" >> "${dockerLog}"
+  next_in_sequence "${webNetworksPath}" ""
+  exit 0
+fi
+
+if [ "\${1:-}" = "inspect" ] && printf '%s' "$all_args" | grep -q 'StartedAt'; then
+  printf '%s\\n' "$all_args" >> "${dockerLog}"
+  next_in_sequence "${startedAtDir}/\${last_arg%-container}.txt" "2026-10-18T16:10:50.000000000Z"
   exit 0
 fi
 
@@ -212,9 +282,19 @@ exit 0
   chmodSync(path.join(binDir, "sleep"), 0o755);
 }
 
-function createCurlStub(binDir: string, tempDir: string, responses: CurlResponse[]) {
+function createCurlStub(binDir: string, tempDir: string, responses: CurlResponse[], refusals: CurlRefusal[] = []) {
   const responseDir = path.join(tempDir, "curl-responses");
   const counterFile = path.join(tempDir, "curl-count");
+  const callsFile = path.join(tempDir, "curl-calls");
+  const curlLog = path.join(tempDir, "curl.log");
+  const refusalLines = refusals
+    .map(
+      (refusal) => `if [ "$call" -ge ${refusal.fromCall} ] && [ "$call" -le ${refusal.untilCall ?? 1_000_000} ] && printf '%s' "$all_args" | grep -qF -e '//${refusal.host}:' -e '//${refusal.host}/'; then
+  printf "curl: (7) Failed to connect to %s port 3000 after 0 ms: Couldn't connect to server\\n" '${refusal.host}' >&2
+  exit 7
+fi`
+    )
+    .join("\n");
   mkdirSync(responseDir, { recursive: true });
 
   responses.forEach((response, index) => {
@@ -242,6 +322,10 @@ if printf '%s\\n' "$all_args" | grep -q '/api/setup/bootstrap'; then
   printf '200'
   exit 0
 fi
+call=$(( $(cat "${callsFile}" 2>/dev/null || echo 0) + 1 ))
+echo "$call" > "${callsFile}"
+printf '%s\\n' "$all_args" >> "${curlLog}"
+${refusalLines}
 count_file="${counterFile}"
 index="$(cat "$count_file" 2>/dev/null || echo 0)"
 max_index=${responses.length - 1}
@@ -275,7 +359,12 @@ function runShellScript(
   scriptPath: string,
   args: string[],
   responses: CurlResponse[],
-  options: { docker?: DockerStubOptions; env?: Record<string, string>; clockStartEpoch?: number } = {}
+  options: {
+    docker?: DockerStubOptions;
+    env?: Record<string, string>;
+    clockStartEpoch?: number;
+    curlRefusals?: CurlRefusal[];
+  } = {}
 ) {
   const tempDir = rememberTempDir("stream247-release-readiness-script-");
   const { binDir, dockerLog } = createDockerStub(tempDir, options.docker);
@@ -286,7 +375,9 @@ function runShellScript(
     createClockedSleepStub(binDir, clockFile, options.clockStartEpoch);
     clockEnv.SOAK_CLOCK_FILE = clockFile;
   }
-  createCurlStub(binDir, tempDir, responses);
+  createCurlStub(binDir, tempDir, responses, options.curlRefusals);
+  const curlLog = path.join(tempDir, "curl.log");
+  const readLog = (file: string) => (existsSync(file) ? readFileSync(file, "utf8") : "");
 
   try {
     const output = execFileSync("sh", [scriptPath, ...args], {
@@ -308,14 +399,16 @@ function runShellScript(
     return {
       status: 0,
       output,
-      dockerLog: existsSync(dockerLog) ? readFileSync(dockerLog, "utf8") : ""
+      dockerLog: readLog(dockerLog),
+      curlLog: readLog(curlLog)
     };
   } catch (error) {
     const execError = error as { status?: number; stdout?: string | Buffer; stderr?: string | Buffer };
     return {
       status: execError.status ?? 1,
       output: `${execError.stdout?.toString() ?? ""}${execError.stderr?.toString() ?? ""}`,
-      dockerLog: existsSync(dockerLog) ? readFileSync(dockerLog, "utf8") : ""
+      dockerLog: readLog(dockerLog),
+      curlLog: readLog(curlLog)
     };
   }
 }
@@ -339,19 +432,19 @@ function extractComposeServiceBlock(serviceName: string) {
   return lines.slice(start, end).join("\n");
 }
 
-beforeEach(() => {
-  acquireRootEnvLock();
+beforeEach(async () => {
+  await acquireRootEnvLock();
   rootEnvState = createRootEnvTestState(rootEnvPath);
-}, 30_000);
+}, ROOT_ENV_LOCK_WAIT_MS + 10_000);
 
-afterEach(() => {
+afterEach(async () => {
   restoreManagedRootEnv(rootEnvPath, rootEnvState);
 
   while (tempDirs.length > 0) {
     rmSync(tempDirs.pop() as string, { force: true, recursive: true });
   }
 
-  releaseRootEnvLock();
+  await releaseRootEnvLock();
 });
 
 describe("release readiness files", () => {
@@ -594,6 +687,7 @@ describe("release readiness scripts", () => {
 
     expect(result.status).toBe(0);
     expect(result.output).toContain("Upgrade rehearsal completed for v1.0.3.");
+    expect(result.output).toContain("scripts/soak-monitor.sh --hours 24 --follow-web");
   });
 
   it("soak monitor fails immediately when broadcastReady=false (destination not-ready is included in fail line for forensics)", () => {
@@ -874,5 +968,255 @@ describe("release readiness scripts", () => {
     expect(result.output).toContain("outage-tolerated elapsed=0s/300s");
     expect(result.output).toContain("outage-recovered duration=60s samples=1 tolerance=300s");
     expect(result.output).toContain("soak-monitor-complete outages=1 outageSecondsMax=60 outageSecondsTotal=60");
+  }, 30_000);
+
+  // M111. On 2026-10-18 22:15 UTC an apt upgrade of containerd.io restarted the Docker daemon on the DUT.
+  // Every container came back, the channel was on air again 16 s later, but not at the old addresses: web
+  // went from .7 to .5 and .7 went to worker. A soak that kept asking .7 read "Failed to connect" for 6 min
+  // and ended outage-exceeded; RestartCount stayed 0, so nothing in the log said what had happened.
+  const FOLLOW_WEB = { CHECK_BASE_URL: "", COMPOSE_PROJECT_NAME: "stream247" };
+  // The stack's own network listed second, so the pick is by project and not by docker's order.
+  const webAt = (address: string) => `project=stream247 a_proxy=172.18.0.9 stream247_net=${address}`;
+  const readinessRequests = (curlLog: string) => curlLog.split("\n").filter((line) => line.includes("/api/system/readiness"));
+  const STARTED = "2026-10-18T16:10:50.000000000Z";
+  const RESTARTED = "2026-10-18T22:15:15.000000000Z";
+  const SERVICES = ["web", "worker", "playout", "uplink", "relay"];
+  const everyServiceRestartsAtTheSecondSample = Object.fromEntries(
+    // Baseline, first sample, then the new start time from the second sample on.
+    SERVICES.map((service) => [service, [STARTED, STARTED, RESTARTED]])
+  );
+
+  it("soak monitor with --follow-web follows web to its new address: one changed line, no failed sample, no outage", () => {
+    const result = runShellScript(
+      soakScriptPath,
+      ["--hours", "1", "--interval-seconds", "300", "--follow-web"],
+      [healthy],
+      {
+        env: FOLLOW_WEB,
+        clockStartEpoch: CLOCK,
+        docker: { webNetworks: [webAt("172.22.0.7"), webAt("172.22.0.5")] },
+        // The baseline fetch and the first sample reach .7; from the second sample on nothing listens there.
+        curlRefusals: [{ host: "172.22.0.7", fromCall: 3 }]
+      }
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.output).toContain("Starting soak monitor for 1h at http://172.22.0.7:3000");
+    expect(result.output).toContain("Following the web container: address=172.22.0.7 network=stream247_net");
+    expect(result.output.match(/web-address-changed /g) ?? []).toHaveLength(1);
+    expect(result.output).toContain("web-address-changed old=172.22.0.7 new=172.22.0.5 network=stream247_net");
+    expect(result.output).not.toContain("fetch-failed");
+    expect(result.output).not.toContain("outage-");
+    expect(result.output).toContain(
+      "soak-monitor-complete outages=0 outageSecondsMax=0 outageSecondsTotal=0 dockerRestarts=0 containersStartedAgain=0"
+    );
+    // Twelve samples: the baseline fetch, the first sample and one refused try at .7, then .5 only.
+    const asked = readinessRequests(result.curlLog);
+    expect(asked.filter((line) => line.includes("//172.22.0.7:"))).toHaveLength(3);
+    expect(asked.filter((line) => line.includes("//172.22.0.5:"))).toHaveLength(11);
+  }, 30_000);
+
+  it("soak monitor with an explicit public CHECK_BASE_URL never looks web up and counts a refused connection as before", () => {
+    const result = runShellScript(soakScriptPath, ["--hours", "1", "--interval-seconds", "300"], [healthy], {
+      env: { CHECK_BASE_URL: "https://stream.example.com" },
+      clockStartEpoch: CLOCK,
+      curlRefusals: [{ host: "stream.example.com", fromCall: 3, untilCall: 3 }]
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.output).toContain("Starting soak monitor for 1h at https://stream.example.com");
+    expect(result.output).toContain(
+      "readiness-fetch-failed-tolerated 1/2 fetch-failed: curl: (7) Failed to connect to stream.example.com port 3000"
+    );
+    expect(result.output).toContain("outage-recovered duration=300s samples=1 tolerance=300s");
+    expect(result.output).not.toContain("Following the web container");
+    expect(result.output).not.toContain("web-address");
+    expect(result.dockerLog).not.toContain("NetworkSettings");
+    const asked = readinessRequests(result.curlLog);
+    expect(asked).toHaveLength(13);
+    expect(asked.every((line) => line.includes("https://stream.example.com/api/system/readiness"))).toBe(true);
+    expect(result.output).toContain(
+      "soak-monitor-complete outages=1 outageSecondsMax=300 outageSecondsTotal=300 dockerRestarts=0 containersStartedAgain=0"
+    );
+  }, 30_000);
+
+  it("soak monitor with --follow-web stops with a clear message when there is no web container to follow", () => {
+    const missing = runShellScript(soakScriptPath, ["--hours", "1", "--follow-web"], [healthy], {
+      env: FOLLOW_WEB,
+      docker: { missingServices: ["web"] }
+    });
+    expect(missing.status).toBe(1);
+    expect(missing.output).toContain(
+      "Cannot follow the web container: no running web container (docker compose ps -q web is empty here, COMPOSE_PROJECT_NAME=stream247)."
+    );
+    expect(missing.output).not.toContain("Starting soak monitor");
+    expect(missing.curlLog).toBe("");
+
+    const noAddress = runShellScript(soakScriptPath, ["--hours", "1", "--follow-web"], [healthy], {
+      env: FOLLOW_WEB,
+      docker: { webNetworks: ["project=stream247 stream247_net="] }
+    });
+    expect(noAddress.status).toBe(1);
+    expect(noAddress.output).toContain("Cannot follow the web container: web container web-container has no address on any network.");
+
+    const both = runShellScript(soakScriptPath, ["--hours", "1", "--follow-web"], [healthy], {
+      env: { CHECK_BASE_URL: "http://172.22.0.7:3000" }
+    });
+    expect(both.status).toBe(1);
+    expect(both.output).toContain("--follow-web measures the web container's own address: unset CHECK_BASE_URL or drop --follow-web.");
+    expect(both.curlLog).toBe("");
+  });
+
+  it("soak monitor with --follow-web counts the sample as failed while web has no address yet, and follows it at the next one", () => {
+    const result = runShellScript(
+      soakScriptPath,
+      ["--hours", "1", "--interval-seconds", "300", "--follow-web"],
+      [healthy],
+      {
+        env: FOLLOW_WEB,
+        clockStartEpoch: CLOCK,
+        // At the first refused sample web is not running again yet; at the next it is, at .5.
+        docker: { webNetworks: [webAt("172.22.0.7"), "project=stream247 stream247_net=", webAt("172.22.0.5")] },
+        curlRefusals: [{ host: "172.22.0.7", fromCall: 3 }]
+      }
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.output).toMatch(
+      /readiness-fetch-failed-tolerated 1\/2 fetch-failed: curl: \(7\) Failed to connect to 172\.22\.0\.7 [^\n]* web-address-lookup-failed: web container web-container has no address on any network/
+    );
+    expect(result.output.match(/web-address-changed /g) ?? []).toHaveLength(1);
+    expect(result.output).toContain("web-address-changed old=172.22.0.7 new=172.22.0.5 network=stream247_net");
+    expect(result.output).toContain("outage-recovered duration=300s samples=1 tolerance=300s");
+    expect(result.output).toContain("soak-monitor-complete outages=1 outageSecondsMax=300 outageSecondsTotal=300");
+  }, 30_000);
+
+  it("soak monitor logs a Docker daemon restart that RestartCount does not show, and names it in the completion line", () => {
+    const result = runShellScript(soakScriptPath, ["--hours", "1", "--interval-seconds", "300"], [healthy], {
+      clockStartEpoch: CLOCK,
+      docker: { startedAt: everyServiceRestartsAtTheSecondSample }
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.output).toContain("Baseline container restarts: web=0 worker=0 playout=0 uplink=0 relay=0");
+    expect(result.output).toContain(`Baseline container starts: ${SERVICES.map((service) => `${service}=${STARTED}`).join(" ")}`);
+    // Once, at the second sample, with the time the containers started again; RestartCount stayed 0.
+    expect(result.output.match(/docker-daemon-restart /g) ?? []).toHaveLength(1);
+    expect(result.output).toMatch(
+      new RegExp(`T[0-9:+-]+ docker-daemon-restart startedAt=${RESTARTED} services=web,worker,playout,uplink,relay\\n`)
+    );
+    expect(result.output).not.toContain("container-restart-check-failed");
+    expect(result.output).not.toContain("container-started-again");
+    // The outage rules are unchanged: no bad sample, no outage; but the pass does not read like a clean one.
+    expect(result.output).toContain(
+      "soak-monitor-complete outages=0 outageSecondsMax=0 outageSecondsTotal=0 dockerRestarts=1 containersStartedAgain=0"
+    );
+  }, 30_000);
+
+  it("soak monitor logs a single container started again outside its restart policy and counts it", () => {
+    const result = runShellScript(soakScriptPath, ["--hours", "1", "--interval-seconds", "300"], [healthy], {
+      clockStartEpoch: CLOCK,
+      docker: { startedAt: { worker: [STARTED, STARTED, RESTARTED] } }
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.output.match(/container-started-again /g) ?? []).toHaveLength(1);
+    expect(result.output).toContain(`container-started-again startedAt=${RESTARTED} services=worker`);
+    expect(result.output).not.toContain("docker-daemon-restart");
+    expect(result.output).toContain("dockerRestarts=0 containersStartedAgain=1");
+  }, 30_000);
+
+  it("soak monitor with --follow-web carries the Docker restart of 2026-10-18 without an outage and reports it", () => {
+    const result = runShellScript(
+      soakScriptPath,
+      ["--hours", "1", "--interval-seconds", "300", "--follow-web"],
+      [healthy],
+      {
+        env: FOLLOW_WEB,
+        clockStartEpoch: CLOCK,
+        docker: { startedAt: everyServiceRestartsAtTheSecondSample, webNetworks: [webAt("172.22.0.7"), webAt("172.22.0.5")] },
+        curlRefusals: [{ host: "172.22.0.7", fromCall: 3 }]
+      }
+    );
+
+    expect(result.status).toBe(0);
+    // The log says why the address moved: the change, then, after the healthy sample at the new address, the
+    // restart that moved it (the start times are read only after a healthy sample), then the sample itself.
+    expect(result.output).toMatch(
+      /web-address-changed old=172\.22\.0\.7 new=172\.22\.0\.5[^\n]*\n[^\n]*docker-daemon-restart startedAt=[^\n]*\n[^\n]*status=ok /
+    );
+    expect(result.output).not.toContain("fetch-failed");
+    expect(result.output).not.toContain("outage-exceeded");
+    expect(result.output).toContain(
+      "soak-monitor-complete outages=0 outageSecondsMax=0 outageSecondsTotal=0 dockerRestarts=1 containersStartedAgain=0"
+    );
+  }, 30_000);
+
+  // A socket-activated dockerd that is stopped or starting leaves docker calls hanging. The off-air time must
+  // still reach the outage window: the failure path asks docker nothing but the bounded lookup.
+  // A fraction of a second (GNU timeout takes one): each blocked call costs the test that much, and these tests
+  // hold the root-env lock that tests/unit/release-preflight.test.ts waits at most ROOT_ENV_LOCK_WAIT_MS for.
+  const DOCKER_HANGS = { SOAK_DOCKER_TIMEOUT_SECONDS: "0.2" };
+  const blockedCalls = (dockerLog: string) => dockerLog.split("\n").filter((line) => line.startsWith("blocked: "));
+
+  it("soak monitor with --follow-web keeps sampling while docker does not answer and ends outage-exceeded past the window", () => {
+    const result = runShellScript(
+      soakScriptPath,
+      ["--hours", "1", "--interval-seconds", "60", "--follow-web"],
+      [healthy],
+      {
+        env: { ...FOLLOW_WEB, ...DOCKER_HANGS },
+        clockStartEpoch: CLOCK,
+        // dockerd goes away after the first sample, and web with it.
+        docker: { webNetworks: [webAt("172.22.0.7")], blockFromEpoch: CLOCK + 1 },
+        curlRefusals: [{ host: "172.22.0.7", fromCall: 3 }]
+      }
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.output).toMatch(
+      /readiness-fetch-failed-tolerated 1\/2 fetch-failed: curl: \(7\) Failed to connect to 172\.22\.0\.7 [^\n]* web-address-lookup-failed: docker did not answer within 0.2s \(docker compose ps -q web\)/
+    );
+    // Bad samples at 60 … 420 s; the one at 420 s is 360 s into the outage, past the 300 s window.
+    expect(result.output).toMatch(/outage-exceeded elapsed=360s tolerance=300s samples=7 fetch-failed /);
+    expect(result.output).not.toContain("soak-monitor-complete");
+    // One lookup per refused sample, then the closing read of the five start times; none of them held a sample.
+    expect(blockedCalls(result.dockerLog)).toHaveLength(7 + 5);
+  }, 60_000);
+
+  it("soak monitor with an explicit CHECK_BASE_URL asks docker nothing while an outage runs, so a hanging docker cannot hide it", () => {
+    const result = runShellScript(soakScriptPath, ["--hours", "1", "--interval-seconds", "60"], [healthy], {
+      env: DOCKER_HANGS,
+      clockStartEpoch: CLOCK,
+      docker: { blockFromEpoch: CLOCK + 1 },
+      curlRefusals: [{ host: "127.0.0.1", fromCall: 3 }]
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("Starting soak monitor for 1h at http://127.0.0.1:3000");
+    expect(result.output).toMatch(/outage-exceeded elapsed=360s tolerance=300s samples=7 fetch-failed /);
+    expect(result.output).not.toContain("web-address");
+    // Only the closing read of the start times, after the verdict.
+    expect(blockedCalls(result.dockerLog)).toHaveLength(5);
+    expect(blockedCalls(result.dockerLog).every((line) => line.includes("compose ps -q"))).toBe(true);
+  }, 60_000);
+
+  it("soak monitor names a Docker daemon restart in the log of a soak that an outage ended", () => {
+    // 2026-10-18 as it ran: the old address in CHECK_BASE_URL, refused from the second sample on. Start times:
+    // baseline, first sample, then the closing read after the verdict.
+    const result = runShellScript(soakScriptPath, ["--hours", "1", "--interval-seconds", "60"], [healthy], {
+      env: { CHECK_BASE_URL: "http://172.22.0.7:3000" },
+      clockStartEpoch: CLOCK,
+      docker: { startedAt: everyServiceRestartsAtTheSecondSample },
+      curlRefusals: [{ host: "172.22.0.7", fromCall: 3 }]
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.output).toMatch(
+      new RegExp(
+        `docker-daemon-restart startedAt=${RESTARTED} services=web,worker,playout,uplink,relay\\n[^\\n]*outage-exceeded elapsed=360s`
+      )
+    );
+    expect(result.output.match(/docker-daemon-restart /g) ?? []).toHaveLength(1);
   }, 30_000);
 });

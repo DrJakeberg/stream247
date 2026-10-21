@@ -197,8 +197,8 @@ Every release follows the same order:
 5. **Validate on DUT**
    - SSH to DUT and run readiness checks against the active deployment path
    - run `./scripts/upgrade-rehearsal.sh <target-version>` from the DUT repo path against the active stack
-   - start the 24-hour soak in `tmux` on DUT from the repository checkout, measured through the host's own
-     port (`CHECK_BASE_URL=http://127.0.0.1:3000`; step 10 of *Safe Upgrade Flow* below has the command)
+   - start the 24-hour soak in `tmux` on DUT from the repository checkout, measured at the `web` container's
+     own address (`--follow-web`; step 10 of *Safe Upgrade Flow* below has the command)
 6. **Promote or roll back**
    - keep the Portainer deployment only after DUT stays healthy
    - if DUT fails, read the release's rollback notes first (since 2.3, dated and one-off blocks are deleted
@@ -217,7 +217,7 @@ Recommended pre-release commands:
 
 - `pnpm release:preflight`
 - `./scripts/upgrade-rehearsal.sh <target-version>`
-- `CHECK_BASE_URL=http://127.0.0.1:3000 ./scripts/soak-monitor.sh --hours 24` on the DUT, from the
+- `COMPOSE_PROJECT_NAME=stream247 ./scripts/soak-monitor.sh --hours 24 --follow-web` on the DUT, from the
   repository checkout (step 10 of *Safe Upgrade Flow*)
 
 ## Upgrading
@@ -268,25 +268,57 @@ Do not use `latest` for unattended production deployments.
    - current broadcast state
 10. For production candidates, run on DUT from the repo path:
     ```bash
-    CHECK_BASE_URL=http://127.0.0.1:3000 ./scripts/soak-monitor.sh --hours 24
+    COMPOSE_PROJECT_NAME=stream247 ./scripts/soak-monitor.sh --hours 24 --follow-web
     ```
     On the DUT, start it in `tmux` so that it outlives the SSH session, with its output in the log file the
     soak result is read from (`~/logs/soak-<stamp>.log`), from the checkout of the release (`<checkout>`):
     ```bash
-    cd <checkout> && tmux new-session -d -s soak "COMPOSE_PROJECT_NAME=stream247 CHECK_BASE_URL=http://127.0.0.1:3000 ./scripts/soak-monitor.sh --hours 24 >> ~/logs/soak-$(date -u +%Y%m%d-%H%M).log 2>&1"; tmux ls
+    cd <checkout> && tmux new-session -d -s soak "COMPOSE_PROJECT_NAME=stream247 ./scripts/soak-monitor.sh --hours 24 --follow-web >> ~/logs/soak-$(date -u +%Y%m%d-%H%M%S).log 2>&1"; tmux ls
     ```
-    Measure through the host's own port (`web` publishes `3000:3000`), not the public URL: the public route
-    measures the way in as well, and the 2.1.0 soak's only outage was a 220 s Cloudflare `522` while the
-    channel stayed on air. With `CHECK_BASE_URL` set the script needs no `.env`. Run it from the
-    repository checkout so `scripts/lib/soak-readiness-classifier.cjs` is found, or copy `scripts/` as a
-    whole. Before trusting a pass, read two lines of its log:
-    - the first, `Starting soak monitor for 24h at <url>`, names what was measured;
-    - `Baseline container restarts: web=… worker=… playout=… uplink=… relay=…` must show numbers. The
-      counts come from `docker compose ps` in the directory above `scripts/`; where that directory is not
-      the stack's compose project (a Portainer stack, a copied `scripts/`), every count reads `unknown` and
-      a container restart goes unseen. Run it from a checkout, whose `docker-compose.yml` names the
-      services, with `COMPOSE_PROJECT_NAME` set to the stack's project (`stream247` for containers named
-      `stream247-web-1`), and check the line again. `relay=unknown` is expected with the relay off.
+    The stamp has seconds, like the run log the script writes itself with the same lines
+    (`<checkout>/logs/soak-<stamp>.log`); with minutes only, two starts in one minute shared one file.
+    Measure at the `web` container, not through the public URL: the public route measures the way in as
+    well, and the 2.1.0 soak's only outage was a 220 s Cloudflare `522` while the channel stayed on air.
+    The Portainer stack does not publish `web`'s port on the host, so `http://127.0.0.1:3000` fails there
+    (`Failed to connect`). `--follow-web` reads `web`'s address on the stack network itself (`docker compose
+    ps -q web`, then `docker inspect`; the network named after the compose project when `web` is on
+    several) and measures `http://<address>:3000`. A Docker restart hands the addresses out anew: on
+    2026-10-18 `web` came back as `172.22.0.5` and its old `172.22.0.7` went to `worker`, and a soak with the
+    old address in `CHECK_BASE_URL` ended `outage-exceeded` while the channel was on air again 16 s after
+    the restart. So on a refused connection (`curl: (7)`) the monitor reads the address again; when it
+    moved, it logs `web-address-changed old=… new=… network=…` and takes the sample at the new address.
+    When the address has not moved (`web` restarting in place, or up but not listening yet), or `web` does
+    not answer at the new one either, the sample counts as a failed fetch as before; when `web` has no
+    address yet or docker does not answer, its line also carries `web-address-lookup-failed: …`. Every
+    docker call of the monitor is bounded (`SOAK_DOCKER_TIMEOUT_SECONDS`, below), so a daemon that does not
+    answer cannot hold the samples back. With `CHECK_BASE_URL` set instead, the monitor asks only that
+    URL, as before, and never looks `web` up; a stack that publishes `3000:3000` may keep
+    `CHECK_BASE_URL=http://127.0.0.1:3000`. The two exclude each other, and neither needs a `.env`. Run it
+    from the repository checkout so
+    `scripts/lib/soak-readiness-classifier.cjs` is found, or copy `scripts/` as a whole. Before trusting a
+    pass, read the first lines of its log:
+    - the first, `Starting soak monitor for 24h at <url>`, names what was measured; with `--follow-web`,
+      `Following the web container: address=… network=…` names the container's address and network;
+    - `Baseline container restarts: web=… worker=… playout=… uplink=… relay=…` must show numbers, and
+      `Baseline container starts: web=… …` start times. Both come from `docker compose ps` in the directory
+      above `scripts/`; where that directory is not the stack's compose project (a Portainer stack, a
+      copied `scripts/`), every value reads `unknown`, a container restart goes unseen, and `--follow-web`
+      stops at once (`Cannot follow the web container: no running web container …`). Run it from a
+      checkout, whose `docker-compose.yml` names the services, with `COMPOSE_PROJECT_NAME` set to the
+      stack's project (`stream247` for containers named `stream247-web-1`), and check the lines again.
+      `relay=unknown` is expected with the relay off.
+
+    `RestartCount` counts only the restarts of the restart policy. A Docker daemon restart (on 2026-10-18 an
+    upgrade of `containerd.io`) starts every container again and leaves it at 0, so the restart check alone
+    does not see one. The monitor also reads each service's start time (`State.StartedAt`) after every
+    healthy sample, and once more when an outage ends the soak (never while one runs, so a slow daemon
+    cannot delay the samples that measure it): when every service started again, it logs
+    `docker-daemon-restart startedAt=<time> services=…` (a `docker compose restart` or a recreate of the whole stack looks the same); when only some did,
+    `container-started-again startedAt=<time> services=…` (a `docker restart`, a recreate, or the restart
+    policy, whose restart then fails the soak as before). Neither line fails the soak by itself: the
+    readiness samples and the outage window below judge the air, as for any outage. Both are counted in
+    the completion line (`dockerRestarts=N containersStartedAgain=N`), and a pass with either above 0 is
+    *passed with failure*, never clean.
 
     Without `SESSION_COOKIE` (below) every sample logs `openCriticalIncidents=skipped(no-session-cookie)`
     and open critical incidents do not fail the soak; read them afterwards instead:
@@ -296,12 +328,12 @@ Do not use `latest` for unattended production deployments.
     The soak gate fails if broadcast readiness never becomes ready, or drops and does not come back
     within the outage window (five minutes by default, below). A healed outage does not fail the soak
     but is logged as `outage-recovered duration=…s` and counted in the completion line
-    (`soak-monitor-complete outages=N outageSecondsMax=… outageSecondsTotal=…`), so a pass with outages
-    never reads like a clean one.
+    (`soak-monitor-complete outages=N outageSecondsMax=… outageSecondsTotal=… dockerRestarts=N
+    containersStartedAgain=N`), so a pass with outages never reads like a clean one.
 
 Useful overrides:
 
-- `CHECK_BASE_URL=http://127.0.0.1:3000` for a soak on the stack's own host (step 10), and whenever `APP_URL` is externally routed and not directly reachable from the host
+- `CHECK_BASE_URL=<url>` to measure one fixed URL: a stack that publishes `web`'s port (`http://127.0.0.1:3000`), or an `APP_URL` that is externally routed and not directly reachable from the host. On the DUT's Portainer stack, which does not publish it, use `--follow-web` instead (step 10)
 - `SOAK_OUTAGE_TOLERANCE_SECONDS` (default 300): how long an outage may last, counted from its first bad
   sample, before the soak fails with `outage-exceeded`. Any bad sample opens the outage — a failed fetch,
   a not-ready service, `broadcastReady=false` — and the next healthy sample closes it. Written for the
@@ -314,6 +346,11 @@ Useful overrides:
   that fail outright (DNS, TLS, connection reset) before the soak fails; the log keeps each tolerated one
   as `readiness-fetch-failed-tolerated`. With the window open it only decides when a run of failed fetches
   starts being logged as `outage-tolerated`.
+- `SOAK_DOCKER_TIMEOUT_SECONDS` (default 10): how long one docker call of the soak monitor may take
+  (coreutils' `timeout`). With socket activation (`docker.socket`, Docker's apt packages) a call made while
+  `dockerd` is stopped or starting waits for the next daemon instead of failing; bounded, it reads like a
+  failed call (`unknown`, or `web-address-lookup-failed: docker did not answer within 10s …`), and the
+  samples and the outage window go on. Without `timeout` on the host the calls stay unbounded.
 - `SESSION_COOKIE="stream247_session=..."` if the soak monitor should also fail on open critical incidents from the authenticated incidents API
 - `RELEASE_PREFLIGHT_ENV_FILE=/path/to/production.env` if you want `pnpm release:preflight` to validate a staged env file without replacing the current `.env`
 - `UPGRADE_REHEARSAL_IMAGE_TAG=main-<sha>` if you need to force a specific pre-release snapshot tag during rehearsal

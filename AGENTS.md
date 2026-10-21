@@ -91,7 +91,7 @@ unless the owner says otherwise in the brief; name the conflict in the report.
   - repin: `ssh dt '~/repin.sh <tag> --dry-run'`, then without `--dry-run`
   - PostgreSQL backup before a schema change:
     `ssh dut 'umask 077; docker exec stream247-postgres-1 pg_dump -U stream247 -d stream247 -Fc > ~/backups/stream247-pre-<tag>.dump'`
-  - soak start: the command of step 10 of *Safe Upgrade Flow* in `docs/deployment.md` (a release checkout, `CHECK_BASE_URL=http://127.0.0.1:3000`)
+  - soak start: the command of step 10 of *Safe Upgrade Flow* in `docs/deployment.md` (a release checkout, `--follow-web`)
   - live check: `ssh dut 'docker exec stream247-playout-1 yt-dlp --simulate --print "%(is_live)s" https://www.twitch.tv/jimpanse247'`
 - A 24-hour soak runs only on the DUT. Never change DUT secrets or production values.
 
