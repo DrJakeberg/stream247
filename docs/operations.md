@@ -517,7 +517,8 @@ row; the restart policy
   time. A source without room is not synced in that cycle (nothing about it is written, its items
   stay) and goes first in its sync's next run (`source.sync.deferred`); several waiting sources take
   turns, longest waiting first. When the Twitch sync had to wait, the YouTube sync of the next cycle
-  leaves one call's 2 min for it. A call that runs out of its 2 min is a host that does not answer:
+  makes its first call and leaves one call's 2 min for Twitch before any further one, so neither sync
+  keeps the other waiting. A call that runs out of its 2 min is a host that does not answer:
   reported as failed as before, then the source is left alone for 10 min (`source.sync.paused`;
   changing the source's URL ends the pause). A chapter probe starts only when its whole 30 s fit too
   (`asset.chapters.deferred` otherwise). So a dead host costs one call per 10 min and the cycle stays

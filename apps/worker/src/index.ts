@@ -634,8 +634,13 @@ const SOURCE_SYNC_YTDLP_TIMEOUT_MS = clampToCycleAwaitCeiling(120_000, process.e
 // cycle's deadline, and a source that ran out of its timeout is paused (M112, remote-call-budget.ts);
 // runWorkerCycle starts a new cycle budget.
 let workerRemoteCallBudget = RemoteCallBudget.forCycle(LOOP_STALL_TIMEOUT_MS);
-// The sources the budget had no room for in the last cycle: they go first in their sync's next run.
-const sourceSyncDeferredIds = new Set<string>();
+// Per sync step, the sources the budget had no room for in the last cycle, in the order they were
+// deferred: they go first in the step's next run. Replaced by each run, so a source disabled or removed
+// meanwhile drops out.
+const sourceSyncDeferredIds = new Map<string, ReadonlySet<string>>();
+function deferredSourceIdsOf(step: string): ReadonlySet<string> {
+  return sourceSyncDeferredIds.get(step) ?? new Set<string>();
+}
 const sourceSyncPauses = new SourceSyncPauses();
 
 /** A source call that ran out of its timeout: reported as failed as before, and the source is paused. */
@@ -647,13 +652,8 @@ function pauseSourceSyncOnTimeout(source: { id: string; externalUrl?: string }, 
 }
 
 /** Records which of a sync's sources were deferred this cycle, and says so once per cycle and step. */
-function noteSourceSyncDeferrals(step: string, sources: { id: string }[], deferredIds: string[]): void {
-  for (const source of sources) {
-    sourceSyncDeferredIds.delete(source.id);
-  }
-  for (const id of deferredIds) {
-    sourceSyncDeferredIds.add(id);
-  }
+function noteSourceSyncDeferrals(step: string, deferredIds: string[]): void {
+  sourceSyncDeferredIds.set(step, new Set(deferredIds));
   if (deferredIds.length > 0) {
     logRuntimeEvent("source.sync.deferred", {
       step,
@@ -4565,12 +4565,10 @@ async function syncYoutubePlaylistSources(): Promise<void> {
   // The sources this cycle syncs; one the budget has no room for is left out of everything below (M112).
   const youtubeSources: typeof enabledYoutubeSources = [];
   const deferredSourceIds: string[] = [];
-  // A Twitch source the last cycle deferred gets one call's timeout kept for it: a heavy YouTube load
-  // cannot keep the Twitch sync waiting for good (remote-call-budget.ts).
-  const twitchSyncWaiting = state.sources.some(
-    (source) =>
-      (source.connectorKind === "twitch-vod" || source.connectorKind === "twitch-channel") && sourceSyncDeferredIds.has(source.id)
-  );
+  // When the last cycle deferred a Twitch source, the YouTube sync's calls after its first keep one
+  // call's timeout for it: neither sync can keep the other waiting for good (remote-call-budget.ts).
+  const twitchSyncWaiting = deferredSourceIdsOf("twitch-sources").size > 0;
+  let youtubeCallsStarted = 0;
   const youtubeAssets: AssetRecord[] = [];
   // Per-source throughout — asset replacement, status wording and incident resolution all read
   // this set. A source we learned nothing about must keep its stored assets instead of being wiped
@@ -4581,7 +4579,7 @@ async function syncYoutubePlaylistSources(): Promise<void> {
   const failedSourceIds = new Set<string>();
   const syncRuns: AppState["sourceSyncRuns"] = [];
 
-  for (const source of orderDeferredFirst(enabledYoutubeSources, sourceSyncDeferredIds)) {
+  for (const source of orderDeferredFirst(enabledYoutubeSources, deferredSourceIdsOf("youtube-sources"))) {
     const startedAt = new Date().toISOString();
     const externalUrl = source.externalUrl?.trim() ?? "";
     const isValid =
@@ -4612,12 +4610,13 @@ async function syncYoutubePlaylistSources(): Promise<void> {
     }
     const timeoutMs = workerRemoteCallBudget.fitsWhole(
       SOURCE_SYNC_YTDLP_TIMEOUT_MS,
-      twitchSyncWaiting ? SOURCE_SYNC_YTDLP_TIMEOUT_MS : 0
+      twitchSyncWaiting && youtubeCallsStarted > 0 ? SOURCE_SYNC_YTDLP_TIMEOUT_MS : 0
     );
     if (timeoutMs === null) {
       deferredSourceIds.push(source.id);
       continue;
     }
+    youtubeCallsStarted += 1;
     youtubeSources.push(source);
 
     try {
@@ -4690,7 +4689,7 @@ async function syncYoutubePlaylistSources(): Promise<void> {
       });
     }
   }
-  noteSourceSyncDeferrals("youtube-sources", enabledYoutubeSources, deferredSourceIds);
+  noteSourceSyncDeferrals("youtube-sources", deferredSourceIds);
 
   await upsertSources(
     youtubeSources.map((source) => {
@@ -4757,7 +4756,7 @@ async function syncTwitchVodSources(): Promise<void> {
   const failedSourceIds = new Set<string>();
   const syncRuns: AppState["sourceSyncRuns"] = [];
 
-  for (const source of orderDeferredFirst(enabledTwitchSources, sourceSyncDeferredIds)) {
+  for (const source of orderDeferredFirst(enabledTwitchSources, deferredSourceIdsOf("twitch-sources"))) {
     const startedAt = new Date().toISOString();
     const externalUrl = source.externalUrl?.trim() ?? "";
     const isValid =
@@ -4905,7 +4904,7 @@ async function syncTwitchVodSources(): Promise<void> {
       });
     }
   }
-  noteSourceSyncDeferrals("twitch-sources", enabledTwitchSources, deferredSourceIds);
+  noteSourceSyncDeferrals("twitch-sources", deferredSourceIds);
 
   await upsertSources(
     twitchSources.map((source) => {
