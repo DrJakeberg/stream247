@@ -42,7 +42,7 @@ function runCycles(
   youtube: Source[],
   twitch: Source[] | ((cycle: number) => Source[]),
   cycles: number,
-  options: { withBudget: boolean; stallMs?: number; beforeMs?: number }
+  options: { withBudget: boolean; stallMs?: number; beforeMs?: number; stepOverheadMs?: number }
 ): Cycle[] {
   const stallMs = options.stallMs ?? DEFAULT_LOOP_STALL_TIMEOUT_MS;
   const listingTimeoutMs = Math.min(120_000, Math.floor(stallMs / 2));
@@ -50,6 +50,7 @@ function runCycles(
   const pauses = new SourceSyncPauses(() => nowMs);
   const deferredByStep = new Map<string, ReadonlySet<string>>();
   let twitchHeldBack = false;
+  let youtubeCallsStarted = 0;
   const results: Cycle[] = [];
   for (let cycle = 0; cycle < cycles; cycle += 1) {
     const startMs = nowMs;
@@ -88,9 +89,13 @@ function runCycles(
           pauses.start(sourceSyncPauseKey(source));
         }
       }
+      // The step's own state reads and writes.
+      nowMs += options.stepOverheadMs ?? 0;
       deferredByStep.set(step, new Set(deferred));
-      if (step === "twitch") {
-        twitchHeldBack = callsStarted === 0 && deferred.length > 0;
+      if (step === "youtube") {
+        youtubeCallsStarted = callsStarted;
+      } else {
+        twitchHeldBack = callsStarted === 0 && deferred.length > 0 && youtubeCallsStarted > 0;
       }
       deferredThisCycle.push(...deferred);
     }
@@ -223,6 +228,14 @@ describe("the worker cycle's budget for source hosts (M112)", () => {
     });
   }
 
+  it("does not hold YouTube back for a Twitch sync that gets no call even alone (review of M112)", () => {
+    // Earlier steps leave 120.5 s: one call, and then no room for Twitch even when YouTube gives way.
+    const cycles = runCycles([healthy("yt1")], [healthy("tw1")], 10, { withBudget: true, beforeMs: 119_500, stepOverheadMs: 1_500 });
+    // YouTube gives way once, then Twitch's empty run holds nobody back.
+    expect(longestWait(cycles, "yt1")).toBeLessThanOrEqual(1);
+    expect(cycles.filter((cycle) => cycle.synced.includes("yt1")).length).toBeGreaterThanOrEqual(5);
+  });
+
   it("lets Twitch take turns behind dead YouTube hosts (review of M112)", () => {
     const youtube = ["d1", "d2", "d3", "d4", "d5", "d6", "d7"].map((id) => dead(`yt-dead-${id}`));
     const cycles = runCycles(youtube, [healthy("tw1")], 30, { withBudget: true });
@@ -294,12 +307,12 @@ describe("the worker cycle's budget for source hosts (M112)", () => {
     expect(flatWorker).toContain(
       "async function runWorkerCycle(): Promise<void> { workerRemoteCallBudget = RemoteCallBudget.forCycle(LOOP_STALL_TIMEOUT_MS);"
     );
-    expect(flatWorker).toContain('const twitchSyncWaiting = deferredSourceIdsOf("twitch-sources").size > 0; let youtubeCallsStarted = 0;');
+    expect(flatWorker).toContain('const twitchSyncWaiting = deferredSourceIdsOf("twitch-sources").size > 0; youtubeCallsStarted = 0;');
     expect(flatWorker).toContain(
       "const timeoutMs = workerRemoteCallBudget.fitsWhole( SOURCE_SYNC_YTDLP_TIMEOUT_MS, twitchSyncWaiting && (youtubeCallsStarted > 0 || twitchSyncHeldBack) ? SOURCE_SYNC_YTDLP_TIMEOUT_MS : 0 ); if (timeoutMs === null) { deferredSourceIds.push(source.id); continue; } youtubeCallsStarted += 1; youtubeSources.push(source);"
     );
     expect(flatWorker).toContain(
-      'noteSourceSyncDeferrals("twitch-sources", deferredSourceIds); twitchSyncHeldBack = twitchCallsStarted === 0 && deferredSourceIds.length > 0;'
+      'noteSourceSyncDeferrals("twitch-sources", deferredSourceIds); twitchSyncHeldBack = twitchCallsStarted === 0 && deferredSourceIds.length > 0 && youtubeCallsStarted > 0;'
     );
     // Each run replaces its step's deferred set, so a disabled or removed source drops out.
     expect(flatWorker).toContain(

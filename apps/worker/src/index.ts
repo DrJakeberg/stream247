@@ -638,9 +638,12 @@ let workerRemoteCallBudget = RemoteCallBudget.forCycle(LOOP_STALL_TIMEOUT_MS);
 // deferred: they go first in the step's next run. Replaced by each run, so a source disabled or removed
 // meanwhile drops out.
 const sourceSyncDeferredIds = new Map<string, ReadonlySet<string>>();
-// True when the Twitch sync's last run deferred sources without starting a single call: then the
-// YouTube sync keeps Twitch's call time from its first call on, so the two take turns.
+// True when the Twitch sync's last run deferred sources without starting a single call after the YouTube
+// sync had started one: then the YouTube sync keeps Twitch's call time from its first call on, so the
+// two take turns. A Twitch run that got no call although YouTube started none holds nobody back.
 let twitchSyncHeldBack = false;
+// The calls the YouTube sync started in its last run.
+let youtubeCallsStarted = 0;
 function deferredSourceIdsOf(step: string): ReadonlySet<string> {
   return sourceSyncDeferredIds.get(step) ?? new Set<string>();
 }
@@ -4572,7 +4575,7 @@ async function syncYoutubePlaylistSources(): Promise<void> {
   // call's timeout for it, and its first too when the Twitch sync got no call at all: neither sync can
   // keep the other waiting for good (remote-call-budget.ts).
   const twitchSyncWaiting = deferredSourceIdsOf("twitch-sources").size > 0;
-  let youtubeCallsStarted = 0;
+  youtubeCallsStarted = 0;
   const youtubeAssets: AssetRecord[] = [];
   // Per-source throughout — asset replacement, status wording and incident resolution all read
   // this set. A source we learned nothing about must keep its stored assets instead of being wiped
@@ -4911,7 +4914,7 @@ async function syncTwitchVodSources(): Promise<void> {
     }
   }
   noteSourceSyncDeferrals("twitch-sources", deferredSourceIds);
-  twitchSyncHeldBack = twitchCallsStarted === 0 && deferredSourceIds.length > 0;
+  twitchSyncHeldBack = twitchCallsStarted === 0 && deferredSourceIds.length > 0 && youtubeCallsStarted > 0;
 
   await upsertSources(
     twitchSources.map((source) => {
