@@ -435,6 +435,32 @@ row; the restart policy
 - a self-restart is a Docker restart: the soak monitor's restart counts see it and fail the soak, as for
   any other container restart
 
+### A frozen process restarts (since M114)
+
+The rule above needs a running event loop. A process whose event loop is blocked, or one that was
+stopped (SIGSTOP), never gets to its own check. So the worker, playout and uplink containers run
+`node apps/worker/dist/supervisor.js <mode>`, which starts `index.js <mode>` as its child
+(`apps/worker/src/process-supervisor.ts`). The child sends a heartbeat every 10 s from its own event
+loop; after five minutes without one the supervisor kills it (SIGKILL) and exits, and the restart
+policy starts the container again. No Docker socket is involved.
+
+- the log shows `worker.supervisor.frozen` (with `mode` and `silentForMs`) before the kill, and the next
+  process logs `worker.health.frozen_restart` and raises the warning incident
+  `<mode>.health.frozen-restart`, which closes once the area is healthy again
+- the container healthcheck still calls `index.js healthcheck <mode>` directly; nothing changes there
+- not covered: `docker pause` freezes the supervisor too, and the relay (below)
+- a compose file of your own that still says `command: ["node", "apps/worker/dist/index.js", ...]` keeps
+  working without the supervisor; take the commands from `docker-compose.yml` to get it
+
+### Relay is not answering (since M114)
+
+The relay image holds only the mediamtx binary, so it cannot run a healthcheck, and its pin stays as it
+is. Instead the worker asks the relay's API (`http://relay:9997`) every cycle while something uses the
+relay (`STREAM247_RELAY_ENABLED=1` or live sources). After two minutes without any answer it raises the
+critical incident `relay.unreachable` (log `relay.unreachable`); the card says to run
+`docker compose restart relay`. The incident closes on the first answer again (log `relay.reachable`).
+A relay that crashes is restarted by `restart: unless-stopped` as before.
+
 ### Restarts back off (since M103)
 
 - crash-loop protection (three failed ffmpeg exits within ten minutes) still waits for a playable item.
