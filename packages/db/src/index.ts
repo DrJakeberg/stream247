@@ -1025,6 +1025,7 @@ function normalizeOverlaySettingsRecord(overlay: OverlaySettingsRecord): Overlay
   // and never mentions a scene -- the chat game's own layer provisioning does it through
   // updateAppState -- and re-projecting here threw those edits away inside the same transaction.
   const scenes = foldCustomLayersIntoActiveScene(storedScenes, activeSceneId, overlay.customLayers);
+  const storedDisabledLayers: unknown[] = Array.isArray(overlay.disabledLayers) ? overlay.disabledLayers : [];
   return {
     ...defaults,
     ...overlay,
@@ -1046,9 +1047,8 @@ function normalizeOverlaySettingsRecord(overlay: OverlaySettingsRecord): Overlay
     typographyPreset: normalizeOverlayTypographyPreset(String(overlay.typographyPreset ?? defaults.typographyPreset)),
     queuePreviewCount: Math.max(1, Math.min(5, Number(overlay.queuePreviewCount ?? defaults.queuePreviewCount) || defaults.queuePreviewCount)),
     layerOrder: normalizeOverlaySceneLayerOrder(overlay.layerOrder ?? defaults.layerOrder),
-    disabledLayers: normalizeOverlaySceneLayerOrder(overlay.disabledLayers ?? []).filter((kind) =>
-      (overlay.disabledLayers ?? []).includes(kind)
-    ),
+    // A stored preset is parsed JSON and may hold anything here; only a list can disable layers (M113).
+    disabledLayers: normalizeOverlaySceneLayerOrder(storedDisabledLayers).filter((kind) => storedDisabledLayers.includes(kind)),
     scenes,
     activeSceneId,
     customLayers: resolveOverlayNamedSceneCustomLayers(scenes, activeSceneId),
@@ -1137,15 +1137,16 @@ function mapOverlayRowToRecord(row: OverlaySettingsRow | undefined, fallback: Ov
         showSourceLabel: row.show_source_label,
         showQueuePreview: row.show_queue_preview,
         queuePreviewCount: row.queue_preview_count,
-        layerOrder: JSON.parse(row.layer_order_json || "[]") as OverlaySceneLayerKind[],
-        disabledLayers: JSON.parse(row.disabled_layers_json || "[]") as OverlaySceneLayerKind[],
-        // Guarded like the named-scenes migration's cast (M85): one unreadable row must not fail every state read.
-        customLayers: parseStoredCustomLayers(row.custom_layers_json),
-        scenes: JSON.parse(row.scenes_json || "[]") as OverlayNamedScene[],
+        // Every JSON column is guarded like the named-scenes migration's cast (M85, M113): one unreadable or
+        // wrongly shaped column reads as an empty one, so a single bad row cannot fail every state read.
+        layerOrder: parseStoredJsonArray(row.layer_order_json) as OverlaySceneLayerKind[],
+        disabledLayers: parseStoredJsonArray(row.disabled_layers_json) as OverlaySceneLayerKind[],
+        customLayers: parseStoredJsonArray(row.custom_layers_json) as OverlaySceneCustomLayer[],
+        scenes: parseStoredJsonArray(row.scenes_json) as OverlayNamedScene[],
         activeSceneId: row.active_scene_id || "",
         // "{}" for every row written before the column existed: no panel placed, everything in the
         // flow, which is the picture those installations already have.
-        panelPlacements: JSON.parse(row.panel_placements_json || "{}") as OverlayScenePanelPlacementMap,
+        panelPlacements: parseStoredJsonObject(row.panel_placements_json) as OverlayScenePanelPlacementMap,
         emergencyBanner: row.emergency_banner,
         tickerText: row.ticker_text,
         tickerRotateSeconds: row.ticker_rotate_seconds,
@@ -1154,12 +1155,21 @@ function mapOverlayRowToRecord(row: OverlaySettingsRow | undefined, fallback: Ov
     : fallback;
 }
 
-function parseStoredCustomLayers(text: string): OverlaySceneCustomLayer[] {
+function parseStoredJsonArray(text: string): unknown[] {
   try {
     const parsed: unknown = JSON.parse(text || "[]");
-    return Array.isArray(parsed) ? (parsed as OverlaySceneCustomLayer[]) : [];
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
+  }
+}
+
+function parseStoredJsonObject(text: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(text || "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
   }
 }
 
@@ -1247,7 +1257,9 @@ function mapOverlayScenePresetRowToRecord(row: OverlayScenePresetRow): OverlaySc
     id: row.id,
     name: row.name,
     description: row.description,
-    overlay: JSON.parse(row.overlay_json || "{}") as OverlaySettingsRecord,
+    // Guarded like the overlay row (M113): one unreadable preset must not fail the whole preset list; it
+    // reads as a preset of the default overlay.
+    overlay: parseStoredJsonObject(row.overlay_json) as Partial<OverlaySettingsRecord> as OverlaySettingsRecord,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   });
