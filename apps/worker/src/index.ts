@@ -342,10 +342,19 @@ import {
   type SceneRenderFont,
   type SceneRenderRequest
 } from "./scene-renderer.js";
-import { execFileText, hasChildExited, runWithStallGuard } from "./process-utils.js";
+import { ExecFileTextError, execFileText, hasChildExited, runWithStallGuard } from "./process-utils.js";
 import { DATABASE_OUTAGE_EXIT_AFTER_MS, DatabaseOutageBudget } from "./database-outage.js";
 import { CycleStepAlertWatch, CycleStepIncidentTracker, runIsolatedCycleSteps, type CycleStep } from "./cycle-steps.js";
 import { fetchWithTimeout } from "./http-timeout.js";
+import { CoalescingWriter, KeyedCoalescingWriter } from "./coalescing-writer.js";
+import {
+  RemoteCallBudget,
+  SOURCE_SYNC_TIMEOUT_BACKOFF_MS,
+  SourceSyncPauses,
+  orderDeferredFirst,
+  sourceSyncPauseKey
+} from "./remote-call-budget.js";
+import { decideSelectionResolveFailure, isPassedOverPoolPick } from "./selection-pass-over.js";
 import {
   TWITCH_REFRESH_REFUSED_ERROR,
   TWITCH_TOKEN_REFRESH_WINDOW_MS,
@@ -482,6 +491,54 @@ let playoutFormatCandidateId = "";
 // programme is the only remote input. With an audio lane or a live PiP any of them may have failed.
 let playoutFormatAttributable = false;
 let playoutLastStderrSample = "";
+// The database writes ffmpeg's stderr fires, one at a time each (M112, coalescing-writer.ts): a noisy
+// input used to queue one write per chunk, exhausted the connection pool and crashed the playout loop.
+// The log line per chunk stays.
+function logStderrWriteFailed(writer: string): (error: unknown) => void {
+  return (error) => {
+    logRuntimeEvent("ffmpeg.stderr.write_failed", {
+      writer,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  };
+}
+const playoutStderrRuntimeWriter = new CoalescingWriter<void>({
+  // Reads the sample when it runs, so the row gets the latest line.
+  write: () =>
+    updatePlayoutRuntime((playout) => ({
+      ...playout,
+      lastStderrSample: playoutLastStderrSample,
+      heartbeatAt: new Date().toISOString()
+    })),
+  onError: logStderrWriteFailed("playout.runtime"),
+  minIntervalMs: 2_000
+});
+const stderrIncidentWriter = new KeyedCoalescingWriter<Parameters<typeof upsertIncident>[0]>(
+  (fingerprint) =>
+    new CoalescingWriter({
+      write: (incident) => upsertIncident(incident),
+      onError: logStderrWriteFailed(`incident.${fingerprint}`),
+      // The uplink resolves the feed incident on every cycle the feed is fresh again; an upsert held back
+      // 10 s would open it once more after that. Only one write at a time for it.
+      minIntervalMs: fingerprint === "program-feed.input" ? 0 : 10_000
+    })
+);
+const stderrDestinationFailureWriter = new KeyedCoalescingWriter<string>(
+  (destinationId) =>
+    new CoalescingWriter({
+      write: (line) => markDestinationFailure(destinationId, line),
+      onError: logStderrWriteFailed("destination")
+    })
+);
+const uplinkFeedStatusWriter = new CoalescingWriter<void>({
+  write: () => updateProgramFeedRuntimeStatus(),
+  onError: (error) => {
+    logRuntimeEvent("program_feed.status.update.failed", {
+      error: error instanceof Error ? error.message : String(error)
+    });
+  },
+  minIntervalMs: 5_000
+});
 let playoutLiveBridgeInputUrl = "";
 let playoutLiveBridgeInputType: LiveBridgeInputType | "" = "";
 // M57 stage 2, Etappe C. Two flags because the renderer and the breaker ask different questions.
@@ -572,6 +629,45 @@ const PLAYABLE_INPUT_RESOLVE_TIMEOUT_MS = (() => {
 // one, so a source host that stopped answering held the worker cycle until the stall guard exited the
 // process. Two minutes covers a 200-entry flat listing; the clamp keeps it under the stall guard.
 const SOURCE_SYNC_YTDLP_TIMEOUT_MS = clampToCycleAwaitCeiling(120_000, process.env).effectiveMs;
+// The timeout is per call, and the syncs walk their sources one by one: three sources on a dead host
+// still took one cycle to the stall guard. A call now starts only when its whole timeout ends before the
+// cycle's deadline, and a source that ran out of its timeout is paused (M112, remote-call-budget.ts);
+// runWorkerCycle starts a new cycle budget.
+let workerRemoteCallBudget = RemoteCallBudget.forCycle(LOOP_STALL_TIMEOUT_MS);
+// Per sync step, the sources the budget had no room for in the last cycle, in the order they were
+// deferred: they go first in the step's next run. Replaced by each run, so a source disabled or removed
+// meanwhile drops out.
+const sourceSyncDeferredIds = new Map<string, ReadonlySet<string>>();
+// True when the Twitch sync's last run deferred sources without starting a single call after the YouTube
+// sync had started one: then the YouTube sync keeps Twitch's call time from its first call on, so the
+// two take turns. A Twitch run that got no call although YouTube started none holds nobody back.
+let twitchSyncHeldBack = false;
+// The calls the YouTube sync started in its last run.
+let youtubeCallsStarted = 0;
+function deferredSourceIdsOf(step: string): ReadonlySet<string> {
+  return sourceSyncDeferredIds.get(step) ?? new Set<string>();
+}
+const sourceSyncPauses = new SourceSyncPauses();
+
+/** A source call that ran out of its timeout: reported as failed as before, and the source is paused. */
+function pauseSourceSyncOnTimeout(source: { id: string; externalUrl?: string }, error: unknown): void {
+  if (error instanceof ExecFileTextError && error.kind === "timeout") {
+    sourceSyncPauses.start(sourceSyncPauseKey(source));
+    logRuntimeEvent("source.sync.paused", { sourceId: source.id, pauseMs: SOURCE_SYNC_TIMEOUT_BACKOFF_MS });
+  }
+}
+
+/** Records which of a sync's sources were deferred this cycle, and says so once per cycle and step. */
+function noteSourceSyncDeferrals(step: string, deferredIds: string[]): void {
+  sourceSyncDeferredIds.set(step, new Set(deferredIds));
+  if (deferredIds.length > 0) {
+    logRuntimeEvent("source.sync.deferred", {
+      step,
+      sourceIds: deferredIds,
+      callTimeoutMs: SOURCE_SYNC_YTDLP_TIMEOUT_MS
+    });
+  }
+}
 // One roster of who is talking, shared by the engagement game and the skip vote, so the count the
 // overlays page prints is the count a skip needs a share of. See active-chatters.ts.
 const activeChatters = new ActiveChatterRoster();
@@ -4338,12 +4434,16 @@ function buildSourceFolderPath(connectorKind: AppState["sources"][number]["conne
   return [connectorKind, safeName || "source"].filter(Boolean).join("/");
 }
 
-async function loadFlatCollection(url: string, connectorKind: FlatListingConnectorKind): Promise<YtDlpPlaylistResponse> {
+async function loadFlatCollection(
+  url: string,
+  connectorKind: FlatListingConnectorKind,
+  timeoutMs: number
+): Promise<YtDlpPlaylistResponse> {
   const ytDlpBinary = process.env.YT_DLP_BIN || "yt-dlp";
   const output = await execFileText(
     ytDlpBinary,
     buildFlatListingArgs({ url, connectorKind, playlistEnd: process.env.SOURCE_SYNC_LIMIT || "200" }),
-    { timeoutMs: SOURCE_SYNC_YTDLP_TIMEOUT_MS, killProcessGroup: true }
+    { timeoutMs, killProcessGroup: true }
   );
   return JSON.parse(output) as YtDlpPlaylistResponse;
 }
@@ -4464,10 +4564,18 @@ async function replaceSyncedSourceAssets(args: {
 async function syncYoutubePlaylistSources(): Promise<void> {
   const state = await readAppState();
   const now = new Date().toISOString();
-  const youtubeSources = state.sources.filter(
+  const enabledYoutubeSources = state.sources.filter(
     (source) =>
       (source.connectorKind === "youtube-playlist" || source.connectorKind === "youtube-channel") && (source.enabled ?? true)
   );
+  // The sources this cycle syncs; one the budget has no room for is left out of everything below (M112).
+  const youtubeSources: typeof enabledYoutubeSources = [];
+  const deferredSourceIds: string[] = [];
+  // When the last cycle deferred a Twitch source, the YouTube sync's calls after its first keep one
+  // call's timeout for it, and its first too when the Twitch sync got no call at all: neither sync can
+  // keep the other waiting for good (remote-call-budget.ts).
+  const twitchSyncWaiting = deferredSourceIdsOf("twitch-sources").size > 0;
+  youtubeCallsStarted = 0;
   const youtubeAssets: AssetRecord[] = [];
   // Per-source throughout — asset replacement, status wording and incident resolution all read
   // this set. A source we learned nothing about must keep its stored assets instead of being wiped
@@ -4478,7 +4586,7 @@ async function syncYoutubePlaylistSources(): Promise<void> {
   const failedSourceIds = new Set<string>();
   const syncRuns: AppState["sourceSyncRuns"] = [];
 
-  for (const source of youtubeSources) {
+  for (const source of orderDeferredFirst(enabledYoutubeSources, deferredSourceIdsOf("youtube-sources"))) {
     const startedAt = new Date().toISOString();
     const externalUrl = source.externalUrl?.trim() ?? "";
     const isValid =
@@ -4486,6 +4594,7 @@ async function syncYoutubePlaylistSources(): Promise<void> {
         ? isLikelyYouTubePlaylistUrl(externalUrl)
         : isLikelyYouTubeChannelUrl(externalUrl);
     if (!isValid) {
+      youtubeSources.push(source);
       failedSourceIds.add(source.id);
       syncRuns.push(buildSourceSyncRun({
         sourceId: source.id,
@@ -4503,10 +4612,25 @@ async function syncYoutubePlaylistSources(): Promise<void> {
       continue;
     }
 
+    if (sourceSyncPauses.isPaused(sourceSyncPauseKey(source))) {
+      continue;
+    }
+    const timeoutMs = workerRemoteCallBudget.fitsWhole(
+      SOURCE_SYNC_YTDLP_TIMEOUT_MS,
+      twitchSyncWaiting && (youtubeCallsStarted > 0 || twitchSyncHeldBack) ? SOURCE_SYNC_YTDLP_TIMEOUT_MS : 0
+    );
+    if (timeoutMs === null) {
+      deferredSourceIds.push(source.id);
+      continue;
+    }
+    youtubeCallsStarted += 1;
+    youtubeSources.push(source);
+
     try {
       const payload = await loadFlatCollection(
         externalUrl,
-        source.connectorKind === "youtube-playlist" ? "youtube-playlist" : "youtube-channel"
+        source.connectorKind === "youtube-playlist" ? "youtube-playlist" : "youtube-channel",
+        timeoutMs
       );
       const entries = payload.entries ?? [];
       let sourceAssetCount = 0;
@@ -4550,6 +4674,7 @@ async function syncYoutubePlaylistSources(): Promise<void> {
         errorMessage: ""
       }));
     } catch (error) {
+      pauseSourceSyncOnTimeout(source, error);
       failedSourceIds.add(source.id);
       const message = error instanceof Error ? error.message : "Unknown YouTube playlist ingestion error.";
       syncRuns.push(buildSourceSyncRun({
@@ -4571,6 +4696,7 @@ async function syncYoutubePlaylistSources(): Promise<void> {
       });
     }
   }
+  noteSourceSyncDeferrals("youtube-sources", deferredSourceIds);
 
   await upsertSources(
     youtubeSources.map((source) => {
@@ -4625,22 +4751,27 @@ async function syncTwitchVodSources(): Promise<void> {
   const ytDlpBinary = process.env.YT_DLP_BIN || "yt-dlp";
   const state = await readAppState();
   const now = new Date().toISOString();
-  const twitchSources = state.sources.filter(
+  const enabledTwitchSources = state.sources.filter(
     (source) => (source.connectorKind === "twitch-vod" || source.connectorKind === "twitch-channel") && (source.enabled ?? true)
   );
+  // The sources this cycle syncs; one the budget has no room for is left out of everything below (M112).
+  const twitchSources: typeof enabledTwitchSources = [];
+  let twitchCallsStarted = 0;
+  const deferredSourceIds: string[] = [];
   const twitchAssets: AssetRecord[] = [];
   // A source whose ingest threw contributed nothing; it must keep its stored assets rather than be
   // wiped by the wholesale replace below. See source-sync-scope.ts.
   const failedSourceIds = new Set<string>();
   const syncRuns: AppState["sourceSyncRuns"] = [];
 
-  for (const source of twitchSources) {
+  for (const source of orderDeferredFirst(enabledTwitchSources, deferredSourceIdsOf("twitch-sources"))) {
     const startedAt = new Date().toISOString();
     const externalUrl = source.externalUrl?.trim() ?? "";
     const isValid =
       source.connectorKind === "twitch-vod" ? isLikelyTwitchVodUrl(externalUrl) : isLikelyTwitchChannelUrl(externalUrl);
     if (!isValid) {
       // A URL that fails validation is not evidence the archive is gone — the stored VODs stay.
+      twitchSources.push(source);
       failedSourceIds.add(source.id);
       syncRuns.push(buildSourceSyncRun({
         sourceId: source.id,
@@ -4668,10 +4799,21 @@ async function syncTwitchVodSources(): Promise<void> {
       continue;
     }
 
+    if (sourceSyncPauses.isPaused(sourceSyncPauseKey(source))) {
+      continue;
+    }
+    const timeoutMs = workerRemoteCallBudget.fitsWhole(SOURCE_SYNC_YTDLP_TIMEOUT_MS);
+    if (timeoutMs === null) {
+      deferredSourceIds.push(source.id);
+      continue;
+    }
+    twitchCallsStarted += 1;
+    twitchSources.push(source);
+
     try {
       if (source.connectorKind === "twitch-vod") {
         const output = await execFileText(ytDlpBinary, ["--dump-single-json", "--no-playlist", externalUrl], {
-          timeoutMs: SOURCE_SYNC_YTDLP_TIMEOUT_MS,
+          timeoutMs,
           killProcessGroup: true
         });
         const payload = JSON.parse(output) as YtDlpVideoResponse;
@@ -4709,7 +4851,7 @@ async function syncTwitchVodSources(): Promise<void> {
           errorMessage: ""
         }));
       } else {
-        const payload = await loadFlatCollection(getTwitchArchiveUrl(externalUrl), "twitch-channel");
+        const payload = await loadFlatCollection(getTwitchArchiveUrl(externalUrl), "twitch-channel", timeoutMs);
         let sourceAssetCount = 0;
         for (const entry of payload.entries ?? []) {
           const id = entry.id ?? "";
@@ -4749,6 +4891,7 @@ async function syncTwitchVodSources(): Promise<void> {
       }
 
     } catch (error) {
+      pauseSourceSyncOnTimeout(source, error);
       const message = error instanceof Error ? error.message : "Unknown Twitch VOD ingestion error.";
       failedSourceIds.add(source.id);
       syncRuns.push(buildSourceSyncRun({
@@ -4770,6 +4913,8 @@ async function syncTwitchVodSources(): Promise<void> {
       });
     }
   }
+  noteSourceSyncDeferrals("twitch-sources", deferredSourceIds);
+  twitchSyncHeldBack = twitchCallsStarted === 0 && deferredSourceIds.length > 0 && youtubeCallsStarted > 0;
 
   await upsertSources(
     twitchSources.map((source) => {
@@ -4857,7 +5002,14 @@ async function backfillAssetChapters(): Promise<void> {
   });
 
   for (const candidate of candidates) {
-    const result = await probeAssetChapters(candidate, config);
+    // Out of the cycle's budget (M112): the rest is probed by a later cycle, nothing is marked. Only a
+    // whole timeout: a cut-short probe that ran out would be stored as failed.
+    const probeTimeoutMs = workerRemoteCallBudget.fitsWhole(config.probeTimeoutMs);
+    if (probeTimeoutMs === null) {
+      logRuntimeEvent("asset.chapters.deferred", { assetIds: candidates.slice(candidates.indexOf(candidate)).map((entry) => entry.assetId) });
+      break;
+    }
+    const result = await probeAssetChapters(candidate, { ...config, probeTimeoutMs });
     const probedAt = new Date().toISOString();
 
     if (result.status === "ok") {
@@ -5112,7 +5264,9 @@ function selectPoolAsset(state: AppState, poolId: string, skippedAssetId: string
     nextPoolRotationAsset({
       pool,
       assets: state.assets,
-      isEligible: (asset) => isPoolAssetEligible(pool, asset, skippedAssetId, removedNextAssetId),
+      // A pick whose resolve failed a moment ago is passed over (M112, selection-pass-over.ts).
+      isEligible: (asset) =>
+        isPoolAssetEligible(pool, asset, skippedAssetId, removedNextAssetId) && !isPassedOverPoolPick(getFreshProbeCache(asset.id)),
       sourceGate: poolSourceGate(state)
     })?.asset ?? null
   );
@@ -5124,7 +5278,9 @@ function selectPoolAsset(state: AppState, poolId: string, skippedAssetId: string
  * `currentStartsPool` says the current asset is the pool pick this cycle stores as the position (a
  * scheduled match that this cycle starts): the queue then walks on from it. For anything else (an insert,
  * a manual next, a live bridge, an item already running that the pool never stored) the stored position
- * stays where it is, and so does the walk, so the queue's first item is what selectPoolAsset picks next.
+ * stays where it is, and so does the walk, so the queue's first item is what selectPoolAsset picks next --
+ * unless that item's resolve failed within the last minute: selectPoolAsset passes it over (M112), the
+ * queue keeps it (the scan skips it as failed) and warms the items after it, the pick among them.
  */
 function getPoolPlaybackQueue(
   state: AppState,
@@ -5164,6 +5320,41 @@ function mediaFromProbe(entry: QueueProbeCacheEntry): ResolvedPlayableMedia {
     formatId: entry.formatId,
     candidateId: entry.candidateId
   };
+}
+
+/**
+ * Writes the failed inline resolve of a schedule pick to the probe cache, as a failed queue probe would
+ * be (M112, selection-pass-over.ts), and returns it for quarantine to count; null when nothing is to be
+ * counted. Already counted: the breaker hears it from recordSelectionResolveOutcome.
+ */
+function recordSelectionResolveFailure(
+  asset: AssetRecord,
+  reasonCode: string,
+  error: unknown
+): QueueProbeOutcome<AssetRecord> | null {
+  const decision = decideSelectionResolveFailure({
+    reasonCode,
+    pendingDownload: error instanceof TwitchVodCachePendingError,
+    cached: getFreshProbeCache(asset.id)
+  });
+  if (decision !== "record") {
+    return null;
+  }
+  const message = (error instanceof Error ? error.message : String(error)).slice(0, 300) || "Unknown playback preparation error.";
+  queueProbeCache.set(asset.id, {
+    status: "failed",
+    checkedAt: Date.now(),
+    resolvedInput: "",
+    resolvedAudioInput: "",
+    formatId: "",
+    candidateId: "",
+    outcomeCounted: true,
+    error: message,
+    pendingDownload: false,
+    assetId: asset.id
+  });
+  logRuntimeEvent("playout.selection.passed_over", { assetId: asset.id, sourceId: asset.sourceId, error: message });
+  return { asset, outcome: "failed", error: message };
 }
 
 function getFreshProbeCache(assetId: string): QueueProbeCacheEntry | null {
@@ -6900,14 +7091,10 @@ async function startOrSwitchPlayout(args: {
       message: playoutLastStderrSample
     });
 
-    void updatePlayoutRuntime((playout) => ({
-      ...playout,
-      lastStderrSample: playoutLastStderrSample,
-      heartbeatAt: new Date().toISOString()
-    }));
+    playoutStderrRuntimeWriter.submit();
 
     if (line.toLowerCase().includes("error")) {
-      void upsertIncident({
+      stderrIncidentWriter.submit("playout.ffmpeg.stderr", {
         scope: "playout",
         severity: "warning",
         title: "FFmpeg reported an error",
@@ -6919,7 +7106,7 @@ async function startOrSwitchPlayout(args: {
     if (isLikelyDestinationOutputError(line)) {
       const destinationIds = matchDestinationFailuresInLog(line, playoutRuntimeTargets);
       for (const destinationId of destinationIds) {
-        void markDestinationFailure(destinationId, line);
+        stderrDestinationFailureWriter.submit(destinationId, line);
       }
     }
   });
@@ -8155,6 +8342,8 @@ async function runPlayoutCycle(): Promise<void> {
   let resolvedSelection: ResolvedPlayableMedia | null = null;
   // The breakers after this cycle's failed inline resolve was recorded (M75), null when nothing was.
   let breakersAfterFailedResolve: SourceBreakerRecord[] | null = null;
+  // The failed inline resolve of this cycle's pick, for quarantine to count with the queue's (M112).
+  const selectionProbeOutcomes: QueueProbeOutcome<AssetRecord>[] = [];
   // A dated block's takeover waits for its pick: the item on air keeps its input (decideTakeoverPrepareFailure).
   let scheduleTakeoverDeferral: { takeover: ScheduleTakeover; pickAssetId: string; pendingDownload: boolean; error: string } | null =
     null;
@@ -8258,6 +8447,11 @@ async function runPlayoutCycle(): Promise<void> {
             prepared = await resolveAssetPlaybackInput(failedAsset);
           } catch (error) {
             breakersAfterFailedResolve = await recordSelectionResolveOutcome(failedAsset, "failed", error);
+            // The pool passes over the pick from the next cycle on, and quarantine counts it (M112).
+            const passedOver = recordSelectionResolveFailure(failedAsset, failedReasonCode, error);
+            if (passedOver) {
+              selectionProbeOutcomes.push(passedOver);
+            }
             // A takeover's pick that cannot be prepared yet leaves the item on air where it is
             // (decideTakeoverPrepareFailure): no recovery plan, and the run before the boundary is recorded
             // below, so the next cycle tries the takeover again while the prefetch warms the pick.
@@ -8661,11 +8855,16 @@ async function runPlayoutCycle(): Promise<void> {
   // below take this one list, so an outage is counted neither per item nor per source. The queue itself
   // is untouched -- an item that could not be prepared is still not in playableQueue.
   const probeOutcomes = await dropNetworkOutageOutcomes(scannedProbeOutcomes, "queue");
+  // The pick's failed inline resolve counts for quarantine too (M112), under the same outage rule; not for
+  // the breaker, which recordSelectionResolveOutcome has told already.
+  const selectionOutcomes = (await dropNetworkOutageOutcomes(selectionProbeOutcomes, "selection")).filter(
+    (selected) => !probeOutcomes.some((probed) => probed.asset.id === selected.asset.id)
+  );
   // The probe is the only place that learns an item cannot be played before it is due on air, so what it
   // learns is written to the asset -- per item, decided by planAssetProbeUpdates, which is a tested
   // function precisely because the first cut of this did it per cycle and lost the failures.
   const probePlan = planAssetProbeUpdates(
-    probeOutcomes.map((probed) => ({
+    [...probeOutcomes, ...selectionOutcomes].map((probed) => ({
       assetId: probed.asset.id,
       sourceId: probed.asset.sourceId,
       title: probed.asset.title,
@@ -9285,23 +9484,19 @@ async function startUplink(group: DestinationRuntimeTargetGroup, managedConfig: 
 
     const feedInputError = inputMode === "hls" && isLikelyProgramFeedInputError(line);
     if (feedInputError) {
-      void upsertIncident({
+      stderrIncidentWriter.submit("program-feed.input", {
         scope: "playout",
         severity: "warning",
         title: "Program feed input stalled",
         message: line.slice(0, 400),
         fingerprint: "program-feed.input"
       });
-      void updateProgramFeedRuntimeStatus().catch((error) => {
-        logRuntimeEvent("program_feed.status.update.failed", {
-          error: error instanceof Error ? error.message : String(error)
-        });
-      });
+      uplinkFeedStatusWriter.submit();
       return;
     }
 
     if (line.toLowerCase().includes("error")) {
-      void upsertIncident({
+      stderrIncidentWriter.submit("uplink.ffmpeg.stderr", {
         scope: "playout",
         severity: "warning",
         title: "Uplink FFmpeg reported an error",
@@ -9313,7 +9508,7 @@ async function startUplink(group: DestinationRuntimeTargetGroup, managedConfig: 
     if (isLikelyDestinationOutputError(line)) {
       const destinationIds = matchDestinationFailuresInLog(line, runtime.runtimeTargets);
       for (const destinationId of destinationIds) {
-        void markDestinationFailure(destinationId, line);
+        stderrDestinationFailureWriter.submit(destinationId, line);
       }
     }
   });
@@ -11211,6 +11406,7 @@ async function closeWorkerCycleStepIncident(step: string): Promise<void> {
 }
 
 async function runWorkerCycle(): Promise<void> {
+  workerRemoteCallBudget = RemoteCallBudget.forCycle(LOOP_STALL_TIMEOUT_MS);
   await runIsolatedCycleSteps(buildWorkerCycleSteps(), {
     onFailure: recordWorkerCycleStepFailure,
     onSuccess: closeWorkerCycleStepIncident

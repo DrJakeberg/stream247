@@ -652,11 +652,17 @@ describe("network outage wiring", () => {
 
   it("feeds quarantine and the breaker from one list, the scan's outcomes minus the outage's", () => {
     const filtered = flatWorker.indexOf('const probeOutcomes = await dropNetworkOutageOutcomes(scannedProbeOutcomes, "queue");');
-    const quarantine = flatWorker.indexOf("const probePlan = planAssetProbeUpdates( probeOutcomes.map((probed) => ({");
+    // The pick's failed inline resolve (M112) passes the same outage filter and joins quarantine's list only.
+    const selected = flatWorker.indexOf(
+      'const selectionOutcomes = (await dropNetworkOutageOutcomes(selectionProbeOutcomes, "selection")).filter( (selected) => !probeOutcomes.some((probed) => probed.asset.id === selected.asset.id) );'
+    );
+    const quarantine = flatWorker.indexOf("const probePlan = planAssetProbeUpdates( [...probeOutcomes, ...selectionOutcomes].map((probed) => ({");
     const breaker = flatWorker.indexOf("heldSources = await applySourceBreakerOutcomes({ state, probeOutcomes, quarantinedBySource });");
     expect(filtered).toBeGreaterThan(-1);
-    expect(quarantine).toBeGreaterThan(filtered);
+    expect(selected).toBeGreaterThan(filtered);
+    expect(quarantine).toBeGreaterThan(selected);
     expect(breaker).toBeGreaterThan(quarantine);
+    expect(flatWorker.match(/selectionOutcomes/g)).toHaveLength(2);
     // The raw scan result is read nowhere else: no counter can take the unfiltered list by mistake.
     expect(flatWorker.match(/scannedProbeOutcomes/g)).toHaveLength(2);
     expect(flatWorker).toContain("probeOutcomes: scannedProbeOutcomes, scannedSourceIds, deferredExpensive } = await getPlayableQueuedAssets(");
