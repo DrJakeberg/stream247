@@ -584,7 +584,8 @@ row; the restart policy
   Viewers may still see those segments on the channel's schedule
 - nothing to do in most cases: the segments stay in the stored list and the next schedule sync, within
   15 minutes, deletes them again (a segment planned again in the meantime is updated, or created anew
-  when Twitch no longer has it); a sync with none left closes the incident. A 2xx or a 404 counts as
+  when Twitch no longer has it); a sync with none left closes the incident (while schedule sync is
+  off or waits for the broadcaster, it stays open). A 2xx or a 404 counts as
   deleted. A segment whose start has passed is dropped after a failed delete and only logged
   (`twitch.schedule.segment.delete_failed`, `kept: false`), as it is no longer an upcoming entry
 - open for hours: check the incident's answer. `status 401` or `403` points to the account that writes
@@ -839,7 +840,8 @@ What counts time counts real time:
   the admin and the worker
 - what is on air then: the default layer order, no disabled layers, no placed panels, and, for an
   unreadable scene list, one scene made from the custom layers. A preset that is not a JSON object
-  applies as the default overlay; one with a field of the wrong type keeps its other fields. Save the overlay again in the studio (or re-save the preset) to write the column anew
+  reads as the default overlay; one with a field of the wrong type is listed with its other fields (applying
+  it can still be refused; save the preset again). Save the overlay again in the studio (or re-save the preset) to write the column anew
 
 ### No playable asset
 

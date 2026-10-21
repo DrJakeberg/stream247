@@ -587,5 +587,5 @@ Sections for milestones in **Open** that need more than their row, appended in m
   same was true before for a segment deleted by hand). A 401 on a delete
   does not trigger the token refresh by itself; the channel and schedule writes of the same cycle do.
 - Not measured: Twitch's real answer to a DELETE of a past segment (the proxy blocks twitch.tv); the
-  code does not depend on it. The DUT check above covers the live path.
+  code does not depend on it. The M113 entry under *DUT checks for the next release candidate* covers the live path.
 - `CHANGELOG.md` is not touched: per `AGENTS.md` the release commit writes its section.
