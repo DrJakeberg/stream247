@@ -70,7 +70,7 @@ OUTSIDE_SUBNET="198.51.100.0/24"
 MEASURE_SECONDS="${STREAM247_BROADCAST_SMOKE_MEASURE_SECONDS:-60}"
 # How long the playout is cut off; the acceptance names 90.
 OUTAGE_SECONDS="${STREAM247_BROADCAST_SMOKE_OUTAGE_SECONDS:-90}"
-# Phases to run, for local iteration: all, path (1 and 2 only) or sources (3 and 4 only).
+# Phases to run, for local iteration: all, path (1, 2 and 5 only) or sources (3 and 4 only).
 PHASES="${STREAM247_BROADCAST_SMOKE_PHASES:-all}"
 
 # Set once this run has put its own .env in the repository root; before that the root .env is the
@@ -249,6 +249,9 @@ stock_rtmp_count() {
 
 wait_for_stock_rtmp_publishing() {
   for _ in $(seq 1 36); do
+    if [ "$(stock_rtmp_count "unable to parse H264 config")" -gt 0 ]; then
+      fail "the stock RTMP server refused the uplink's H.264 header."
+    fi
     if [ "$(stock_rtmp_count "is publishing to path 'live/${STOCK_RTMP_KEY}'")" -gt 0 ]; then
       return 0
     fi
@@ -555,7 +558,9 @@ stock_refused="$(stock_rtmp_count "unable to parse H264 config")"
 stock_read="$(stock_rtmp_read_bytes)"
 log "Stock RTMP server: closed connections ${stock_closed_before} -> ${stock_closed_after} over ${MEASURE_SECONDS}s; refused headers ${stock_refused}; a reader got ${stock_read:-0} bytes in 5 s"
 [ "$stock_refused" = "0" ] || fail "the stock RTMP server refused the uplink's H.264 header."
-[ "$stock_closed_after" = "$stock_closed_before" ] || fail "the uplink's connection to the stock RTMP server closed during the measurement."
+# One reconnect is tolerated: an uplink restart for another reason (a watchdog after a feed hiccup) closes
+# the connection once. The fault this phase exists for closes one a second.
+[ "$stock_closed_after" -le $((stock_closed_before + 1)) ] || fail "the uplink's connection to the stock RTMP server closed $((stock_closed_after - stock_closed_before)) times during the measurement."
 [ "${stock_read:-0}" -gt 0 ] || fail "a reader got nothing back from the stock RTMP server."
 
 log "Phase 5 (mutation): the uplink's encoder and tee options without -flags:v +global_header."
