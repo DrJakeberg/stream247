@@ -142,6 +142,33 @@ describe("CoalescingWriter (M112)", () => {
     expect(calls).toBe(2);
   });
 
+  it("survives an error reporter that throws: no rejection is left unhandled and the next value is written", async () => {
+    const unhandled: unknown[] = [];
+    const listener = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", listener);
+    try {
+      let calls = 0;
+      const writer = new CoalescingWriter<string>({
+        write: async () => {
+          calls += 1;
+          throw new Error("pool exhausted");
+        },
+        onError: () => {
+          throw new Error("logger broke");
+        }
+      });
+      writer.submit("a");
+      await settle();
+      writer.submit("b");
+      await settle();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(calls).toBe(2);
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", listener);
+    }
+  });
+
   it("keeps one writer per key", async () => {
     const written: string[] = [];
     const gates: Array<() => void> = [];
@@ -247,6 +274,10 @@ describe("CoalescingWriter (M112)", () => {
       expect(body).toContain("stderrIncidentWriter.submit(");
       expect(body).toContain("stderrDestinationFailureWriter.submit(destinationId, line)");
     }
+    // The uplink resolves the feed incident on every fresh cycle: its upsert is never held back 10 s.
+    expect(workerSource.replace(/\s+/g, " ")).toContain(
+      'minIntervalMs: fingerprint === "program-feed.input" ? 0 : 10_000'
+    );
     expect(handlers[0]).toContain("playoutStderrRuntimeWriter.submit();");
     expect(handlers[1]).toContain("uplinkFeedStatusWriter.submit();");
   });

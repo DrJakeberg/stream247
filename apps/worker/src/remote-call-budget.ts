@@ -5,36 +5,56 @@
 // that stopped answering still held one cycle for six minutes and the stall guard (five minutes)
 // exited the worker. The chapter backfill's probes add up the same way.
 //
-// A RemoteCallBudget is one deadline for all of them, the cycle-await ceiling after the cycle's start
-// (half the stall budget by default). Three rules keep it from hurting a healthy source:
+// Two deadlines bound them now:
 //
-// - A source call starts only while at least `MIN_REMOTE_CALL_MS` (or its own timeout, if shorter) is
-//   left, and its timeout is cut to what is left. A source the budget has no room for is not synced
-//   this cycle: nothing about it is written, its stored items stay, and it goes first in its sync's
-//   next run (`orderDeferredFirst`).
-// - A call that runs out of a timeout the budget cut short proves nothing about its source: it is
-//   deferred like a source without room, not reported as failed (`classifySourceSyncTimeout`).
-// - A call that runs out of its whole own timeout is a host that does not answer: the failure is
-//   recorded as before, and the source then waits `SOURCE_SYNC_TIMEOUT_BACKOFF_MS` before it is asked
-//   again (`SourceSyncBackoff`). Without that pause a dead host at the head of the YouTube sync took the
-//   budget on every cycle, and the Twitch sync and the chapter probes after it never got any.
+// - Each sync step (the YouTube sync, the Twitch sync) gets one call's timeout from its own start
+//   (`RemoteCallBudget.forStep`): its first call always gets its whole timeout, whatever the steps
+//   before it took, and one step can never take the time of the next.
+// - The whole cycle stops starting calls `CYCLE_REMOTE_RESERVE_MS` before the stall guard
+//   (`RemoteCallBudget.forCycle`), so the steps together, the chapter probes included, cannot reach it.
 //
-// A chapter probe starts only when its whole timeout fits (`fitsWhole`): a cut-short probe that ran out
-// would be stored as a failed probe and wait out the failure cooldown.
+// A call starts only while at least `MIN_REMOTE_CALL_MS` (or its own timeout, if shorter) is left,
+// and gets no more than is left. A source without room is not synced this cycle: nothing about it is
+// written, its stored items stay, and it goes first in its sync's next run (`orderDeferredFirst`).
+//
+// A call that runs out of its time is judged by `SourceSyncTimeouts.settle`:
+// - out of its whole timeout: a host that does not answer. Reported as failed, as before M112, and the
+//   source is left alone for `SOURCE_SYNC_TIMEOUT_BACKOFF_MS`, so a dead host costs one call per pause
+//   instead of one per cycle;
+// - out of a timeout a deadline had cut short: proves nothing, so the source is deferred, not reported,
+//   and goes first next run. Cut short a second time in a row it is reported and paused like a whole
+//   timeout: a source that never gets an answer in the time a cycle has must still show up as failed.
+//
+// A source paused after running out of time is walked last once its pause ends, until it answers
+// (`orderSourcesForSync`): a dead host back from its pause never again holds up the healthy sources.
+//
+// The pause is keyed by the source and its URL: an operator who fixes the URL gets the next run at once.
 
 /** Below this a remote call is not worth starting. */
 export const MIN_REMOTE_CALL_MS = 15_000;
-/** How long a source whose call ran out of its whole timeout is left alone. */
+/** How long a source whose call ran out of its time is left alone. */
 export const SOURCE_SYNC_TIMEOUT_BACKOFF_MS = 10 * 60_000;
+/** What the cycle keeps for everything after its remote calls, below the stall guard. */
+export const CYCLE_REMOTE_RESERVE_MS = 30_000;
 
 export class RemoteCallBudget {
   readonly deadlineMs: number;
 
-  constructor(
-    totalMs: number,
-    private readonly now: () => number = Date.now
+  private constructor(
+    deadlineMs: number,
+    private readonly now: () => number
   ) {
-    this.deadlineMs = now() + Math.max(0, totalMs);
+    this.deadlineMs = deadlineMs;
+  }
+
+  /** The cycle's budget: calls stop `CYCLE_REMOTE_RESERVE_MS` before the stall guard would fire. */
+  static forCycle(stallTimeoutMs: number, now: () => number = Date.now): RemoteCallBudget {
+    return new RemoteCallBudget(now() + Math.max(0, stallTimeoutMs - CYCLE_REMOTE_RESERVE_MS), now);
+  }
+
+  /** One step's budget: `stepMs` from now, never past the cycle's deadline. */
+  forStep(stepMs: number): RemoteCallBudget {
+    return new RemoteCallBudget(Math.min(this.now() + Math.max(0, stepMs), this.deadlineMs), this.now);
   }
 
   remainingMs(): number {
@@ -59,42 +79,84 @@ export class RemoteCallBudget {
   }
 }
 
-/**
- * What a source call's error means for the sync: an ordinary failure, a cut-short timeout (defer the
- * source, report nothing), or a whole timeout (report the failure, then back the source off).
- */
-export function classifySourceSyncTimeout(args: {
-  timedOut: boolean;
-  givenMs: number;
-  requestedMs: number;
-}): "failed" | "deferred" | "backoff" {
-  if (!args.timedOut) {
-    return "failed";
-  }
-  return args.givenMs < args.requestedMs ? "deferred" : "backoff";
-}
+export type SourceSyncTimeoutVerdict =
+  // Not a timeout: an ordinary failure, reported as before.
+  | "failed"
+  // Out of a timeout a deadline cut short, the first time in a row: not synced, not reported.
+  | "deferred"
+  // Out of its whole timeout, or cut short twice in a row: reported as failed, then paused.
+  | "failed-backoff";
 
-/** Sources left alone after a whole timeout, until their pause ends. Process memory only. */
-export class SourceSyncBackoff {
-  private readonly untilMs = new Map<string, number>();
+/** Process memory of the source syncs' timeouts: who is paused, who was cut short last time. */
+export class SourceSyncTimeouts {
+  private readonly pausedUntilMs = new Map<string, number>();
+  private readonly cutShort = new Set<string>();
+  // Paused after running out of time, and has not answered since: walked last.
+  private readonly suspect = new Set<string>();
 
   constructor(private readonly now: () => number = Date.now) {}
 
-  start(sourceId: string, pauseMs = SOURCE_SYNC_TIMEOUT_BACKOFF_MS): void {
-    this.untilMs.set(sourceId, this.now() + pauseMs);
-  }
-
-  isActive(sourceId: string): boolean {
-    const until = this.untilMs.get(sourceId);
+  /** Whether the source (with this URL) is paused after a timeout. */
+  isPaused(key: string): boolean {
+    const until = this.pausedUntilMs.get(key);
     if (until === undefined) {
       return false;
     }
     if (this.now() >= until) {
-      this.untilMs.delete(sourceId);
+      this.pausedUntilMs.delete(key);
       return false;
     }
     return true;
   }
+
+  /** Whether the source was paused after running out of time and has not answered since. */
+  isSuspect(key: string): boolean {
+    return this.suspect.has(key);
+  }
+
+  /** The source's call came back with an answer (a listing or an error that is not a timeout). */
+  answered(key: string): void {
+    this.cutShort.delete(key);
+    this.suspect.delete(key);
+  }
+
+  /** Judges a failed call; starts the pause when the verdict says so. */
+  settle(key: string, args: { timedOut: boolean; givenMs: number; requestedMs: number }): SourceSyncTimeoutVerdict {
+    if (!args.timedOut) {
+      this.answered(key);
+      return "failed";
+    }
+    if (args.givenMs < args.requestedMs && !this.cutShort.has(key)) {
+      this.cutShort.add(key);
+      return "deferred";
+    }
+    this.cutShort.delete(key);
+    this.suspect.add(key);
+    this.pausedUntilMs.set(key, this.now() + SOURCE_SYNC_TIMEOUT_BACKOFF_MS);
+    return "failed-backoff";
+  }
+}
+
+/** The key a source's timeouts are kept under: its id and its URL. */
+export function sourceSyncTimeoutKey(source: { id: string; externalUrl?: string }): string {
+  return `${source.id}\n${source.externalUrl?.trim() ?? ""}`;
+}
+
+/**
+ * The order a sync walks its sources in: the ones the last cycle deferred first, then the rest, and a
+ * source paused after running out of time (a host back from its pause) last, so it never holds a
+ * healthy source up again. Each group keeps the sources' own order.
+ */
+export function orderSourcesForSync<T extends { id: string; externalUrl?: string }>(
+  sources: T[],
+  deferredIds: ReadonlySet<string>,
+  timeouts: SourceSyncTimeouts
+): T[] {
+  const ordered = orderDeferredFirst(sources, deferredIds);
+  return [
+    ...ordered.filter((source) => !timeouts.isSuspect(sourceSyncTimeoutKey(source))),
+    ...ordered.filter((source) => timeouts.isSuspect(sourceSyncTimeoutKey(source)))
+  ];
 }
 
 /**
