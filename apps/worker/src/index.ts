@@ -638,6 +638,9 @@ let workerRemoteCallBudget = RemoteCallBudget.forCycle(LOOP_STALL_TIMEOUT_MS);
 // deferred: they go first in the step's next run. Replaced by each run, so a source disabled or removed
 // meanwhile drops out.
 const sourceSyncDeferredIds = new Map<string, ReadonlySet<string>>();
+// True when the Twitch sync's last run deferred sources without starting a single call: then the
+// YouTube sync keeps Twitch's call time from its first call on, so the two take turns.
+let twitchSyncHeldBack = false;
 function deferredSourceIdsOf(step: string): ReadonlySet<string> {
   return sourceSyncDeferredIds.get(step) ?? new Set<string>();
 }
@@ -4566,7 +4569,8 @@ async function syncYoutubePlaylistSources(): Promise<void> {
   const youtubeSources: typeof enabledYoutubeSources = [];
   const deferredSourceIds: string[] = [];
   // When the last cycle deferred a Twitch source, the YouTube sync's calls after its first keep one
-  // call's timeout for it: neither sync can keep the other waiting for good (remote-call-budget.ts).
+  // call's timeout for it, and its first too when the Twitch sync got no call at all: neither sync can
+  // keep the other waiting for good (remote-call-budget.ts).
   const twitchSyncWaiting = deferredSourceIdsOf("twitch-sources").size > 0;
   let youtubeCallsStarted = 0;
   const youtubeAssets: AssetRecord[] = [];
@@ -4610,7 +4614,7 @@ async function syncYoutubePlaylistSources(): Promise<void> {
     }
     const timeoutMs = workerRemoteCallBudget.fitsWhole(
       SOURCE_SYNC_YTDLP_TIMEOUT_MS,
-      twitchSyncWaiting && youtubeCallsStarted > 0 ? SOURCE_SYNC_YTDLP_TIMEOUT_MS : 0
+      twitchSyncWaiting && (youtubeCallsStarted > 0 || twitchSyncHeldBack) ? SOURCE_SYNC_YTDLP_TIMEOUT_MS : 0
     );
     if (timeoutMs === null) {
       deferredSourceIds.push(source.id);
@@ -4749,6 +4753,7 @@ async function syncTwitchVodSources(): Promise<void> {
   );
   // The sources this cycle syncs; one the budget has no room for is left out of everything below (M112).
   const twitchSources: typeof enabledTwitchSources = [];
+  let twitchCallsStarted = 0;
   const deferredSourceIds: string[] = [];
   const twitchAssets: AssetRecord[] = [];
   // A source whose ingest threw contributed nothing; it must keep its stored assets rather than be
@@ -4799,6 +4804,7 @@ async function syncTwitchVodSources(): Promise<void> {
       deferredSourceIds.push(source.id);
       continue;
     }
+    twitchCallsStarted += 1;
     twitchSources.push(source);
 
     try {
@@ -4905,6 +4911,7 @@ async function syncTwitchVodSources(): Promise<void> {
     }
   }
   noteSourceSyncDeferrals("twitch-sources", deferredSourceIds);
+  twitchSyncHeldBack = twitchCallsStarted === 0 && deferredSourceIds.length > 0;
 
   await upsertSources(
     twitchSources.map((source) => {

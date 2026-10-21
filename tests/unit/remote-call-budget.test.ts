@@ -49,6 +49,7 @@ function runCycles(
   let nowMs = 0;
   const pauses = new SourceSyncPauses(() => nowMs);
   const deferredByStep = new Map<string, ReadonlySet<string>>();
+  let twitchHeldBack = false;
   const results: Cycle[] = [];
   for (let cycle = 0; cycle < cycles; cycle += 1) {
     const startMs = nowMs;
@@ -69,7 +70,7 @@ function runCycles(
         if (options.withBudget && pauses.isPaused(sourceSyncPauseKey(source))) {
           continue;
         }
-        const reserveMs = step === "youtube" && twitchWaiting && callsStarted > 0 ? listingTimeoutMs : 0;
+        const reserveMs = step === "youtube" && twitchWaiting && (callsStarted > 0 || twitchHeldBack) ? listingTimeoutMs : 0;
         const timeoutMs = options.withBudget ? budget.fitsWhole(listingTimeoutMs, reserveMs) : listingTimeoutMs;
         if (timeoutMs === null) {
           deferred.push(source.id);
@@ -88,6 +89,9 @@ function runCycles(
         }
       }
       deferredByStep.set(step, new Set(deferred));
+      if (step === "twitch") {
+        twitchHeldBack = callsStarted === 0 && deferred.length > 0;
+      }
       deferredThisCycle.push(...deferred);
     }
     let chapterProbes = 0;
@@ -199,13 +203,39 @@ describe("the worker cycle's budget for source hosts (M112)", () => {
     }
   });
 
+  for (const [stallMs, beforeMs, answerMs] of [
+    [300_000, 1_000, 119_500],
+    [300_000, 10_000, 115_000],
+    [120_000, 1_000, 40_000]
+  ] as const) {
+    it(`lets Twitch take turns behind a YouTube listing that leaves no room after it (stall ${stallMs / 1000} s, earlier steps ${beforeMs / 1000} s, listing ${answerMs / 1000} s; review of M112)`, () => {
+      const cycles = runCycles([healthy("yt1", answerMs), healthy("yt2", answerMs)], [healthy("tw1")], 30, {
+        withBudget: true,
+        stallMs,
+        beforeMs
+      });
+      for (const cycle of cycles) {
+        expect(cycle.failed).toEqual([]);
+      }
+      expect(longestWait(cycles, "tw1")).toBeLessThanOrEqual(1);
+      expect(longestWait(cycles, "yt1")).toBeLessThanOrEqual(3);
+      expect(longestWait(cycles, "yt2")).toBeLessThanOrEqual(3);
+    });
+  }
+
+  it("lets Twitch take turns behind dead YouTube hosts (review of M112)", () => {
+    const youtube = ["d1", "d2", "d3", "d4", "d5", "d6", "d7"].map((id) => dead(`yt-dead-${id}`));
+    const cycles = runCycles(youtube, [healthy("tw1")], 30, { withBudget: true });
+    expect(longestWait(cycles, "tw1")).toBeLessThanOrEqual(1);
+  });
+
   it("forgets a deferred Twitch source that is disabled: the YouTube sync is not held back by it (review of M112)", () => {
     const youtube = ["yt1", "yt2", "yt3"].map((id) => healthy(id, 50_000));
     const twitch = (cycle: number) => (cycle < 3 ? ["tw1", "tw2", "tw3"].map((id) => healthy(id, 100_000)) : []);
     const cycles = runCycles(youtube, twitch, 12, { withBudget: true });
     // Without Twitch, three 50 s listings fit one cycle.
     for (const cycle of cycles.slice(4)) {
-      expect(cycle.synced).toEqual(["yt1", "yt2", "yt3"]);
+      expect([...cycle.synced].sort()).toEqual(["yt1", "yt2", "yt3"]);
       expect(cycle.deferred).toEqual([]);
     }
   });
@@ -266,14 +296,17 @@ describe("the worker cycle's budget for source hosts (M112)", () => {
     );
     expect(flatWorker).toContain('const twitchSyncWaiting = deferredSourceIdsOf("twitch-sources").size > 0; let youtubeCallsStarted = 0;');
     expect(flatWorker).toContain(
-      "const timeoutMs = workerRemoteCallBudget.fitsWhole( SOURCE_SYNC_YTDLP_TIMEOUT_MS, twitchSyncWaiting && youtubeCallsStarted > 0 ? SOURCE_SYNC_YTDLP_TIMEOUT_MS : 0 ); if (timeoutMs === null) { deferredSourceIds.push(source.id); continue; } youtubeCallsStarted += 1; youtubeSources.push(source);"
+      "const timeoutMs = workerRemoteCallBudget.fitsWhole( SOURCE_SYNC_YTDLP_TIMEOUT_MS, twitchSyncWaiting && (youtubeCallsStarted > 0 || twitchSyncHeldBack) ? SOURCE_SYNC_YTDLP_TIMEOUT_MS : 0 ); if (timeoutMs === null) { deferredSourceIds.push(source.id); continue; } youtubeCallsStarted += 1; youtubeSources.push(source);"
+    );
+    expect(flatWorker).toContain(
+      'noteSourceSyncDeferrals("twitch-sources", deferredSourceIds); twitchSyncHeldBack = twitchCallsStarted === 0 && deferredSourceIds.length > 0;'
     );
     // Each run replaces its step's deferred set, so a disabled or removed source drops out.
     expect(flatWorker).toContain(
       "function noteSourceSyncDeferrals(step: string, deferredIds: string[]): void { sourceSyncDeferredIds.set(step, new Set(deferredIds));"
     );
     expect(flatWorker).toContain(
-      "const timeoutMs = workerRemoteCallBudget.fitsWhole(SOURCE_SYNC_YTDLP_TIMEOUT_MS); if (timeoutMs === null) { deferredSourceIds.push(source.id); continue; } twitchSources.push(source);"
+      "const timeoutMs = workerRemoteCallBudget.fitsWhole(SOURCE_SYNC_YTDLP_TIMEOUT_MS); if (timeoutMs === null) { deferredSourceIds.push(source.id); continue; } twitchCallsStarted += 1; twitchSources.push(source);"
     );
     expect(flatWorker).toContain("const probeTimeoutMs = workerRemoteCallBudget.fitsWhole(config.probeTimeoutMs);");
     expect(flatWorker).toContain("const result = await probeAssetChapters(candidate, { ...config, probeTimeoutMs });");

@@ -16,8 +16,8 @@
 //   this cycle: nothing about it is written, its stored items stay, and it goes first in its sync's next
 //   run (`orderDeferredFirst`).
 // - The YouTube sync runs before the Twitch sync. When the Twitch sync had to defer a source, the YouTube
-//   sync's calls after its first leave one call's timeout for it (`reserveMs`): a heavy YouTube load
-//   cannot keep Twitch waiting for good, and a heavy Twitch load cannot keep YouTube from its first call.
+//   sync's calls after its first leave one call's timeout for it (`reserveMs`), and its first call too
+//   when the Twitch sync got no call at all: under any load of either the two syncs take turns.
 // - A call that runs out of its timeout is a host that does not answer: reported as failed, as before
 //   M112, and the source is then left alone for `SOURCE_SYNC_TIMEOUT_BACKOFF_MS` (`SourceSyncPauses`),
 //   so a dead host costs one call per pause instead of one per cycle. The pause is keyed by the source
