@@ -576,6 +576,21 @@ row; the restart policy
 - review Twitch incidents in `/live?tab=status`; "Reconnect Twitch" means the stored refresh token was
   refused (see *Twitch asks for a reconnect* above)
 
+### Old Twitch schedule segments stay up (since M113)
+
+- the incident `twitch.schedule.delete.failed` (warning, twitch) means Twitch refused or did not answer
+  the delete of one or more segments whose block run is no longer planned (a block deleted, moved or
+  shortened); the message names how many and Twitch's answer (`status 500`, `status 429`, a timeout).
+  Viewers may still see those segments on the channel's schedule
+- nothing to do in most cases: the segments stay in the stored list and the next schedule sync, within
+  15 minutes, deletes them again; a sync with none left closes the incident. A 2xx or a 404 counts as
+  deleted. A segment whose start has passed is dropped after a failed delete and only logged
+  (`twitch.schedule.segment.delete_failed`, `kept: false`), as it is no longer an upcoming entry
+- open for hours: check the incident's answer. `status 401` or `403` points to the account that writes
+  the schedule (see *Twitch sync unhealthy* above); delete the segment by hand in the Twitch creator
+  dashboard under *Schedule* if it must go at once. Before M113 such a segment stayed on Twitch
+  unnoticed
+
 ### A block that runs past midnight (since M88)
 
 A block such as Monday 23:00 for two hours is one block everywhere, although the schedule lists its
@@ -813,6 +828,17 @@ What counts time counts real time:
   to `UTC`, so every block can run hours off until the value is fixed
 - fix the value in the deployment environment (or unset it and let the wizard manage the zone) and
   restart; the next worker cycle closes the incident
+
+### An overlay setting or preset that does not read (since M113)
+
+- every JSON column of the live overlay and the draft (layer order, disabled layers, custom layers,
+  scenes, panel placements) and every stored scene preset is read with a fallback: a column that is not
+  JSON, or JSON of the wrong shape (a hand edit in `psql`, a cut-off restore), reads as an empty column.
+  Before M113 only the custom layers did (M85), and any other such column failed every state read of
+  the admin and the worker
+- what is on air then: the default layer order, no disabled layers, no placed panels, and, for an
+  unreadable scene list, one scene made from the custom layers; an unreadable preset applies as the
+  default overlay. Save the overlay again in the studio (or re-save the preset) to write the column anew
 
 ### No playable asset
 

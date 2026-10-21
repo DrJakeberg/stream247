@@ -237,6 +237,11 @@ import {
   type ScheduledInsertTrigger
 } from "./scheduled-insert.js";
 import { planTwitchScheduleSegments } from "./twitch-schedule-plan.js";
+import {
+  deleteStaleTwitchScheduleSegments,
+  describeKeptTwitchSegments,
+  listComparableTwitchSegmentKeys
+} from "./twitch-schedule-cleanup.js";
 import { decideScheduleTakeover, decideTakeoverPrepareFailure, type ScheduleTakeover } from "./schedule-takeover.js";
 import {
   buildFfmpegOutputTarget,
@@ -10050,6 +10055,10 @@ async function sendAlert(subject: string, message: string): Promise<void> {
   }
 }
 
+// Keys of stale Twitch segments whose delete failed and which the stored list keeps for a retry (M113).
+// In memory on purpose: after a restart the first sync simply runs once more.
+let twitchSegmentsKeptAfterFailedDelete = new Set<string>();
+
 async function syncTwitchSchedule(args: {
   state: AppState;
   accessToken: string;
@@ -10075,7 +10084,10 @@ async function syncTwitchSchedule(args: {
   });
 
   const desiredKeys = plan.segments.map((occurrence) => occurrence.key).sort();
-  const currentKeys = args.state.twitchScheduleSegments.map((segment) => segment.key).sort();
+  const currentKeys = listComparableTwitchSegmentKeys(
+    args.state.twitchScheduleSegments.map((segment) => segment.key),
+    twitchSegmentsKeptAfterFailedDelete
+  ).sort();
   const sameKeys =
     desiredKeys.length === currentKeys.length && desiredKeys.every((entry, index) => entry === currentKeys[index]);
   const lastScheduleSyncAt = args.state.twitch.lastScheduleSyncAt ? new Date(args.state.twitch.lastScheduleSyncAt).getTime() : 0;
@@ -10161,26 +10173,32 @@ async function syncTwitchSchedule(args: {
     await upsertTwitchScheduleSegment(syncedSegment);
   }
 
-  for (const staleSegment of args.state.twitchScheduleSegments) {
-    if (desiredKeys.includes(staleSegment.key)) {
-      continue;
-    }
-
-    await fetchWithTimeout(
-      `https://api.twitch.tv/helix/schedule/segment?broadcaster_id=${encodeURIComponent(
-        args.broadcasterId
-      )}&id=${encodeURIComponent(staleSegment.segmentId)}`,
-      {
-        method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${args.accessToken}`,
-          "Client-Id": args.clientId
+  const staleCleanup = await deleteStaleTwitchScheduleSegments({
+    stale: args.state.twitchScheduleSegments.filter((segment) => !desiredKeys.includes(segment.key)),
+    now: new Date(),
+    deleteSegment: async (staleSegment) => {
+      const response = await fetchWithTimeout(
+        `https://api.twitch.tv/helix/schedule/segment?broadcaster_id=${encodeURIComponent(
+          args.broadcasterId
+        )}&id=${encodeURIComponent(staleSegment.segmentId)}`,
+        {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${args.accessToken}`,
+            "Client-Id": args.clientId
+          }
         }
-      }
-    );
+      );
+      return { status: response.status };
+    }
+  });
+  for (const failure of staleCleanup.failures) {
+    logRuntimeEvent("twitch.schedule.segment.delete_failed", { ...failure });
   }
 
-  await replaceTwitchScheduleSegments(nextSegments);
+  // A segment Twitch did not delete stays in the stored list, so a later sync tries again (M113).
+  await replaceTwitchScheduleSegments([...nextSegments, ...staleCleanup.kept]);
+  twitchSegmentsKeptAfterFailedDelete = new Set(staleCleanup.kept.map((segment) => segment.key));
   await updateTwitchConnectionRecord({
     ...args.state.twitch,
     lastScheduleSyncAt: new Date().toISOString(),
@@ -10197,6 +10215,18 @@ async function syncTwitchSchedule(args: {
     });
   } else {
     await resolveIncident("twitch.schedule.duration.skipped", "All schedule blocks fit Twitch schedule duration limits.");
+  }
+
+  if (staleCleanup.kept.length > 0) {
+    await upsertIncident({
+      scope: "twitch",
+      severity: "warning",
+      title: "Old Twitch schedule segments were not deleted",
+      message: describeKeptTwitchSegments(staleCleanup.failures),
+      fingerprint: "twitch.schedule.delete.failed"
+    });
+  } else {
+    await resolveIncident("twitch.schedule.delete.failed", "Twitch deleted every old schedule segment.");
   }
 }
 

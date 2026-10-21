@@ -310,6 +310,13 @@ const STATE_FAMILIES: IncidentFamily[] = [
     why: "Schedule blocks stay unpublishable while they exceed the duration limit; shortening them closes it."
   },
   {
+    fingerprint: "twitch.schedule.delete.failed",
+    keyed: false,
+    kind: "state",
+    area: "twitch",
+    why: "Old segments stay on the channel's Twitch schedule while Twitch refuses or does not answer their delete; a sync with no such segment left closes it (M113)."
+  },
+  {
     fingerprint: "twitch.eventsub.sync.failed",
     keyed: false,
     kind: "state",
