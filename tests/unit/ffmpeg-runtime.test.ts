@@ -389,6 +389,8 @@ describe("ffmpeg runtime helpers", () => {
       "0:v:0",
       "-map",
       "0:a:0?",
+      "-flags:v",
+      "+global_header",
       "-f",
       "tee",
       `[${teeRecoveryOptions}]rtmp://live.twitch.tv/app/key`

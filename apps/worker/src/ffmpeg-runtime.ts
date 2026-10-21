@@ -179,7 +179,24 @@ export function buildProgramFeedOutputTarget(config: ProgramFeedConfig, runId: s
   };
 }
 
-export function appendFfmpegOutputArgs(command: string[], outputTarget: FfmpegOutputTarget): void {
+/**
+ * WHY TEE OUTPUTS ASK THE ENCODER FOR A GLOBAL HEADER (M115). The flv muxer asks for one itself, but
+ * behind `tee` the encoder is opened for the tee muxer, which does not, so libx264 puts SPS/PPS only
+ * in-band and each flv output starts with an empty AVC sequence header. Twitch takes that; a stock RTMP
+ * server does not: MediaMTX 1.15.4 closes the connection ("unable to parse H264 config: invalid size 1"),
+ * and every reconnect of the fifo after it ends in `extract_extradata: A non-NULL packet sent after an
+ * EOF`, so nothing is published again (measured 2026-10-21 with ffmpeg 6.1: 34 connections in 30 s, the
+ * path never ready; with the flag one connection, 4.7 MB in 30 s, and a server restart reconnected).
+ * A stream copy takes the input's header and has no encoder to ask, so it passes `streamCopy`.
+ */
+export function appendFfmpegOutputArgs(
+  command: string[],
+  outputTarget: FfmpegOutputTarget,
+  options: { streamCopy?: boolean } = {}
+): void {
+  if (outputTarget.muxer === "tee" && !options.streamCopy) {
+    command.push("-flags:v", "+global_header");
+  }
   command.push(...(outputTarget.outputArgs ?? []), "-f", outputTarget.muxer, outputTarget.output);
 }
 
@@ -819,7 +836,7 @@ export function buildUplinkFfmpegCommand(
     if (outputTarget.muxer === "tee") {
       appendTeeStreamMaps(command);
     }
-    appendFfmpegOutputArgs(command, outputTarget);
+    appendFfmpegOutputArgs(command, outputTarget, { streamCopy: true });
     return command;
   }
 
