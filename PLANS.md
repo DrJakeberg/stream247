@@ -420,7 +420,7 @@ Sections for milestones in **Open** that need more than their row, appended in m
   (counted, followed at the next); a daemon restart (one line, `dockerRestarts=1`); one container started
   again (`containersStartedAgain=1`); the 2026-10-18 replay with `--follow-web` (no outage, both lines).
   All seven fail against the script of `2ee0866`. Three more with a docker stub that hangs from the second
-  sample on (`SOAK_DOCKER_TIMEOUT_SECONDS=1`): `--follow-web` keeps sampling and ends `outage-exceeded` at
+  sample on (`SOAK_DOCKER_TIMEOUT_SECONDS=0.2`): `--follow-web` keeps sampling and ends `outage-exceeded` at
   360 s (one bounded lookup per refused sample, then the closing read); an explicit `CHECK_BASE_URL` asks
   docker nothing during the outage (only the five closing calls); the 2026-10-18 run as it ran (old address
   in `CHECK_BASE_URL`) logs `docker-daemon-restart` right above `outage-exceeded`. Against the first draft
@@ -432,3 +432,13 @@ Sections for milestones in **Open** that need more than their row, appended in m
   monitor's `curl` calls still have no timeout of their own (unchanged). The docker timeout is tested with
   a hanging stub only, not against a stopped socket-activated `dockerd`. The first `--follow-web` soak is
   under *DUT checks for the next release candidate*.
+- Merge PR (2026-10-21): the unit run exited 1 with every test green, `[vitest-worker]: Timeout calling
+  "onTaskUpdate"` (CI job 118956625641, and twice in the cloud). The root-env lock's poll and hand-over pause
+  used `Atomics.wait`, so release-readiness kept its worker's event loop blocked for its whole synchronous
+  run (about 160 s alone); both release test files now wait on timers. 51 tests unchanged, no error line.
+- Follow-up (#36, 2026-10-21): the timers kept the 60-ms pause after a release, which does not stop
+  release-readiness from taking the lock again before release-preflight's next poll; release-preflight then
+  waits out the other file (about 30-40 s under the full suite, a failure once that file passes the 120-s
+  deadline). Both files now use one lock, `tests/unit/root-env-lock.ts`: it waits on timers, a waiter
+  announces itself, and a release lets an announced live waiter take the lock first. Both files together
+  pass normally and on one CPU with release-preflight under 1 s.
