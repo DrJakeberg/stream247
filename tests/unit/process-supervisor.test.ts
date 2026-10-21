@@ -1,5 +1,6 @@
 import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { fork } from "node:child_process";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -20,15 +21,13 @@ const read = (file: string) => readFileSync(path.join(process.cwd(), file), "utf
 // first argument says.
 const CHILD = `
 const behaviour = process.argv[2];
-const beat = () => process.send && process.send(${JSON.stringify(SUPERVISOR_HEARTBEAT_MESSAGE)});
+const beat = () => behaviour !== "silent" && process.send(${JSON.stringify(SUPERVISOR_HEARTBEAT_MESSAGE)});
 beat();
 setInterval(beat, 20);
 if (behaviour === "block") {
   setTimeout(() => { for (;;) {} }, 150);
 } else if (behaviour === "exit3") {
   setTimeout(() => process.exit(3), 900);
-} else if (behaviour === "silent") {
-  process.send = undefined;
 }
 `;
 
@@ -88,6 +87,39 @@ describe("a frozen process restarts (M114, owner's choice A)", () => {
     writeFileSync(markerPath, "not json");
     expect(takeFrozenMarker(markerPath)).toBeNull();
     expect(existsSync(markerPath)).toBe(false);
+  });
+
+  // The children below import the real module; Node 22 runs it by stripping its types.
+  function realHeartbeatChild(body: string): string {
+    const file = path.join(mkdtempSync(path.join(tmpdir(), "m114-real-")), "real.mjs");
+    const source = path.join(process.cwd(), "apps/worker/src/process-supervisor.ts");
+    writeFileSync(
+      file,
+      `import { startSupervisorHeartbeat } from ${JSON.stringify(source)};
+process.on("uncaughtException", () => process.exit(9));
+${body}`
+    );
+    return file;
+  }
+
+  it("the real heartbeat keeps a supervised child alive", async () => {
+    const file = realHeartbeatChild(`startSupervisorHeartbeat(process.env, 20);
+setInterval(() => {}, 1000);
+setTimeout(() => process.exit(4), 900);`);
+    const code = await new Promise<number>((resolve) => {
+      runSupervisor({ childScript: file, args: [], mode: "worker", frozenAfterMs: 300, checkIntervalMs: 25, onExit: resolve });
+    });
+    expect(code).toBe(4);
+  });
+
+  it("a closed channel does not crash the child", async () => {
+    const file = realHeartbeatChild(`startSupervisorHeartbeat(process.env, 20);
+setInterval(() => {}, 1000);
+setTimeout(() => process.disconnect(), 100);
+setTimeout(() => process.exit(4), 400);`);
+    const child = fork(file, [], { env: { ...process.env, STREAM247_SUPERVISED: "1" }, stdio: ["ignore", "ignore", "ignore", "ipc"] });
+    const code = await new Promise<number | null>((resolve) => child.on("exit", (exitCode) => resolve(exitCode)));
+    expect(code).toBe(4);
   });
 
   it("sends no heartbeat without a supervisor", () => {

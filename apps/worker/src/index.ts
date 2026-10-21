@@ -258,7 +258,7 @@ import {
 import { logRuntimeEvent } from "./runtime-log.js";
 import { decideHealthcheck } from "./healthcheck.js";
 import { HealthSelfRestartWatch, HEALTH_SELF_RESTART_AFTER_MS, selfRestartReason } from "./health-self-restart.js";
-import { frozenMarkerPath, startSupervisorHeartbeat, takeFrozenMarker } from "./process-supervisor.js";
+import { clearFrozenMarker, frozenMarkerPath, readFrozenMarker, startSupervisorHeartbeat } from "./process-supervisor.js";
 import {
   RELAY_UNREACHABLE_FINGERPRINT,
   RelayWatch,
@@ -11580,8 +11580,10 @@ async function enforceHealthSelfRestart(mode: RuntimeMode, watch: HealthSelfRest
 
 /** M114: the supervisor killed the previous process for not answering; say so once. */
 async function reportFrozenRestart(mode: RuntimeMode): Promise<void> {
-  const marker = takeFrozenMarker(frozenMarkerPath(mode));
+  const markerPath = frozenMarkerPath(mode);
+  const marker = readFrozenMarker(markerPath);
   if (marker === null) {
+    clearFrozenMarker(markerPath);
     return;
   }
   logRuntimeEvent("worker.health.frozen_restart", { mode, silentForMs: marker.silentForMs, killedAt: marker.killedAt });
@@ -11593,8 +11595,9 @@ async function reportFrozenRestart(mode: RuntimeMode): Promise<void> {
       message: `The ${mode} process sent no sign of life for ${Math.round(marker.silentForMs / 1000)}s (a blocked or stopped process), so its supervisor ended it at ${marker.killedAt} and Docker started it again.`,
       fingerprint: `${mode}.health.frozen-restart`
     });
+    clearFrozenMarker(markerPath);
   } catch {
-    // Best-effort: the restart already happened; the log line above records it.
+    // The database is not there yet: the marker stays, and the next start of this process reports it.
   }
 }
 

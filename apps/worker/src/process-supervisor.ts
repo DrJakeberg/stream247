@@ -35,12 +35,12 @@ export type FrozenVerdict = { frozen: boolean; silentForMs: number };
  */
 export class FrozenChildWatch {
   private lastBeatMs: number;
+  private readonly frozenAfterMs: number;
 
-  constructor(
-    startedAtMs: number,
-    private readonly frozenAfterMs: number = FROZEN_AFTER_MS
-  ) {
+  // Plain fields, no parameter properties: the supervisor test runs this file under Node's type stripping.
+  constructor(startedAtMs: number, frozenAfterMs: number = FROZEN_AFTER_MS) {
     this.lastBeatMs = startedAtMs;
+    this.frozenAfterMs = frozenAfterMs;
   }
 
   beat(nowMs: number): void {
@@ -82,15 +82,26 @@ export function writeFrozenMarker(markerPath: string, marker: FrozenRestartMarke
   }
 }
 
+/** Removes the marker once its incident is written. */
+export function clearFrozenMarker(markerPath: string): void {
+  rmSync(markerPath, { force: true });
+}
+
 /** Reads and removes the marker; null when there is none or it does not read. */
 export function takeFrozenMarker(markerPath: string): FrozenRestartMarker | null {
+  const marker = readFrozenMarker(markerPath);
+  clearFrozenMarker(markerPath);
+  return marker;
+}
+
+/** Reads the marker without removing it; null when there is none or it does not read. */
+export function readFrozenMarker(markerPath: string): FrozenRestartMarker | null {
   let raw: string;
   try {
     raw = readFileSync(markerPath, "utf8");
   } catch {
     return null;
   }
-  rmSync(markerPath, { force: true });
   try {
     const parsed = JSON.parse(raw) as Partial<FrozenRestartMarker>;
     if (typeof parsed.mode !== "string" || typeof parsed.silentForMs !== "number" || typeof parsed.killedAt !== "string") {
@@ -115,11 +126,13 @@ export function startSupervisorHeartbeat(
     return null;
   }
   const send = () => {
-    try {
-      process.send?.(SUPERVISOR_HEARTBEAT_MESSAGE);
-    } catch {
-      // The channel is gone: the supervisor ended, and this process ends with the container.
+    // Without a callback a closed channel is reported as an 'error' event on `process`, which would
+    // reach the uncaught-exception handler; the callback takes it instead. A closed channel means the
+    // supervisor ended, and in a container this process ends with it.
+    if (!process.connected) {
+      return;
     }
+    process.send?.(SUPERVISOR_HEARTBEAT_MESSAGE, undefined, {}, () => undefined);
   };
   send();
   const timer = setInterval(send, intervalMs);
@@ -159,7 +172,7 @@ export function runSupervisor(options: SupervisorOptions): ChildProcess {
   let killedFrozen = false;
   let timer: NodeJS.Timeout | undefined;
   // `docker stop` signals PID 1 (tini), which passes it to the supervisor: hand it on and end with
-  // the child, so its own shutdown path runs as before.
+  // the child, which ends on it as it did when it was PID 1's child itself.
   const forwarded: NodeJS.Signals[] = ["SIGTERM", "SIGINT", "SIGHUP"];
   const forward = (signal: NodeJS.Signals) => {
     child.kill(signal);
