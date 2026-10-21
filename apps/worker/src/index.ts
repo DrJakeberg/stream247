@@ -10125,21 +10125,31 @@ async function syncTwitchSchedule(args: {
       requestBody.category_id = category.id;
     }
 
-    const endpoint = existingSegment
-      ? `https://api.twitch.tv/helix/schedule/segment?broadcaster_id=${encodeURIComponent(
-          args.broadcasterId
-        )}&id=${encodeURIComponent(existingSegment.segmentId)}`
-      : `https://api.twitch.tv/helix/schedule/segment?broadcaster_id=${encodeURIComponent(args.broadcasterId)}`;
+    const writeSegment = (segmentId: string | undefined) =>
+      fetchWithTimeout(
+        segmentId
+          ? `https://api.twitch.tv/helix/schedule/segment?broadcaster_id=${encodeURIComponent(
+              args.broadcasterId
+            )}&id=${encodeURIComponent(segmentId)}`
+          : `https://api.twitch.tv/helix/schedule/segment?broadcaster_id=${encodeURIComponent(args.broadcasterId)}`,
+        {
+          method: segmentId ? "PATCH" : "POST",
+          headers: {
+            Authorization: `Bearer ${args.accessToken}`,
+            "Client-Id": args.clientId,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(requestBody)
+        }
+      );
 
-    const response = await fetchWithTimeout(endpoint, {
-      method: existingSegment ? "PATCH" : "POST",
-      headers: {
-        Authorization: `Bearer ${args.accessToken}`,
-        "Client-Id": args.clientId,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(requestBody)
-    });
+    let response = await writeSegment(existingSegment?.segmentId);
+    // The stored segment is no longer on Twitch: deleted by hand, or a delete Twitch carried out but did
+    // not confirm, whose record was kept for a retry and is planned again now (M113). Create it anew
+    // instead of failing every sync on the same 404.
+    if (existingSegment && response.status === 404) {
+      response = await writeSegment(undefined);
+    }
 
     if (!response.ok) {
       if (response.status === 403) {

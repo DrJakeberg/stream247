@@ -162,7 +162,7 @@ describe("C2/B1: the Twitch schedule plan", () => {
     const sync = worker.slice(worker.indexOf("async function syncTwitchSchedule("), worker.indexOf("await replaceTwitchScheduleSegments([...nextSegments"));
     expect(sync).toContain("planTwitchScheduleSegments({");
     const loop = sync.slice(sync.indexOf("for (const occurrence of plan.segments)"));
-    expect(loop.indexOf("await upsertTwitchScheduleSegment(syncedSegment);")).toBeGreaterThan(loop.indexOf("const response = await fetchWithTimeout("));
+    expect(loop.indexOf("await upsertTwitchScheduleSegment(syncedSegment);")).toBeGreaterThan(loop.indexOf("let response = await writeSegment("));
     // Inside the loop body: the upsert comes before the loop closes and the stale pass begins.
     expect(loop.indexOf("const staleCleanup = await deleteStaleTwitchScheduleSegments({")).toBeGreaterThan(0);
     expect(loop.indexOf("await upsertTwitchScheduleSegment(syncedSegment);")).toBeLessThan(

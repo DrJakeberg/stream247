@@ -130,6 +130,14 @@ describe("M113: the worker's schedule sync uses the answer", () => {
     expect(sync).toContain('logRuntimeEvent("twitch.schedule.segment.delete_failed"');
   });
 
+  it("creates a planned segment anew when Twitch no longer has the stored one", () => {
+    // A kept segment whose delete Twitch carried out without confirming it can be planned again; its
+    // PATCH then answers 404, which must not fail every later sync.
+    expect(sync).toContain("let response = await writeSegment(existingSegment?.segmentId);");
+    expect(sync).toMatch(/if \(existingSegment && response\.status === 404\) \{\s*response = await writeSegment\(undefined\);/);
+    expect(sync.indexOf("response = await writeSegment(undefined);")).toBeLessThan(sync.indexOf("if (!response.ok) {"));
+  });
+
   it("compares the plan with the stored keys minus the kept ones", () => {
     expect(sync).toMatch(
       /const currentKeys = listComparableTwitchSegmentKeys\(\s*args\.state\.twitchScheduleSegments\.map\(\(segment\) => segment\.key\),\s*twitchSegmentsKeptAfterFailedDelete\s*\)\.sort\(\);/

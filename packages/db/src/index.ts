@@ -1025,6 +1025,7 @@ function normalizeOverlaySettingsRecord(overlay: OverlaySettingsRecord): Overlay
   // and never mentions a scene -- the chat game's own layer provisioning does it through
   // updateAppState -- and re-projecting here threw those edits away inside the same transaction.
   const scenes = foldCustomLayersIntoActiveScene(storedScenes, activeSceneId, overlay.customLayers);
+  const storedDisabledLayers: unknown[] = Array.isArray(overlay.disabledLayers) ? overlay.disabledLayers : [];
   return {
     ...defaults,
     ...overlay,
@@ -1046,9 +1047,8 @@ function normalizeOverlaySettingsRecord(overlay: OverlaySettingsRecord): Overlay
     typographyPreset: normalizeOverlayTypographyPreset(String(overlay.typographyPreset ?? defaults.typographyPreset)),
     queuePreviewCount: Math.max(1, Math.min(5, Number(overlay.queuePreviewCount ?? defaults.queuePreviewCount) || defaults.queuePreviewCount)),
     layerOrder: normalizeOverlaySceneLayerOrder(overlay.layerOrder ?? defaults.layerOrder),
-    disabledLayers: normalizeOverlaySceneLayerOrder(overlay.disabledLayers ?? []).filter((kind) =>
-      (overlay.disabledLayers ?? []).includes(kind)
-    ),
+    // A stored preset is parsed JSON and may hold anything here; only a list can disable layers (M113).
+    disabledLayers: normalizeOverlaySceneLayerOrder(storedDisabledLayers).filter((kind) => storedDisabledLayers.includes(kind)),
     scenes,
     activeSceneId,
     customLayers: resolveOverlayNamedSceneCustomLayers(scenes, activeSceneId),
