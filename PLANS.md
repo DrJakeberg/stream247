@@ -23,9 +23,11 @@ How this file works:
 | Milestone | Type | Priority | Status | Goal | Acceptance | Touched Areas | Risk | Rollback |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | M111 The Soak Monitor Follows The Web Container | Ops | Now | Complete | The soak monitor measures the `web` container where it is now and notices a Docker daemon restart (owner decision 2026-10-20: "ja, mach den Soak-Monitor robuster"; on 2026-10-18 a daemon restart moved `web` from `172.22.0.7` to `.5`, the soak asked the old address for 6 min and ended `outage-exceeded` although the channel was on air again 16 s later) | `--follow-web` takes the readiness URL from `web`'s address on the stack network (`docker compose ps -q web`, `docker inspect`, the project's network first), reads it again on a refused connection (curl 7) and, when it moved, logs one `web-address-changed old=… new=…` line and takes the sample there; no `web` at the start stops with a clear message; an explicit `CHECK_BASE_URL` keeps today's behaviour and is never looked up; every docker call is bounded (`SOAK_DOCKER_TIMEOUT_SECONDS`, 10 s), so a daemon that does not answer cannot hold the samples back and a long off-air time with `dockerd` down still ends `outage-exceeded`; every service's `State.StartedAt` is read after each healthy sample and once more when an outage ends the soak, never while one runs, a move of all is logged as `docker-daemon-restart startedAt=…`, of some as `container-started-again`, neither fails the soak by itself, both are counted in the completion line (`dockerRestarts=N containersStartedAgain=N`); script tests for these cases fail without the change; step 10 of *Safe Upgrade Flow* uses `--follow-web` and a log name with seconds | scripts (soak monitor), tests, docs (deployment, README), `AGENTS.md` soak line | low: an ops script only; the start-time read adds five `docker compose ps` and five `docker inspect` calls per healthy sample, each bounded | revert the merge; a soak started with `--follow-web` is started again with `CHECK_BASE_URL=http://<web address>:3000` |
+| M112 A Broken Source Neither Crashes Nor Stalls The Loop | Reliability | Now | Complete | Suggestions 1, 2 and 3 of `planning/suggestions-2026-10-04.md` (owner's go 2026-10-20 23:55 UTC: "Nichts zurückhalten, kann alles nach seinen tests auf main"): a noisy ffmpeg no longer exhausts the connection pool (M98 follow-up 2), a pool no longer stays on a pick that cannot be prepared (M98 follow-up 1), sources on a dead host no longer hold the worker cycle until the stall guard (M87 limit) | `pnpm exec vitest run tests/unit/coalescing-writer.test.ts tests/unit/selection-pass-over.test.ts tests/unit/remote-call-budget.test.ts` green: (1) a burst of 400 stderr lines with two per-line writes exhausts a 10-connection model pool (> 100 "timeout exceeded when trying to connect"), the same burst through `CoalescingWriter` gives 0 and leaves a connection to the cycle; the two stderr handlers of `index.ts` call no `updatePlayoutRuntime(`, `upsertIncident(`, `markDestinationFailure(` or `updateProgramFeedRuntimeStatus(` directly; (2) three broken items of one source, every resolve failing, 15 s cycles: without the pass-over the pool picks the first for 17 cycles and the breaker holds one item, with it the picks are the three items and then the fallback, the breaker open with three items; the failed pick is written to the probe cache as counted and joins quarantine's list after the outage filter (pins in `selection-pass-over.test.ts`, `probe-network-outage.test.ts`, `source-breaker-wiring.test.ts`); (3) three dead-host sources and a healthy one: without the budget one cycle waits > 300 s, with it ≤ 150 s, the rest deferred and synced first in the next cycle; both syncs and the chapter backfill take their timeouts from the one per-cycle budget | `apps/worker` (`coalescing-writer.ts`, `selection-pass-over.ts`, `remote-call-budget.ts`, `index.ts`), tests, `docs/operations.md` | low: the stderr sample and incidents in the database lag a burst by up to 2 s / 10 s (the container log keeps every line); a pool item whose probe failed in the last minute loses its turn in this pass of the rotation; a source deferred by the budget is synced one cycle (30 s) later | revert the merge |
 
-Waiting for the owner: the findings outside the milestones in `planning/suggestions-2026-10-04.md`
-(nobody starts one before the owner names its number), and for M86 the confirmation that only cycles
+The findings outside the milestones in `planning/suggestions-2026-10-04.md` are taken in their order, one
+milestone at a time, since the owner's go of 2026-10-20 23:55 UTC (1-3: M112; 26 and 27 only the owner
+can do). Waiting for the owner: for M86 the confirmation that only cycles
 in which the database cannot be reached count towards the five-minute exit (recommended: keep it so;
 *Decision* in the M86 notes, `planning/archive/plans-m84-m109.md`).
 
@@ -356,6 +358,18 @@ entries under its *DUT checks of 2.3.1 (run)*; the M107 entry below did not run 
   ssh dut 'docker inspect -f "{{range \$k, \$v := .NetworkSettings.Networks}}{{\$k}}={{\$v.IPAddress}} {{end}}" stream247-web-1'
   ```
 
+- M112, on the candidate's first day on air: no `worker.loop.crashed` and no `worker.unhandled_rejection`
+  in the playout and uplink logs; any `ffmpeg.stderr.write_failed`, `source.sync.deferred` or
+  `playout.selection.passed_over` line is listed with its time in the result (none is expected on a
+  healthy day; a `passed_over` names an item whose resolve failed, which the incident list should name
+  too). Passes when the first two counts are 0.
+
+  ```sh
+  ssh dut 'docker logs --since 24h stream247-playout-1 2>&1 | grep -cE "worker.loop.crashed|worker.unhandled_rejection"'
+  ssh dut 'docker logs --since 24h stream247-uplink-1 2>&1 | grep -cE "worker.loop.crashed|worker.unhandled_rejection"'
+  ssh dut 'for c in playout uplink worker; do docker logs --since 24h stream247-$c-1 2>&1 | grep -E "ffmpeg.stderr.write_failed|source.sync.deferred|playout.selection.passed_over|asset.chapters.deferred"; done'
+  ```
+
 - The checks of 2.2.0-rc.1 are in the archive, sections M75-M82. That candidate never reached the DUT, so
   the 2.3.0 candidate runs them too.
 
@@ -436,3 +450,60 @@ Sections for milestones in **Open** that need more than their row, appended in m
   "onTaskUpdate"` (CI job 118956625641, and twice in the cloud). The root-env lock's poll and hand-over pause
   used `Atomics.wait`, so release-readiness kept its worker's event loop blocked for its whole synchronous
   run (about 160 s alone); both release test files now wait on timers. 51 tests unchanged, no error line.
+
+### M112 A Broken Source Neither Crashes Nor Stalls The Loop
+
+- Checked against `main` at `abc4676` first: none of the three was fixed by M105-M111.
+  `planning/review-2026-10-05.md` has no entry for them; at `abc4676` the playout's stderr handler still
+  fired `void updatePlayoutRuntime(` and `void upsertIncident(` per chunk (`apps/worker/src/index.ts`,
+  the handler after the M105 comment on listeners), `selectPoolAsset` knew no failed pick, and the two
+  source syncs passed `SOURCE_SYNC_YTDLP_TIMEOUT_MS` to every call.
+- **1, the noisy ffmpeg (M98 follow-up 2).** Each stderr chunk of the playout fired a runtime write
+  (`updatePlayoutRuntime`: a whole state read under the state write lock), each line with "error" an
+  incident upsert, each output error a destination write (`markDestinationFailure`, another whole state
+  read); the uplink the same minus the runtime write, plus a feed-status write per feed input error. All
+  unawaited. `CoalescingWriter` (`apps/worker/src/coalescing-writer.ts`) keeps one write in flight per
+  kind and keeps only the latest value meanwhile; the first of a burst is written at once (an incident
+  opens on its first line), the last always. Intervals: runtime sample 2 s, each stderr incident 10 s
+  (keyed by fingerprint: `playout.ffmpeg.stderr`, `uplink.ffmpeg.stderr`, `program-feed.input`),
+  destination failure per destination with no interval (`markDestinationFailure` keeps its own 15 s
+  dedup), feed status 5 s. The log line per chunk is unchanged. A failed write is logged once as
+  `ffmpeg.stderr.write_failed` with its writer instead of an unhandled rejection. Not measured with the
+  real mp4 in the cloud (the stack's images do not build here); the test models it with a pg-like pool
+  (10 connections, a caller waiting longer than the timeout fails with pg's message).
+- **2, the pool on a broken pick (M98 follow-up 1).** A failed inline resolve of a `scheduled_match` pick
+  is written to the probe cache as a failed, already-counted probe (`recordSelectionResolveFailure`) and
+  added to the list quarantine counts, after the same network-outage filter (`dropNetworkOutageOutcomes`,
+  path `selection`) and not twice for an item the queue probed in the same cycle; the breaker keeps
+  hearing it from `recordSelectionResolveOutcome` only, so no outcome is counted twice. `selectPoolAsset`
+  passes over an item whose fresh cache entry is a failure (`isPassedOverPoolPick`), for the minute the
+  cache keeps a failure (`NEXT_ASSET_PROBE_FAILED_TTL_MS`). While a fresh failure is cached, a further
+  failure of the same item neither refreshes its time nor counts again, so quarantine counts at most
+  one failure a minute per item, as for the queue's probes. Not passed over and not recorded: a Twitch
+  archive still downloading (`TwitchVodCachePendingError`), and every pick that is not the schedule's
+  (inserts, Move next, Pin, fallbacks).
+  - Decision (within the suggestion's "do it"): the pass-over also applies to a failure the queue's
+    prefetch found, not only the inline resolve's. Both are the same probe-cache entry, and before M112
+    the boundary picked such an item and resolved it inline again. Cost: an item whose probe failed once
+    by chance in the minute before its turn loses that turn in this pass of the rotation.
+  - A dated block's takeover whose pick fails to resolve (review T1, M105) still holds the item on air
+    for that cycle; from the next cycle the takeover's pick is the pool's next item, so a pool with one
+    broken item takes the air with its second one instead of waiting the minute.
+  - Not changed: the schedule preview, the week view and the overlay's next title come from core's
+    rotation and do not know the worker's probe cache; for up to a minute they can name an item the
+    worker passes over.
+- **3, the dead host (M87 limit).** One `RemoteCallBudget` per worker cycle
+  (`apps/worker/src/remote-call-budget.ts`, made at the start of `runWorkerCycle`), with the deadline at
+  the cycle-await ceiling after the start (half the stall guard: 150 s by default). The YouTube and
+  Twitch syncs (listing and Twitch VOD metadata) and the chapter backfill ask it for each call's timeout:
+  at most the call's own, at most what is left, and no call when less than `MIN_REMOTE_CALL_MS` (15 s) or
+  the call's own timeout, if shorter, is left. A source without room is left out of that cycle's sync
+  entirely (no run, no status, no replace, no incident: as if the sync had not reached it) and goes first
+  in the next cycle (`orderDeferredFirst`, `source.sync.deferred`); chapter candidates without room are
+  simply not probed (`asset.chapters.deferred`). With the defaults one cycle waits on hosts for at most
+  150 s plus the last call's start, against the 300 s stall guard.
+- Tests: `tests/unit/coalescing-writer.test.ts`, `tests/unit/selection-pass-over.test.ts`,
+  `tests/unit/remote-call-budget.test.ts`; pins updated in `tests/unit/probe-network-outage.test.ts`,
+  `tests/unit/source-breaker-wiring.test.ts` (the new lines after the breaker's record of the failed
+  resolve) and `tests/unit/source-listing.test.ts` (the listing takes the budget's timeout).
+- `CHANGELOG.md` is not touched: per `AGENTS.md` the release commit writes its section.

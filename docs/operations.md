@@ -323,6 +323,13 @@ Reading the rows:
 
 ### Playout degraded
 
+- a noisy input (an FFmpeg printing hundreds of error lines a minute) costs at most one database write
+  at a time per kind since M112: the runtime's last stderr sample and heartbeat at most every 2 s, each
+  FFmpeg error incident at most every 10 s with the latest line, one destination failure write at a
+  time. Every line still goes to the container log (`playout.ffmpeg.stderr`, `uplink.ffmpeg.stderr`). A
+  write that fails is logged as `ffmpeg.stderr.write_failed`; before M112 such a burst exhausted the
+  connection pool and crashed the playout loop
+
 - open `/live?tab=status`
 - inspect `selectionReasonCode`
 - inspect `fallbackTier`
@@ -503,8 +510,13 @@ row; the restart policy
   Twitch that accepts a connection and never answers is one failed step, not a cycle held until the
   300 s stall guard restarts the process
 - each yt-dlp listing and metadata call of the YouTube and Twitch source syncs gives up after 2 min
-  (clamped to half the stall guard). The limit is per call and the syncs walk their sources one by one,
-  so with three or more sources on a host that stops answering one cycle can still reach the stall guard
+  (clamped to half the stall guard). Since M112 those calls and the chapter probes also share one budget
+  per worker cycle, half the stall guard (150 s by default) from the cycle's start: a call starts only
+  while at least 15 s are left and gets no more time than is left. A source the budget has no room for
+  is not synced in that cycle (nothing about it is written, its items stay) and goes first in the next
+  one; the log shows `source.sync.deferred` with the step and the source ids (`asset.chapters.deferred`
+  for chapter probes). Three sources on a host that stops answering therefore cost two cycles of
+  waiting, not the stall guard's restart
 
 ### Twitch asks for a reconnect (since M87)
 
@@ -905,6 +917,12 @@ channel's own network was down* below). Why the breaker exists: the YouTube SABR
 left 0 of 11 items resolvable, and per-item quarantine needed three failures per item, about 33 failed
 boundaries, before the source was out of play. What it does:
 
+- An item whose resolve failed when its pool picked it is passed over by that pool for a minute (the
+  time a failed probe stays known, since M112): the next cycle picks the pool's next item, so three
+  broken items of one source open the breaker within three cycles instead of the pool staying on the
+  first one, and the failure counts towards that item's quarantine like a failed queue probe (once a
+  minute at most). The log shows `playout.selection.passed_over`. A Twitch archive still downloading is
+  not passed over. While the minute runs the overlay's next title can still name the passed-over item.
 - Every pool passes the source over: a pool with several sources alternates between the others, a pool
   with only this source plays the fallback, as when nothing is playable. The generic fallback (any
   ready asset, and the bridge after a failed preparation) passes the source's items over too; a global
