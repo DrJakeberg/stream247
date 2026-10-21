@@ -225,6 +225,13 @@ const STATE_FAMILIES: IncidentFamily[] = [
     why: "The system volume is below its mark and nothing here can free it; only an operator ends it."
   },
   {
+    fingerprint: "relay.unreachable",
+    keyed: false,
+    kind: "state",
+    area: "system",
+    why: "The relay has not answered its API for two minutes while something uses it (M114); the worker closes it on the next answer."
+  },
+  {
     fingerprint: "source.local-library.empty",
     keyed: false,
     kind: "state",
@@ -510,6 +517,27 @@ const EVENT_FAMILIES: IncidentFamily[] = [
     kind: "event",
     area: "uplink",
     why: "The uplink failed its own healthcheck for five minutes and exited (M103); the restart is the end of it."
+  },
+  {
+    fingerprint: "worker.health.frozen-restart",
+    keyed: false,
+    kind: "event",
+    area: "worker",
+    why: "The worker sent no heartbeat for five minutes and its supervisor restarted it (M114); the restart is the end of it."
+  },
+  {
+    fingerprint: "playout.health.frozen-restart",
+    keyed: false,
+    kind: "event",
+    area: "playout",
+    why: "The playout sent no heartbeat for five minutes and its supervisor restarted it (M114); the restart is the end of it."
+  },
+  {
+    fingerprint: "uplink.health.frozen-restart",
+    keyed: false,
+    kind: "event",
+    area: "uplink",
+    why: "The uplink sent no heartbeat for five minutes and its supervisor restarted it (M114); the restart is the end of it."
   },
   {
     fingerprint: "uplink.loop.stalled",

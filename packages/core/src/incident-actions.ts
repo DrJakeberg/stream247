@@ -103,6 +103,11 @@ export const INCIDENT_OPERATOR_ACTIONS: readonly IncidentOperatorAction[] = [
       "Free space on the host's system disk, for example with `docker image prune` for old images. Stream247 cannot free this disk itself."
   },
   {
+    fingerprint: "relay.unreachable",
+    keyed: false,
+    action: `Restart the relay with \`${restartCommand("relay")}\` on the host. The incident closes once it answers again.`
+  },
+  {
     fingerprint: "twitch.refresh.failed",
     keyed: false,
     action: "Reconnect the Twitch account under Admin → Settings → Twitch accounts."

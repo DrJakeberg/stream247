@@ -258,6 +258,14 @@ import {
 import { logRuntimeEvent } from "./runtime-log.js";
 import { decideHealthcheck } from "./healthcheck.js";
 import { HealthSelfRestartWatch, HEALTH_SELF_RESTART_AFTER_MS, selfRestartReason } from "./health-self-restart.js";
+import { clearFrozenMarker, frozenMarkerPath, readFrozenMarker, startSupervisorHeartbeat } from "./process-supervisor.js";
+import {
+  RELAY_UNREACHABLE_FINGERPRINT,
+  RelayWatch,
+  isRelayApiReachable,
+  relayInUse,
+  relayUnreachableMessage
+} from "./relay-watch.js";
 import { RestartBackoff, describeCrashLoopHold, type RestartBackoffPlan } from "./restart-backoff.js";
 import { UplinkWatchdog, uplinkDarkRestartLogLine, type UplinkWatchdogFault } from "./uplink-watchdog.js";
 import { planSourceBreakerIncidents } from "./source-breaker-incidents.js";
@@ -1737,6 +1745,38 @@ async function observeSystemVolume(): Promise<void> {
     logRuntimeEvent("system.volume.check_failed", {
       error: error instanceof Error ? error.message : String(error)
     });
+  }
+}
+
+// M114: the relay image cannot run a healthcheck of its own, so the worker asks its API (relay-watch.ts).
+// Created on the first cycle, seeded from the open incident rows like the volume monitors (M95).
+let relayWatch: RelayWatch | null = null;
+
+async function observeRelay(): Promise<void> {
+  if (relayWatch === null) {
+    const state = await readAppState();
+    relayWatch = new RelayWatch(
+      state.incidents.some((incident) => incident.status === "open" && incident.fingerprint === RELAY_UNREACHABLE_FINGERPRINT)
+    );
+  }
+  const managed = await readManagedConfigRecord();
+  const inUse = relayInUse({
+    relayModeEnabled: STREAM247_RELAY_ENABLED,
+    sourceLiveEnabled: resolveSourceLiveEnabled(managed, process.env)
+  });
+  const action = inUse ? relayWatch.observe(await isRelayApiReachable(), Date.now()) : relayWatch.idle();
+  if (action.action === "raise") {
+    logRuntimeEvent("relay.unreachable", { unreachableForMs: action.unreachableForMs });
+    await upsertIncident({
+      scope: "system",
+      severity: "critical",
+      title: "Relay is not answering",
+      message: relayUnreachableMessage(action.unreachableForMs),
+      fingerprint: "relay.unreachable"
+    });
+  } else if (action.action === "resolve") {
+    logRuntimeEvent("relay.reachable", { inUse });
+    await resolveIncident("relay.unreachable", inUse ? "The relay answers again." : "Nothing uses the relay any more.");
   }
 }
 
@@ -11359,6 +11399,7 @@ function buildWorkerCycleSteps(): CycleStep[] {
     // The observation-only sibling: OS/database volume pressure cannot be evicted away, only
     // reported, and the report must not wait behind a wedged sync either.
     { name: "system-volume", run: observeSystemVolume },
+    { name: "relay", run: observeRelay },
     { name: "asset-retention", run: sweepAssetRetention },
     { name: "destinations", run: syncDestinations },
     { name: "local-library", run: syncLocalMediaLibrary },
@@ -11537,6 +11578,29 @@ async function enforceHealthSelfRestart(mode: RuntimeMode, watch: HealthSelfRest
   process.exit(1);
 }
 
+/** M114: the supervisor killed the previous process for not answering; say so once. */
+async function reportFrozenRestart(mode: RuntimeMode): Promise<void> {
+  const markerPath = frozenMarkerPath(mode);
+  const marker = readFrozenMarker(markerPath);
+  if (marker === null) {
+    clearFrozenMarker(markerPath);
+    return;
+  }
+  logRuntimeEvent("worker.health.frozen_restart", { mode, silentForMs: marker.silentForMs, killedAt: marker.killedAt });
+  try {
+    await upsertIncident({
+      scope: mode === "worker" ? "worker" : "playout",
+      severity: "warning",
+      title: `${mode} was restarted because it stopped responding`,
+      message: `The ${mode} process sent no sign of life for ${Math.round(marker.silentForMs / 1000)}s (a blocked or stopped process), so its supervisor ended it at ${marker.killedAt} and Docker started it again.`,
+      fingerprint: `${mode}.health.frozen-restart`
+    });
+    clearFrozenMarker(markerPath);
+  } catch {
+    // The database is not there yet: the marker stays, and the next start of this process reports it.
+  }
+}
+
 function requestImmediatePlayoutCycle(reason: string): void {
   // Never drops the request: with no waiter armed (i.e. called from inside a running cycle) the
   // latch remembers it and waitForNextLoop skips the delay below.
@@ -11701,6 +11765,9 @@ if (command === "healthcheck") {
   });
 } else {
   const mode: RuntimeMode = command === "playout" ? "playout" : command === "uplink" ? "uplink" : "worker";
+  // M114: under the supervisor (supervisor.ts) this timer is the proof that the event loop still runs.
+  startSupervisorHeartbeat();
+  void reportFrozenRestart(mode);
   runLoop(mode).catch((error) => {
     logRuntimeEvent("worker.process.failed", {
       mode,

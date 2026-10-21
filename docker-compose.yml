@@ -91,6 +91,9 @@ services:
     # Compose does not restart a container for being unhealthy. Since M103 the worker, playout and
     # uplink processes evaluate this same check after every cycle and exit after five minutes of
     # failing it (playout only while its feed does not advance); `restart` then starts a fresh one.
+    # A process that is frozen (blocked event loop, stopped) cannot do that: since M114 the image runs
+    # it under apps/worker/dist/supervisor.js, which ends the container after five minutes without a
+    # heartbeat from it, and `restart` brings it back the same way.
     healthcheck:
       test: ["CMD", "node", "apps/worker/dist/index.js", "healthcheck", "worker"]
       interval: 45s
@@ -108,6 +111,8 @@ services:
     # auth against the web app, keeps the control API and RTSP read side container-internal, and
     # the ONLY host ports are the two ingest doors for pushed camera feeds. The API port (9997)
     # must never be published to the host — it can inject and kick streams.
+    # No healthcheck: the pinned image holds only the mediamtx binary, nothing that could run one.
+    # Since M114 the worker asks the API instead and raises `relay.unreachable` after two minutes.
     volumes:
       - ./docker/mediamtx.yml:/mediamtx.yml:ro
     expose:
@@ -121,7 +126,7 @@ services:
     image: ${STREAM247_PLAYOUT_IMAGE:-ghcr.io/drjakeberg/stream247-playout:v2.3.1}
     restart: unless-stopped
     logging: *default-logging
-    command: ["node", "apps/worker/dist/index.js", "playout"]
+    command: ["node", "apps/worker/dist/supervisor.js", "playout"]
     env_file:
       - path: .env
         required: false
@@ -147,7 +152,7 @@ services:
     image: ${STREAM247_WORKER_IMAGE:-ghcr.io/drjakeberg/stream247-worker:v2.3.1}
     restart: unless-stopped
     logging: *default-logging
-    command: ["node", "apps/worker/dist/index.js", "uplink"]
+    command: ["node", "apps/worker/dist/supervisor.js", "uplink"]
     env_file:
       - path: .env
         required: false

@@ -39,7 +39,7 @@ services:
     build:
       context: .
       dockerfile: docker/worker.Dockerfile
-    command: ["node", "apps/worker/dist/index.js", "playout"]
+    command: ["node", "apps/worker/dist/supervisor.js", "playout"]
     env_file:
       - .env
     volumes:
