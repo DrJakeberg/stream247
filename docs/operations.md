@@ -323,6 +323,14 @@ Reading the rows:
 
 ### Playout degraded
 
+- a noisy input (an FFmpeg printing hundreds of error lines a minute) costs at most one database write
+  at a time per kind since M112: the runtime's last stderr sample and heartbeat at most every 2 s, each
+  FFmpeg error incident at most every 10 s with the latest line (the feed-input incident one write at a
+  time, without the 10 s), one destination failure write at a time, so a destination's failure count
+  grows per write, not per line. Every line still goes to the container log (`playout.ffmpeg.stderr`, `uplink.ffmpeg.stderr`). A
+  write that fails is logged as `ffmpeg.stderr.write_failed`; before M112 such a burst exhausted the
+  connection pool and crashed the playout loop
+
 - open `/live?tab=status`
 - inspect `selectionReasonCode`
 - inspect `fallbackTier`
@@ -503,8 +511,22 @@ row; the restart policy
   Twitch that accepts a connection and never answers is one failed step, not a cycle held until the
   300 s stall guard restarts the process
 - each yt-dlp listing and metadata call of the YouTube and Twitch source syncs gives up after 2 min
-  (clamped to half the stall guard). The limit is per call and the syncs walk their sources one by one,
-  so with three or more sources on a host that stops answering one cycle can still reach the stall guard
+  (clamped to half the stall guard). Since M112 a call starts only when its whole 2 min still end
+  before the cycle's deadline, 80 % of the stall guard after the cycle's start (240 s by default); no
+  timeout is ever cut short, so a slow but healthy listing is never reported as failed for lack of
+  time. A source without room is not synced in that cycle (nothing about it is written, its items
+  stay) and goes first in its sync's next run (`source.sync.deferred`); several waiting sources take
+  turns, longest waiting first. When the Twitch sync had to wait, the YouTube sync of the next cycle
+  makes its first call and leaves one call's 2 min for Twitch before any further one; if Twitch still
+  got no call, the next YouTube sync leaves it the time before its first call too. So the two syncs
+  take turns whenever the cycle has room for one call after the earlier steps. A call that runs out of its 2 min is a host that does not answer:
+  reported as failed as before, then the source is left alone for 10 min (`source.sync.paused`;
+  changing the source's URL ends the pause). A chapter probe starts only when its whole 30 s fit too
+  (`asset.chapters.deferred` otherwise). So a dead host costs one call per 10 min and the cycle stays
+  below the stall guard. With the 300 s default two listings fit one cycle; more slow sources than that
+  are synced over several cycles. If the earlier steps of a cycle leave less than one call's time
+  before the deadline (only with a stall guard set near its 60 s minimum), the syncs wait for a faster
+  cycle and say so with `source.sync.deferred`
 
 ### Twitch asks for a reconnect (since M87)
 
@@ -905,6 +927,14 @@ channel's own network was down* below). Why the breaker exists: the YouTube SABR
 left 0 of 11 items resolvable, and per-item quarantine needed three failures per item, about 33 failed
 boundaries, before the source was out of play. What it does:
 
+- An item whose resolve failed when its pool picked it is passed over by that pool for a minute (the
+  time a failed probe stays known, since M112): the next cycle picks the pool's next item, so three
+  broken items of one source open the breaker within three cycles instead of the pool staying on the
+  first one, and the failure counts towards that item's quarantine like a failed queue probe (once a
+  minute at most). The log shows `playout.selection.passed_over`. A Twitch archive still downloading is
+  not passed over. While the minute runs the overlay's next title and the runtime queue's prefetched
+  item can still name the passed-over item. A pick that failed during the channel's own network outage
+  is passed over too (its failure is not counted), for up to a minute after the network is back.
 - Every pool passes the source over: a pool with several sources alternates between the others, a pool
   with only this source plays the fallback, as when nothing is playable. The generic fallback (any
   ready asset, and the bridge after a failed preparation) passes the source's items over too; a global

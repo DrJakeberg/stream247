@@ -363,7 +363,7 @@ describe("source breaker wiring", () => {
     // The failed record hands back the breakers as its write left them, for the recovery plan below it. It
     // comes first, also when a dated block's takeover then waits for its pick instead of rethrowing (M105).
     expect(around).toContain(
-      '} catch (error) { breakersAfterFailedResolve = await recordSelectionResolveOutcome(failedAsset, "failed", error); // A takeover'
+      '} catch (error) { breakersAfterFailedResolve = await recordSelectionResolveOutcome(failedAsset, "failed", error); // The pool passes over the pick from the next cycle on, and quarantine counts it (M112). const passedOver = recordSelectionResolveFailure(failedAsset, failedReasonCode, error); if (passedOver) { selectionProbeOutcomes.push(passedOver); } // A takeover'
     );
     expect(around).toContain(') !== "hold" ) { throw error; }');
     expect(around).toContain('if (prepared) { await recordSelectionResolveOutcome(failedAsset, "ok");');

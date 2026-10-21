@@ -59,7 +59,7 @@ describe("flat listing wiring", () => {
     expect(workerSource).toContain("buildFlatListingArgs({ url, connectorKind, playlistEnd:");
     expect(workerSource).not.toContain('"--flat-playlist"');
     expect(workerSource).toContain('source.connectorKind === "youtube-playlist" ? "youtube-playlist" : "youtube-channel"');
-    expect(workerSource).toContain('loadFlatCollection(getTwitchArchiveUrl(externalUrl), "twitch-channel")');
+    expect(workerSource).toContain('loadFlatCollection(getTwitchArchiveUrl(externalUrl), "twitch-channel", timeoutMs)');
   });
 
   it("reads the publish date of YouTube and Twitch listing entries through the upload_date fallback", () => {

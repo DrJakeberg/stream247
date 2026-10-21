@@ -5,6 +5,9 @@ this list in German with the same numbers on 2026-10-04 and has not named any ye
 item before the owner names its number.** Recommended first package: 1, 2 and 3, because each lets one
 broken or noisy source crash or stall the playout loop.
 
+Status: on 2026-10-20 23:55 UTC the owner let the list go in its order ("Nichts zurückhalten, kann alles
+nach seinen tests auf main"), one milestone at a time, 26 and 27 left to him. Done: 1, 2 and 3 (M112).
+
 ## Runs stably and heals itself
 
 1. **Noisy ffmpeg output crashes the playout loop.** Every ffmpeg output line triggers an unawaited write,
