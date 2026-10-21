@@ -325,8 +325,9 @@ Reading the rows:
 
 - a noisy input (an FFmpeg printing hundreds of error lines a minute) costs at most one database write
   at a time per kind since M112: the runtime's last stderr sample and heartbeat at most every 2 s, each
-  FFmpeg error incident at most every 10 s with the latest line, one destination failure write at a
-  time. Every line still goes to the container log (`playout.ffmpeg.stderr`, `uplink.ffmpeg.stderr`). A
+  FFmpeg error incident at most every 10 s with the latest line (the feed-input incident one write at a
+  time, without the 10 s), one destination failure write at a time, so a destination's failure count
+  grows per write, not per line. Every line still goes to the container log (`playout.ffmpeg.stderr`, `uplink.ffmpeg.stderr`). A
   write that fails is logged as `ffmpeg.stderr.write_failed`; before M112 such a burst exhausted the
   connection pool and crashed the playout loop
 
@@ -513,10 +514,14 @@ row; the restart policy
   (clamped to half the stall guard). Since M112 those calls and the chapter probes also share one budget
   per worker cycle, half the stall guard (150 s by default) from the cycle's start: a call starts only
   while at least 15 s are left and gets no more time than is left. A source the budget has no room for
-  is not synced in that cycle (nothing about it is written, its items stay) and goes first in the next
-  one; the log shows `source.sync.deferred` with the step and the source ids (`asset.chapters.deferred`
-  for chapter probes). Three sources on a host that stops answering therefore cost two cycles of
-  waiting, not the stall guard's restart
+  is not synced in that cycle (nothing about it is written, its items stay) and goes first in its sync's
+  next run; the log shows `source.sync.deferred` with the step and the source ids. A call that runs out
+  of a timeout the budget had cut short is deferred the same way, never reported as failed. A call that
+  runs out of its whole 2 min is a host that does not answer: it is reported as failed as before, and
+  the source is then left alone for 10 min (`source.sync.backoff`), so a dead host costs one cycle of
+  waiting per 10 min instead of every cycle. A chapter probe starts only when its whole 30 s fit
+  (`asset.chapters.deferred` otherwise). Three sources on a dead host therefore cost three cycles of
+  waiting of at most 150 s each, then the healthy sources sync on every cycle again
 
 ### Twitch asks for a reconnect (since M87)
 
@@ -922,7 +927,9 @@ boundaries, before the source was out of play. What it does:
   broken items of one source open the breaker within three cycles instead of the pool staying on the
   first one, and the failure counts towards that item's quarantine like a failed queue probe (once a
   minute at most). The log shows `playout.selection.passed_over`. A Twitch archive still downloading is
-  not passed over. While the minute runs the overlay's next title can still name the passed-over item.
+  not passed over. While the minute runs the overlay's next title and the runtime queue's prefetched
+  item can still name the passed-over item. A pick that failed during the channel's own network outage
+  is passed over too (its failure is not counted), for up to a minute after the network is back.
 - Every pool passes the source over: a pool with several sources alternates between the others, a pool
   with only this source plays the fallback, as when nothing is playable. The generic fallback (any
   ready asset, and the bridge after a failed preparation) passes the source's items over too; a global

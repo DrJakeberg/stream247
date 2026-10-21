@@ -77,7 +77,11 @@ export class CoalescingWriter<T> {
     void Promise.resolve()
       .then(() => this.options.write(value))
       .catch((error: unknown) => {
-        this.options.onError(error);
+        try {
+          this.options.onError(error);
+        } catch {
+          // A failing reporter must not leave a rejection with nobody listening.
+        }
       })
       .finally(() => {
         this.inFlight = false;

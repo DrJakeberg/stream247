@@ -342,12 +342,18 @@ import {
   type SceneRenderFont,
   type SceneRenderRequest
 } from "./scene-renderer.js";
-import { execFileText, hasChildExited, runWithStallGuard } from "./process-utils.js";
+import { ExecFileTextError, execFileText, hasChildExited, runWithStallGuard } from "./process-utils.js";
 import { DATABASE_OUTAGE_EXIT_AFTER_MS, DatabaseOutageBudget } from "./database-outage.js";
 import { CycleStepAlertWatch, CycleStepIncidentTracker, runIsolatedCycleSteps, type CycleStep } from "./cycle-steps.js";
 import { fetchWithTimeout } from "./http-timeout.js";
 import { CoalescingWriter, KeyedCoalescingWriter } from "./coalescing-writer.js";
-import { RemoteCallBudget, orderDeferredFirst } from "./remote-call-budget.js";
+import {
+  RemoteCallBudget,
+  SOURCE_SYNC_TIMEOUT_BACKOFF_MS,
+  SourceSyncBackoff,
+  classifySourceSyncTimeout,
+  orderDeferredFirst
+} from "./remote-call-budget.js";
 import { decideSelectionResolveFailure, isPassedOverPoolPick } from "./selection-pass-over.js";
 import {
   TWITCH_REFRESH_REFUSED_ERROR,
@@ -512,7 +518,9 @@ const stderrIncidentWriter = new KeyedCoalescingWriter<Parameters<typeof upsertI
     new CoalescingWriter({
       write: (incident) => upsertIncident(incident),
       onError: logStderrWriteFailed(`incident.${fingerprint}`),
-      minIntervalMs: 10_000
+      // The uplink resolves the feed incident on every cycle the feed is fresh again; an upsert held back
+      // 10 s would open it once more after that. Only one write at a time for it.
+      minIntervalMs: fingerprint === "program-feed.input" ? 0 : 10_000
     })
 );
 const stderrDestinationFailureWriter = new KeyedCoalescingWriter<string>(
@@ -627,6 +635,29 @@ const SOURCE_SYNC_YTDLP_TIMEOUT_MS = clampToCycleAwaitCeiling(120_000, process.e
 let workerRemoteCallBudget = new RemoteCallBudget(getCycleAwaitCeilingMs(process.env));
 // The sources the budget had no room for in the last cycle: they go first in the next one.
 const sourceSyncDeferredIds = new Set<string>();
+// Sources whose call ran out of its whole timeout, left alone for a while (remote-call-budget.ts).
+const sourceSyncBackoff = new SourceSyncBackoff();
+
+/**
+ * A source call that failed: true when it ran out of a timeout the budget cut short, so the source is
+ * deferred and nothing is reported; a whole timeout is reported as before and backs the source off.
+ */
+function deferOrBackOffSourceSync(sourceId: string, error: unknown, timeoutMs: number, deferredIds: string[]): boolean {
+  const verdict = classifySourceSyncTimeout({
+    timedOut: error instanceof ExecFileTextError && error.kind === "timeout",
+    givenMs: timeoutMs,
+    requestedMs: SOURCE_SYNC_YTDLP_TIMEOUT_MS
+  });
+  if (verdict === "deferred") {
+    deferredIds.push(sourceId);
+    return true;
+  }
+  if (verdict === "backoff") {
+    sourceSyncBackoff.start(sourceId);
+    logRuntimeEvent("source.sync.backoff", { sourceId, pauseMs: SOURCE_SYNC_TIMEOUT_BACKOFF_MS });
+  }
+  return false;
+}
 
 /** Records which of a sync's sources were deferred this cycle, and says so once per cycle and step. */
 function noteSourceSyncDeferrals(step: string, sources: { id: string }[], deferredIds: string[]): void {
@@ -4583,6 +4614,9 @@ async function syncYoutubePlaylistSources(): Promise<void> {
       continue;
     }
 
+    if (sourceSyncBackoff.isActive(source.id)) {
+      continue;
+    }
     const timeoutMs = workerRemoteCallBudget.timeoutFor(SOURCE_SYNC_YTDLP_TIMEOUT_MS);
     if (timeoutMs === null) {
       deferredSourceIds.push(source.id);
@@ -4638,6 +4672,10 @@ async function syncYoutubePlaylistSources(): Promise<void> {
         errorMessage: ""
       }));
     } catch (error) {
+      if (deferOrBackOffSourceSync(source.id, error, timeoutMs, deferredSourceIds)) {
+        youtubeSources.splice(youtubeSources.indexOf(source), 1);
+        continue;
+      }
       failedSourceIds.add(source.id);
       const message = error instanceof Error ? error.message : "Unknown YouTube playlist ingestion error.";
       syncRuns.push(buildSourceSyncRun({
@@ -4761,6 +4799,9 @@ async function syncTwitchVodSources(): Promise<void> {
       continue;
     }
 
+    if (sourceSyncBackoff.isActive(source.id)) {
+      continue;
+    }
     const timeoutMs = workerRemoteCallBudget.timeoutFor(SOURCE_SYNC_YTDLP_TIMEOUT_MS);
     if (timeoutMs === null) {
       deferredSourceIds.push(source.id);
@@ -4849,6 +4890,10 @@ async function syncTwitchVodSources(): Promise<void> {
       }
 
     } catch (error) {
+      if (deferOrBackOffSourceSync(source.id, error, timeoutMs, deferredSourceIds)) {
+        twitchSources.splice(twitchSources.indexOf(source), 1);
+        continue;
+      }
       const message = error instanceof Error ? error.message : "Unknown Twitch VOD ingestion error.";
       failedSourceIds.add(source.id);
       syncRuns.push(buildSourceSyncRun({
@@ -4958,8 +5003,9 @@ async function backfillAssetChapters(): Promise<void> {
   });
 
   for (const candidate of candidates) {
-    // Out of the cycle's budget (M112): the rest is probed by a later cycle, nothing is marked.
-    const probeTimeoutMs = workerRemoteCallBudget.timeoutFor(config.probeTimeoutMs);
+    // Out of the cycle's budget (M112): the rest is probed by a later cycle, nothing is marked. Only a
+    // whole timeout: a cut-short probe that ran out would be stored as failed.
+    const probeTimeoutMs = workerRemoteCallBudget.fitsWhole(config.probeTimeoutMs);
     if (probeTimeoutMs === null) {
       logRuntimeEvent("asset.chapters.deferred", { assetIds: candidates.slice(candidates.indexOf(candidate)).map((entry) => entry.assetId) });
       break;
@@ -5233,7 +5279,9 @@ function selectPoolAsset(state: AppState, poolId: string, skippedAssetId: string
  * `currentStartsPool` says the current asset is the pool pick this cycle stores as the position (a
  * scheduled match that this cycle starts): the queue then walks on from it. For anything else (an insert,
  * a manual next, a live bridge, an item already running that the pool never stored) the stored position
- * stays where it is, and so does the walk, so the queue's first item is what selectPoolAsset picks next.
+ * stays where it is, and so does the walk, so the queue's first item is what selectPoolAsset picks next --
+ * unless that item's resolve failed within the last minute: selectPoolAsset passes it over (M112), the
+ * queue keeps it (the scan skips it as failed) and warms the items after it, the pick among them.
  */
 function getPoolPlaybackQueue(
   state: AppState,
