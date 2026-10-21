@@ -511,18 +511,20 @@ row; the restart policy
   Twitch that accepts a connection and never answers is one failed step, not a cycle held until the
   300 s stall guard restarts the process
 - each yt-dlp listing and metadata call of the YouTube and Twitch source syncs gives up after 2 min
-  (clamped to half the stall guard). Since M112 two deadlines bound them together: the YouTube sync and
-  the Twitch sync get those 2 min each from their own start, and no call (chapter probes included)
-  starts later than 30 s before the stall guard. A call starts only while at least 15 s are left and
-  gets no more than is left. A source without room is not synced in that cycle (nothing about it is
-  written, its items stay) and goes first in its sync's next run (`source.sync.deferred`). A call that
-  runs out of a time a deadline had cut short is deferred the same way, not reported; cut short a
-  second time in a row it is reported as failed. A call that runs out of its whole 2 min is a host that
-  does not answer: reported as failed as before, then the source is left alone for 10 min
-  (`source.sync.backoff`; changing the source's URL ends the pause) and, once back, walked after the
-  others until it answers. A chapter probe starts only when its whole 30 s fit
-  (`asset.chapters.deferred` otherwise). So a dead host costs at most one sync step's 2 min per 10 min,
-  never the other sync's time, and the cycle stays below the stall guard
+  (clamped to half the stall guard). Since M112 a call starts only when its whole 2 min still end
+  before the cycle's deadline, 80 % of the stall guard after the cycle's start (240 s by default); no
+  timeout is ever cut short, so a slow but healthy listing is never reported as failed for lack of
+  time. A source without room is not synced in that cycle (nothing about it is written, its items
+  stay) and goes first in its sync's next run (`source.sync.deferred`); several waiting sources take
+  turns, longest waiting first. When the Twitch sync had to wait, the YouTube sync of the next cycle
+  leaves one call's 2 min for it. A call that runs out of its 2 min is a host that does not answer:
+  reported as failed as before, then the source is left alone for 10 min (`source.sync.paused`;
+  changing the source's URL ends the pause). A chapter probe starts only when its whole 30 s fit too
+  (`asset.chapters.deferred` otherwise). So a dead host costs one call per 10 min and the cycle stays
+  below the stall guard. With the 300 s default two listings fit one cycle; more slow sources than that
+  are synced over several cycles. If the earlier steps of a cycle leave less than one call's time
+  before the deadline (only with a stall guard set near its 60 s minimum), the syncs wait for a faster
+  cycle and say so with `source.sync.deferred`
 
 ### Twitch asks for a reconnect (since M87)
 

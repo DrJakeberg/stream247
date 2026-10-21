@@ -350,9 +350,9 @@ import { CoalescingWriter, KeyedCoalescingWriter } from "./coalescing-writer.js"
 import {
   RemoteCallBudget,
   SOURCE_SYNC_TIMEOUT_BACKOFF_MS,
-  SourceSyncTimeouts,
-  orderSourcesForSync,
-  sourceSyncTimeoutKey
+  SourceSyncPauses,
+  orderDeferredFirst,
+  sourceSyncPauseKey
 } from "./remote-call-budget.js";
 import { decideSelectionResolveFailure, isPassedOverPoolPick } from "./selection-pass-over.js";
 import {
@@ -630,39 +630,20 @@ const PLAYABLE_INPUT_RESOLVE_TIMEOUT_MS = (() => {
 // process. Two minutes covers a 200-entry flat listing; the clamp keeps it under the stall guard.
 const SOURCE_SYNC_YTDLP_TIMEOUT_MS = clampToCycleAwaitCeiling(120_000, process.env).effectiveMs;
 // The timeout is per call, and the syncs walk their sources one by one: three sources on a dead host
-// still took one cycle to the stall guard. Each sync step gets one call's timeout from its own start,
-// and the cycle stops starting calls 30 s before the stall guard, the chapter probes included (M112,
-// remote-call-budget.ts); runWorkerCycle starts a new cycle budget.
+// still took one cycle to the stall guard. A call now starts only when its whole timeout ends before the
+// cycle's deadline, and a source that ran out of its timeout is paused (M112, remote-call-budget.ts);
+// runWorkerCycle starts a new cycle budget.
 let workerRemoteCallBudget = RemoteCallBudget.forCycle(LOOP_STALL_TIMEOUT_MS);
 // The sources the budget had no room for in the last cycle: they go first in their sync's next run.
 const sourceSyncDeferredIds = new Set<string>();
-// Paused sources and the ones cut short last time (remote-call-budget.ts).
-const sourceSyncTimeouts = new SourceSyncTimeouts();
+const sourceSyncPauses = new SourceSyncPauses();
 
-/**
- * A source call that failed: true when it ran out of a timeout a deadline cut short for the first time
- * in a row, so the source is deferred and nothing is reported. Otherwise the failure is reported as
- * before; a timeout also pauses the source.
- */
-function deferOrPauseSourceSync(
-  source: { id: string; externalUrl?: string },
-  error: unknown,
-  timeoutMs: number,
-  deferredIds: string[]
-): boolean {
-  const verdict = sourceSyncTimeouts.settle(sourceSyncTimeoutKey(source), {
-    timedOut: error instanceof ExecFileTextError && error.kind === "timeout",
-    givenMs: timeoutMs,
-    requestedMs: SOURCE_SYNC_YTDLP_TIMEOUT_MS
-  });
-  if (verdict === "deferred") {
-    deferredIds.push(source.id);
-    return true;
+/** A source call that ran out of its timeout: reported as failed as before, and the source is paused. */
+function pauseSourceSyncOnTimeout(source: { id: string; externalUrl?: string }, error: unknown): void {
+  if (error instanceof ExecFileTextError && error.kind === "timeout") {
+    sourceSyncPauses.start(sourceSyncPauseKey(source));
+    logRuntimeEvent("source.sync.paused", { sourceId: source.id, pauseMs: SOURCE_SYNC_TIMEOUT_BACKOFF_MS });
   }
-  if (verdict === "failed-backoff") {
-    logRuntimeEvent("source.sync.backoff", { sourceId: source.id, timeoutMs, pauseMs: SOURCE_SYNC_TIMEOUT_BACKOFF_MS });
-  }
-  return false;
 }
 
 /** Records which of a sync's sources were deferred this cycle, and says so once per cycle and step. */
@@ -677,7 +658,7 @@ function noteSourceSyncDeferrals(step: string, sources: { id: string }[], deferr
     logRuntimeEvent("source.sync.deferred", {
       step,
       sourceIds: deferredIds,
-      stepMs: SOURCE_SYNC_YTDLP_TIMEOUT_MS
+      callTimeoutMs: SOURCE_SYNC_YTDLP_TIMEOUT_MS
     });
   }
 }
@@ -4584,7 +4565,12 @@ async function syncYoutubePlaylistSources(): Promise<void> {
   // The sources this cycle syncs; one the budget has no room for is left out of everything below (M112).
   const youtubeSources: typeof enabledYoutubeSources = [];
   const deferredSourceIds: string[] = [];
-  const stepBudget = workerRemoteCallBudget.forStep(SOURCE_SYNC_YTDLP_TIMEOUT_MS);
+  // A Twitch source the last cycle deferred gets one call's timeout kept for it: a heavy YouTube load
+  // cannot keep the Twitch sync waiting for good (remote-call-budget.ts).
+  const twitchSyncWaiting = state.sources.some(
+    (source) =>
+      (source.connectorKind === "twitch-vod" || source.connectorKind === "twitch-channel") && sourceSyncDeferredIds.has(source.id)
+  );
   const youtubeAssets: AssetRecord[] = [];
   // Per-source throughout — asset replacement, status wording and incident resolution all read
   // this set. A source we learned nothing about must keep its stored assets instead of being wiped
@@ -4595,7 +4581,7 @@ async function syncYoutubePlaylistSources(): Promise<void> {
   const failedSourceIds = new Set<string>();
   const syncRuns: AppState["sourceSyncRuns"] = [];
 
-  for (const source of orderSourcesForSync(enabledYoutubeSources, sourceSyncDeferredIds, sourceSyncTimeouts)) {
+  for (const source of orderDeferredFirst(enabledYoutubeSources, sourceSyncDeferredIds)) {
     const startedAt = new Date().toISOString();
     const externalUrl = source.externalUrl?.trim() ?? "";
     const isValid =
@@ -4621,10 +4607,13 @@ async function syncYoutubePlaylistSources(): Promise<void> {
       continue;
     }
 
-    if (sourceSyncTimeouts.isPaused(sourceSyncTimeoutKey(source))) {
+    if (sourceSyncPauses.isPaused(sourceSyncPauseKey(source))) {
       continue;
     }
-    const timeoutMs = stepBudget.timeoutFor(SOURCE_SYNC_YTDLP_TIMEOUT_MS);
+    const timeoutMs = workerRemoteCallBudget.fitsWhole(
+      SOURCE_SYNC_YTDLP_TIMEOUT_MS,
+      twitchSyncWaiting ? SOURCE_SYNC_YTDLP_TIMEOUT_MS : 0
+    );
     if (timeoutMs === null) {
       deferredSourceIds.push(source.id);
       continue;
@@ -4637,7 +4626,6 @@ async function syncYoutubePlaylistSources(): Promise<void> {
         source.connectorKind === "youtube-playlist" ? "youtube-playlist" : "youtube-channel",
         timeoutMs
       );
-      sourceSyncTimeouts.answered(sourceSyncTimeoutKey(source));
       const entries = payload.entries ?? [];
       let sourceAssetCount = 0;
 
@@ -4680,10 +4668,7 @@ async function syncYoutubePlaylistSources(): Promise<void> {
         errorMessage: ""
       }));
     } catch (error) {
-      if (deferOrPauseSourceSync(source, error, timeoutMs, deferredSourceIds)) {
-        youtubeSources.splice(youtubeSources.indexOf(source), 1);
-        continue;
-      }
+      pauseSourceSyncOnTimeout(source, error);
       failedSourceIds.add(source.id);
       const message = error instanceof Error ? error.message : "Unknown YouTube playlist ingestion error.";
       syncRuns.push(buildSourceSyncRun({
@@ -4766,14 +4751,13 @@ async function syncTwitchVodSources(): Promise<void> {
   // The sources this cycle syncs; one the budget has no room for is left out of everything below (M112).
   const twitchSources: typeof enabledTwitchSources = [];
   const deferredSourceIds: string[] = [];
-  const stepBudget = workerRemoteCallBudget.forStep(SOURCE_SYNC_YTDLP_TIMEOUT_MS);
   const twitchAssets: AssetRecord[] = [];
   // A source whose ingest threw contributed nothing; it must keep its stored assets rather than be
   // wiped by the wholesale replace below. See source-sync-scope.ts.
   const failedSourceIds = new Set<string>();
   const syncRuns: AppState["sourceSyncRuns"] = [];
 
-  for (const source of orderSourcesForSync(enabledTwitchSources, sourceSyncDeferredIds, sourceSyncTimeouts)) {
+  for (const source of orderDeferredFirst(enabledTwitchSources, sourceSyncDeferredIds)) {
     const startedAt = new Date().toISOString();
     const externalUrl = source.externalUrl?.trim() ?? "";
     const isValid =
@@ -4808,10 +4792,10 @@ async function syncTwitchVodSources(): Promise<void> {
       continue;
     }
 
-    if (sourceSyncTimeouts.isPaused(sourceSyncTimeoutKey(source))) {
+    if (sourceSyncPauses.isPaused(sourceSyncPauseKey(source))) {
       continue;
     }
-    const timeoutMs = stepBudget.timeoutFor(SOURCE_SYNC_YTDLP_TIMEOUT_MS);
+    const timeoutMs = workerRemoteCallBudget.fitsWhole(SOURCE_SYNC_YTDLP_TIMEOUT_MS);
     if (timeoutMs === null) {
       deferredSourceIds.push(source.id);
       continue;
@@ -4824,7 +4808,6 @@ async function syncTwitchVodSources(): Promise<void> {
           timeoutMs,
           killProcessGroup: true
         });
-        sourceSyncTimeouts.answered(sourceSyncTimeoutKey(source));
         const payload = JSON.parse(output) as YtDlpVideoResponse;
         const assetPath = payload.webpage_url || payload.original_url || externalUrl;
         const assetIdSeed = payload.id || externalUrl;
@@ -4861,7 +4844,6 @@ async function syncTwitchVodSources(): Promise<void> {
         }));
       } else {
         const payload = await loadFlatCollection(getTwitchArchiveUrl(externalUrl), "twitch-channel", timeoutMs);
-        sourceSyncTimeouts.answered(sourceSyncTimeoutKey(source));
         let sourceAssetCount = 0;
         for (const entry of payload.entries ?? []) {
           const id = entry.id ?? "";
@@ -4901,10 +4883,7 @@ async function syncTwitchVodSources(): Promise<void> {
       }
 
     } catch (error) {
-      if (deferOrPauseSourceSync(source, error, timeoutMs, deferredSourceIds)) {
-        twitchSources.splice(twitchSources.indexOf(source), 1);
-        continue;
-      }
+      pauseSourceSyncOnTimeout(source, error);
       const message = error instanceof Error ? error.message : "Unknown Twitch VOD ingestion error.";
       failedSourceIds.add(source.id);
       syncRuns.push(buildSourceSyncRun({

@@ -23,7 +23,7 @@ How this file works:
 | Milestone | Type | Priority | Status | Goal | Acceptance | Touched Areas | Risk | Rollback |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | M111 The Soak Monitor Follows The Web Container | Ops | Now | Complete | The soak monitor measures the `web` container where it is now and notices a Docker daemon restart (owner decision 2026-10-20: "ja, mach den Soak-Monitor robuster"; on 2026-10-18 a daemon restart moved `web` from `172.22.0.7` to `.5`, the soak asked the old address for 6 min and ended `outage-exceeded` although the channel was on air again 16 s later) | `--follow-web` takes the readiness URL from `web`'s address on the stack network (`docker compose ps -q web`, `docker inspect`, the project's network first), reads it again on a refused connection (curl 7) and, when it moved, logs one `web-address-changed old=… new=…` line and takes the sample there; no `web` at the start stops with a clear message; an explicit `CHECK_BASE_URL` keeps today's behaviour and is never looked up; every docker call is bounded (`SOAK_DOCKER_TIMEOUT_SECONDS`, 10 s), so a daemon that does not answer cannot hold the samples back and a long off-air time with `dockerd` down still ends `outage-exceeded`; every service's `State.StartedAt` is read after each healthy sample and once more when an outage ends the soak, never while one runs, a move of all is logged as `docker-daemon-restart startedAt=…`, of some as `container-started-again`, neither fails the soak by itself, both are counted in the completion line (`dockerRestarts=N containersStartedAgain=N`); script tests for these cases fail without the change; step 10 of *Safe Upgrade Flow* uses `--follow-web` and a log name with seconds | scripts (soak monitor), tests, docs (deployment, README), `AGENTS.md` soak line | low: an ops script only; the start-time read adds five `docker compose ps` and five `docker inspect` calls per healthy sample, each bounded | revert the merge; a soak started with `--follow-web` is started again with `CHECK_BASE_URL=http://<web address>:3000` |
-| M112 A Broken Source Neither Crashes Nor Stalls The Loop | Reliability | Now | Complete | Suggestions 1, 2 and 3 of `planning/suggestions-2026-10-04.md` (owner's go 2026-10-20 23:55 UTC: "Nichts zurückhalten, kann alles nach seinen tests auf main"): a noisy ffmpeg no longer exhausts the connection pool (M98 follow-up 2), a pool no longer stays on a pick that cannot be prepared (M98 follow-up 1), sources on a dead host no longer hold the worker cycle until the stall guard (M87 limit) | `pnpm exec vitest run tests/unit/coalescing-writer.test.ts tests/unit/selection-pass-over.test.ts tests/unit/remote-call-budget.test.ts` green: (1) a burst of 400 stderr lines with two per-line writes exhausts a 10-connection model pool (> 100 "timeout exceeded when trying to connect"), the same burst through `CoalescingWriter` gives 0 and leaves a connection to the cycle; the two stderr handlers of `index.ts` call no `updatePlayoutRuntime(`, `upsertIncident(`, `markDestinationFailure(` or `updateProgramFeedRuntimeStatus(` directly; (2) three broken items of one source, every resolve failing, 15 s cycles: without the pass-over the pool picks the first for 17 cycles and the breaker holds one item, with it the picks are the three items and then the fallback, the breaker open with three items; the failed pick is written to the probe cache as counted and joins quarantine's list after the outage filter (pins in `selection-pass-over.test.ts`, `probe-network-outage.test.ts`, `source-breaker-wiring.test.ts`); (3) the worker's budget classes on a simulated clock, 12 cycles of three dead-host YouTube sources, a healthy YouTube and a healthy Twitch source, with 0 s and 45 s of earlier steps: without the budget one cycle waits > 300 s; with it no cycle passes 270 s (+3 s), the Twitch source and the chapter probes run on every cycle, the healthy YouTube source within four cycles and on every cycle from the fourth, each dead host is reported failed, never twice within 10 min; a dead Twitch host behind a 31 s YouTube sync is reported in the first cycle; three healthy 60 s YouTube channels starve neither Twitch nor chapters; a healthy slow listing cut short is deferred, not reported; pins: both syncs take their step budget's timeout, paused sources are skipped, cut-short timeouts leave the walk, the chapter backfill takes `fitsWhole` | `apps/worker` (`coalescing-writer.ts`, `selection-pass-over.ts`, `remote-call-budget.ts`, `index.ts`), tests, `docs/operations.md` | low: the stderr sample and incidents in the database lag a burst by up to 2 s / 10 s (the container log keeps every line); a pool item whose probe failed in the last minute loses its turn in this pass of the rotation; a source deferred by the budget is synced a cycle later, one whose call ran out of its time 10 min later | revert the merge |
+| M112 A Broken Source Neither Crashes Nor Stalls The Loop | Reliability | Now | Complete | Suggestions 1, 2 and 3 of `planning/suggestions-2026-10-04.md` (owner's go 2026-10-20 23:55 UTC: "Nichts zurückhalten, kann alles nach seinen tests auf main"): a noisy ffmpeg no longer exhausts the connection pool (M98 follow-up 2), a pool no longer stays on a pick that cannot be prepared (M98 follow-up 1), sources on a dead host no longer hold the worker cycle until the stall guard (M87 limit) | `pnpm exec vitest run tests/unit/coalescing-writer.test.ts tests/unit/selection-pass-over.test.ts tests/unit/remote-call-budget.test.ts` green: (1) a burst of 400 stderr lines with two per-line writes exhausts a 10-connection model pool (> 100 "timeout exceeded when trying to connect"), the same burst through `CoalescingWriter` gives 0 and leaves a connection to the cycle; the two stderr handlers of `index.ts` call no `updatePlayoutRuntime(`, `upsertIncident(`, `markDestinationFailure(` or `updateProgramFeedRuntimeStatus(` directly; (2) three broken items of one source, every resolve failing, 15 s cycles: without the pass-over the pool picks the first for 17 cycles and the breaker holds one item, with it the picks are the three items and then the fallback, the breaker open with three items; the failed pick is written to the probe cache as counted and joins quarantine's list after the outage filter (pins in `selection-pass-over.test.ts`, `probe-network-outage.test.ts`, `source-breaker-wiring.test.ts`); (3) the worker's budget classes on a simulated clock: without the budget two dead YouTube hosts and a dead Twitch host hold one cycle > 300 s; with it, for stall guards of 60, 120 and 300 s and 0 or 10 s of earlier steps, 60 cycles of two dead and two healthy YouTube sources and one dead and one healthy Twitch source: every call ends by 80 % of the stall guard, no healthy source is ever reported failed, each dead host is reported and never twice within 10 min, every healthy source syncs again within a bounded number of cycles; a 115 s YouTube and a 110 s Twitch listing are never reported failed; five 100 s YouTube channels and a 100 s Twitch source: no failure, the Twitch source waits one cycle at most, each YouTube source five at most; a host back after 5 min syncs within the pause plus 5 min and on every cycle after; pins: both syncs take `fitsWhole` (YouTube with the Twitch reserve), walk `orderDeferredFirst`, skip paused sources, pause on a timeout, the chapter backfill takes `fitsWhole` | `apps/worker` (`coalescing-writer.ts`, `selection-pass-over.ts`, `remote-call-budget.ts`, `index.ts`), tests, `docs/operations.md` | low: the stderr sample and incidents in the database lag a burst by up to 2 s / 10 s (the container log keeps every line); a pool item whose probe failed in the last minute loses its turn in this pass of the rotation; a source deferred by the budget is synced a cycle later, one whose call ran out of its 2 min 10 min later; more slow sources than fit one cycle sync over several | revert the merge |
 
 The findings outside the milestones in `planning/suggestions-2026-10-04.md` are taken in their order, one
 milestone at a time, since the owner's go of 2026-10-20 23:55 UTC (1-3: M112; 26 and 27 only the owner
@@ -359,7 +359,8 @@ entries under its *DUT checks of 2.3.1 (run)*; the M107 entry below did not run 
   ```
 
 - M112, on the candidate's first day on air: no `worker.loop.crashed` and no `worker.unhandled_rejection`
-  in the playout and uplink logs; any `ffmpeg.stderr.write_failed`, `source.sync.deferred` or
+  in the playout and uplink logs; any `ffmpeg.stderr.write_failed`, `source.sync.deferred`,
+  `source.sync.paused` or
   `playout.selection.passed_over` line is listed with its time in the result (none is expected on a
   healthy day; a `passed_over` names an item whose resolve failed, which the incident list should name
   too). Passes when the first two counts are 0.
@@ -367,7 +368,7 @@ entries under its *DUT checks of 2.3.1 (run)*; the M107 entry below did not run 
   ```sh
   ssh dut 'docker logs --since 24h stream247-playout-1 2>&1 | grep -cE "worker.loop.crashed|worker.unhandled_rejection"'
   ssh dut 'docker logs --since 24h stream247-uplink-1 2>&1 | grep -cE "worker.loop.crashed|worker.unhandled_rejection"'
-  ssh dut 'for c in playout uplink worker; do docker logs --since 24h stream247-$c-1 2>&1 | grep -E "ffmpeg.stderr.write_failed|source.sync.deferred|playout.selection.passed_over|asset.chapters.deferred"; done'
+  ssh dut 'for c in playout uplink worker; do docker logs --since 24h stream247-$c-1 2>&1 | grep -E "ffmpeg.stderr.write_failed|source.sync.deferred|source.sync.paused|playout.selection.passed_over|asset.chapters.deferred"; done'
   ```
 
 - The checks of 2.2.0-rc.1 are in the archive, sections M75-M82. That candidate never reached the DUT, so
@@ -492,43 +493,45 @@ Sections for milestones in **Open** that need more than their row, appended in m
   - Not changed: the schedule preview, the week view and the overlay's next title come from core's
     rotation and do not know the worker's probe cache; for up to a minute they can name an item the
     worker passes over.
-- **3, the dead host (M87 limit).** Two deadlines (`apps/worker/src/remote-call-budget.ts`): the cycle's,
-  30 s before the stall guard after the start of `runWorkerCycle` (`RemoteCallBudget.forCycle`, 270 s
-  by default), and one per sync step, `SOURCE_SYNC_YTDLP_TIMEOUT_MS` (120 s) after the step's own start
-  and never past the cycle's (`forStep`). The YouTube and Twitch syncs (listing and Twitch VOD metadata)
-  ask their step's budget for each call's timeout: at most the call's own, at most what is left, and no
-  call when less than `MIN_REMOTE_CALL_MS` (15 s) or the call's own timeout, if shorter, is left. So
-  each step's first call gets its whole timeout whatever ran before, and one sync never takes the
-  other's time. A source without room is left out of that cycle's sync entirely (no run, no status, no
-  replace, no incident: as if the sync had not reached it) and goes first in its sync's next run
-  (`source.sync.deferred`).
-  - `SourceSyncTimeouts` (process memory, keyed by source id and URL): a call that runs out of a timeout
-    a deadline cut short is deferred like a source without room, the first time in a row; the second
-    time, or out of its whole timeout, it is reported as failed as before and the source is paused for
-    10 min (`source.sync.backoff`). After the pause it is walked after the other sources until it
-    answers (`orderSourcesForSync`), so a dead host back from its pause never holds a healthy source up.
-  - Chapter probes start only when their whole timeout fits the cycle's budget (`fitsWhole`;
-    `asset.chapters.deferred` otherwise): a cut-short probe that ran out would be stored as failed.
-  - Worst case with the defaults: 120 s per sync step, both within 270 s of the cycle's start, against
-    the 300 s stall guard. Each unknown dead host costs its sync step once (one cycle each), then once
-    per 10 min.
-- Reviews (fresh subagents, two rounds). Found and fixed: with one budget shared by the syncs, a dead
-  YouTube host at the head took it on every cycle and the Twitch sync and the chapter probes after it
-  never ran, and so did a heavy but healthy YouTube load; a timeout the budget cut short reported a
-  healthy slow source as failed on every cycle; with the budget counted from the cycle's start, earlier
-  steps of 30 s made every call short, so a dead host was never reported (now one step budget each, the
-  pause after a timeout, cut short only deferred once); chapter probes could get a cut-short timeout (now
-  whole only); a pause outlived a fixed URL (now keyed by the URL too); the `program-feed.input` upsert held back 10 s could
-  reopen the incident the uplink had just resolved (that key writes one at a time, without the interval);
-  a throwing error reporter could leave an unhandled rejection (caught). Left as they are, documented in
-  `docs/operations.md`: the runtime queue still lists (and labels as prefetched) a passed-over item, and
-  warms the items after it, the actual pick; a destination's failure count grows per coalesced write,
-  not per line; a pick that failed during the channel's own network outage is passed over for up to a
-  minute after the network is back (not counted). Left, not documented for operators: the outage check
-  runs once for the breaker's record and once for quarantine's, so a verdict that changes between the two
-  can count a failure for one and not the other (the same can already happen between two cycles); a
-  cycle that ends early after the pick's failure was cached (the crash-loop hold, a throwing step) loses
-  that one count for quarantine, the breaker keeps it.
+- **3, the dead host (M87 limit).** One deadline per cycle (`apps/worker/src/remote-call-budget.ts`):
+  80 % of the stall guard after the start of `runWorkerCycle` (`RemoteCallBudget.forCycle`, 240 s by
+  default), the rest kept for the steps after the calls. The YouTube and Twitch syncs (listing and
+  Twitch VOD metadata) and the chapter probes start a call only when its whole own timeout still ends
+  before the deadline (`fitsWhole`); no timeout is ever cut short. A source without room is left out of
+  that cycle's sync entirely (no run, no status, no replace, no incident: as if the sync had not reached
+  it) and goes first in its sync's next run, longest waiting first (`orderDeferredFirst`,
+  `source.sync.deferred`), so an overloaded sync takes turns. When a Twitch source was deferred, the
+  YouTube sync keeps one call's timeout for it (`reserveMs`): a heavy YouTube load cannot keep Twitch
+  waiting for good. A call that runs out of its timeout is reported as failed as before and its source
+  is paused for 10 min (`SourceSyncPauses`, process memory, keyed by source id and URL,
+  `source.sync.paused`).
+  - Worst case with the defaults: two whole listings of 120 s per cycle, ending by 240 s, against the
+    300 s stall guard. Each dead host costs one call per 10 min.
+  - Not covered: the steps after the calls (Twitch requests, 10 s each, chat) get the remaining 20 %
+    (60 s by default, 12 s at the 60 s minimum); a Twitch API that hangs on every request on top of dead
+    source hosts can still reach a stall guard set near its minimum, as before M112. With a stall guard
+    near 60 s and earlier steps that leave less than one call's 30 s, the syncs wait for a faster cycle.
+    The chapter backfill runs after both syncs and has no reserve of its own: while slow listings fill
+    every cycle, chapters wait (they are a backfill, nothing airs from them).
+- Reviews (fresh subagents, three rounds). Item 3 changed design each round and ended at the simplest
+  rules: the first shared budget let a dead YouTube host take every cycle's time from Twitch and
+  chapters; cutting a timeout short to what was left reported healthy slow sources as failed; step
+  budgets with a deferral after one cut-short timeout still reported a recovered or slow healthy source
+  (walked last, or cut short twice), starved Twitch at a 60 s stall guard, and documented a pause cost
+  that was twice the real one. Now no timeout is cut short, so none of these can happen; overload is
+  handled by deferring and taking turns. Also found and fixed: chapter probes could get a cut-short
+  timeout (now whole only); a pause outlived a fixed URL (now keyed by the URL too); the
+  `program-feed.input` upsert held back 10 s could reopen the incident the uplink had just resolved
+  (that key writes one at a time, without the interval); a throwing error reporter could leave an
+  unhandled rejection (caught). Left as they are, documented in `docs/operations.md`: the runtime queue
+  still lists (and labels as prefetched) a passed-over item, and warms the items after it, the actual
+  pick; a destination's failure count grows per coalesced write, not per line; a pick that failed during
+  the channel's own network outage is passed over for up to a minute after the network is back (not
+  counted). Left, not documented for operators: the outage check runs once for the breaker's record and
+  once for quarantine's, so a verdict that changes between the two can count a failure for one and not
+  the other (the same can already happen between two cycles); a cycle that ends early after the pick's
+  failure was cached (the crash-loop hold, a throwing step) loses that one count for quarantine, the
+  breaker keeps it.
 - Tests: `tests/unit/coalescing-writer.test.ts`, `tests/unit/selection-pass-over.test.ts`,
   `tests/unit/remote-call-budget.test.ts`; pins updated in `tests/unit/probe-network-outage.test.ts`,
   `tests/unit/source-breaker-wiring.test.ts` (the new lines after the breaker's record of the failed
