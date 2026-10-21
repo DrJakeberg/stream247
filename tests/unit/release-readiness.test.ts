@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { setTimeout as wait } from "node:timers/promises";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const rootDir = path.resolve(__dirname, "../..");
@@ -66,9 +67,11 @@ type CurlRefusal = { host: string; fromCall: number; untilCall?: number };
 // between its own tests. Without a pause after the release the file that holds it can take it again
 // before the other file's next 25-ms poll, and the other file waits out the whole run of the first:
 // since M111 release-readiness runs about 30 s under the full suite, as long as the old 30-s deadline.
+// The waits are timers, not Atomics.wait: a test file whose tests run synchronously back to back must give
+// its event loop a turn between them, or vitest's worker RPC times out after 60 s although every test passed.
 const ROOT_ENV_LOCK_WAIT_MS = 120_000;
 
-function acquireRootEnvLock() {
+async function acquireRootEnvLock() {
   const deadline = Date.now() + ROOT_ENV_LOCK_WAIT_MS;
 
   while (Date.now() < deadline) {
@@ -81,14 +84,14 @@ function acquireRootEnvLock() {
       if (code !== "EEXIST") {
         throw error;
       }
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+      await wait(25);
     }
   }
 
   throw new Error(`Timed out waiting for ${rootEnvLockPath}`);
 }
 
-function releaseRootEnvLock() {
+async function releaseRootEnvLock() {
   if (!rootEnvLockHeld) {
     return;
   }
@@ -96,7 +99,7 @@ function releaseRootEnvLock() {
   rmSync(rootEnvLockPath, { force: true, recursive: true });
   rootEnvLockHeld = false;
   // Hand the lock over: the other file polls every 25 ms.
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60);
+  await wait(60);
 }
 
 function rememberTempDir(prefix: string) {
@@ -429,19 +432,19 @@ function extractComposeServiceBlock(serviceName: string) {
   return lines.slice(start, end).join("\n");
 }
 
-beforeEach(() => {
-  acquireRootEnvLock();
+beforeEach(async () => {
+  await acquireRootEnvLock();
   rootEnvState = createRootEnvTestState(rootEnvPath);
 }, ROOT_ENV_LOCK_WAIT_MS + 10_000);
 
-afterEach(() => {
+afterEach(async () => {
   restoreManagedRootEnv(rootEnvPath, rootEnvState);
 
   while (tempDirs.length > 0) {
     rmSync(tempDirs.pop() as string, { force: true, recursive: true });
   }
 
-  releaseRootEnvLock();
+  await releaseRootEnvLock();
 });
 
 describe("release readiness files", () => {
@@ -1152,7 +1155,7 @@ describe("release readiness scripts", () => {
   // A socket-activated dockerd that is stopped or starting leaves docker calls hanging. The off-air time must
   // still reach the outage window: the failure path asks docker nothing but the bounded lookup.
   // A fraction of a second (GNU timeout takes one): each blocked call costs the test that much, and these tests
-  // hold the root-env lock that tests/unit/release-preflight.test.ts waits at most 30 s for.
+  // hold the root-env lock that tests/unit/release-preflight.test.ts waits at most ROOT_ENV_LOCK_WAIT_MS for.
   const DOCKER_HANGS = { SOAK_DOCKER_TIMEOUT_SECONDS: "0.2" };
   const blockedCalls = (dockerLog: string) => dockerLog.split("\n").filter((line) => line.startsWith("blocked: "));
 

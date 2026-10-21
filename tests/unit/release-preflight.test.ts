@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { setTimeout as wait } from "node:timers/promises";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const rootDir = path.resolve(__dirname, "../..");
@@ -17,9 +18,11 @@ let rootEnvLockHeld = false;
 // between its own tests. Without a pause after the release the file that holds it can take it again
 // before the other file's next 25-ms poll, and the other file waits out the whole run of the first:
 // since M111 release-readiness runs about 30 s under the full suite, as long as the old 30-s deadline.
+// The waits are timers, not Atomics.wait: a test file whose tests run synchronously back to back must give
+// its event loop a turn between them, or vitest's worker RPC times out after 60 s although every test passed.
 const ROOT_ENV_LOCK_WAIT_MS = 120_000;
 
-function acquireRootEnvLock() {
+async function acquireRootEnvLock() {
   const deadline = Date.now() + ROOT_ENV_LOCK_WAIT_MS;
 
   while (Date.now() < deadline) {
@@ -32,14 +35,14 @@ function acquireRootEnvLock() {
       if (code !== "EEXIST") {
         throw error;
       }
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+      await wait(25);
     }
   }
 
   throw new Error(`Timed out waiting for ${rootEnvLockPath}`);
 }
 
-function releaseRootEnvLock() {
+async function releaseRootEnvLock() {
   if (!rootEnvLockHeld) {
     return;
   }
@@ -47,7 +50,7 @@ function releaseRootEnvLock() {
   rmSync(rootEnvLockPath, { force: true, recursive: true });
   rootEnvLockHeld = false;
   // Hand the lock over: the other file polls every 25 ms.
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60);
+  await wait(60);
 }
 
 function createDockerStub(tempDir: string, options?: { requireRootEnvDuringConfig?: boolean }) {
@@ -149,11 +152,11 @@ function moveRootEnvOutOfTheWay(tempDir: string) {
   renameSync(rootEnvPath, rootEnvBackupPath);
 }
 
-beforeEach(() => {
-  acquireRootEnvLock();
+beforeEach(async () => {
+  await acquireRootEnvLock();
 }, ROOT_ENV_LOCK_WAIT_MS + 10_000);
 
-afterEach(() => {
+afterEach(async () => {
   if (rootEnvBackupPath && existsSync(rootEnvBackupPath)) {
     renameSync(rootEnvBackupPath, rootEnvPath);
   }
@@ -163,7 +166,7 @@ afterEach(() => {
     rmSync(tempDirs.pop() as string, { force: true, recursive: true });
   }
 
-  releaseRootEnvLock();
+  await releaseRootEnvLock();
 });
 
 describe("release preflight", () => {
