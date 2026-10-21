@@ -3,52 +3,14 @@ import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, renameSync
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { acquireRootEnvLock, releaseRootEnvLock, ROOT_ENV_LOCK_HANDOVER_MS, ROOT_ENV_LOCK_WAIT_MS } from "./root-env-lock";
 
 const rootDir = path.resolve(__dirname, "../..");
 const rootEnvPath = path.join(rootDir, ".env");
-const rootEnvLockPath = path.join(os.tmpdir(), "stream247-release-root-env.lock");
 const scriptPath = path.join(rootDir, "scripts", "release-preflight.sh");
 const prepareEnvScriptPath = path.join(rootDir, "scripts", "prepare-release-preflight-env.sh");
 const tempDirs: string[] = [];
 let rootEnvBackupPath: string | null = null;
-let rootEnvLockHeld = false;
-
-// The two release test files share this lock, one test at a time, and each releases and takes it again
-// between its own tests. Without a pause after the release the file that holds it can take it again
-// before the other file's next 25-ms poll, and the other file waits out the whole run of the first:
-// since M111 release-readiness runs about 30 s under the full suite, as long as the old 30-s deadline.
-const ROOT_ENV_LOCK_WAIT_MS = 120_000;
-
-function acquireRootEnvLock() {
-  const deadline = Date.now() + ROOT_ENV_LOCK_WAIT_MS;
-
-  while (Date.now() < deadline) {
-    try {
-      mkdirSync(rootEnvLockPath);
-      rootEnvLockHeld = true;
-      return;
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code !== "EEXIST") {
-        throw error;
-      }
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
-    }
-  }
-
-  throw new Error(`Timed out waiting for ${rootEnvLockPath}`);
-}
-
-function releaseRootEnvLock() {
-  if (!rootEnvLockHeld) {
-    return;
-  }
-
-  rmSync(rootEnvLockPath, { force: true, recursive: true });
-  rootEnvLockHeld = false;
-  // Hand the lock over: the other file polls every 25 ms.
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60);
-}
 
 function createDockerStub(tempDir: string, options?: { requireRootEnvDuringConfig?: boolean }) {
   const binDir = path.join(tempDir, "bin");
@@ -149,11 +111,11 @@ function moveRootEnvOutOfTheWay(tempDir: string) {
   renameSync(rootEnvPath, rootEnvBackupPath);
 }
 
-beforeEach(() => {
-  acquireRootEnvLock();
+beforeEach(async () => {
+  await acquireRootEnvLock();
 }, ROOT_ENV_LOCK_WAIT_MS + 10_000);
 
-afterEach(() => {
+afterEach(async () => {
   if (rootEnvBackupPath && existsSync(rootEnvBackupPath)) {
     renameSync(rootEnvBackupPath, rootEnvPath);
   }
@@ -163,8 +125,8 @@ afterEach(() => {
     rmSync(tempDirs.pop() as string, { force: true, recursive: true });
   }
 
-  releaseRootEnvLock();
-});
+  await releaseRootEnvLock();
+}, ROOT_ENV_LOCK_HANDOVER_MS + 10_000);
 
 describe("release preflight", () => {
   it("rejects blank required production settings", () => {
