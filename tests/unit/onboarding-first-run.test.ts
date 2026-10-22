@@ -307,6 +307,24 @@ describe("M116: the setup text about CHANNEL_TIMEZONE (suggestion 8)", () => {
     expect(html).toMatch(/id="channel-timezone"[^>]*value="America\/New_York"|value="America\/New_York"[^>]*id="channel-timezone"/);
   });
 
+  it("says the field holds the browser's zone when nothing is saved and the environment's zone is ignored", () => {
+    vi.spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions").mockReturnValue({
+      ...new Intl.DateTimeFormat("en-US", { timeZone: "UTC" }).resolvedOptions(),
+      timeZone: "Europe/Berlin"
+    });
+    const html = mountWithEffects(SetupInstanceForm, {
+      initialAppUrl: "",
+      initialTimezone: "",
+      initialLanguage: "",
+      envAppUrl: "",
+      envTimezone: "",
+      envTimezoneRejected: "Europe/Berln",
+      envLanguage: ""
+    });
+    expect(html).toMatch(/id="channel-timezone"[^>]*value="Europe\/Berlin"|value="Europe\/Berlin"[^>]*id="channel-timezone"/);
+    expect(html).toContain("so it is ignored and the zone saved here is used (empty means UTC). Prefilled with your browser&#x27;s time zone; check it.");
+  });
+
   it("still says a known zone in the environment overrides the saved one", async () => {
     vi.stubEnv("CHANNEL_TIMEZONE", " Europe/Vienna ");
     const html = await renderInstanceStep();

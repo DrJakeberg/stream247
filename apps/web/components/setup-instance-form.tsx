@@ -103,7 +103,7 @@ export function SetupInstanceForm(props: {
           props.envTimezone
             ? `CHANNEL_TIMEZONE is set to ${props.envTimezone} in the environment and overrides whatever is saved here.`
             : props.envTimezoneRejected
-              ? `CHANNEL_TIMEZONE is set to ${props.envTimezoneRejected} in the environment, which is not a time zone name this install knows, so it is ignored and the zone saved here is used (empty means UTC). IANA name like Europe/Berlin.`
+              ? `CHANNEL_TIMEZONE is set to ${props.envTimezoneRejected} in the environment, which is not a time zone name this install knows, so it is ignored and the zone saved here is used (empty means UTC). ${zoneDetected ? "Prefilled with your browser's time zone; check it." : "IANA name like Europe/Berlin."}`
               : zoneDetected
                 ? "Your browser's time zone; check it. IANA name like Europe/Berlin. The schedule grid and every on-air clock use it."
                 : props.zoneInUse && !props.initialTimezone && typedTimezone === null
