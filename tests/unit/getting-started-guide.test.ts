@@ -229,15 +229,15 @@ function newestReleaseVersion(changelog: string): string | undefined {
 // I3: the compose file a stranger downloads from a release tag has to start that release. The release
 // commit sets the image defaults by hand; this turns a release commit that forgets them red.
 describe("compose image defaults follow the newest release (M92, I3)", () => {
-  it("pins web, worker, playout and uplink to the newest non-rc version in CHANGELOG.md", () => {
+  it("pins web, worker, relay-watchdog, playout and uplink to the newest non-rc version in CHANGELOG.md", () => {
     const newestRelease = newestReleaseVersion(read("CHANGELOG.md"));
     expect(newestRelease, "a `## X.Y.Z` heading in CHANGELOG.md").toBeTruthy();
 
     const defaults = [...compose.matchAll(/image: \$\{STREAM247_[A-Z]+_IMAGE:-ghcr\.io\/drjakeberg\/stream247-([a-z]+):v([^}]+)\}/g)].map(
       (match) => ({ image: match[1], tag: match[2] })
     );
-    // web, worker, playout, and the uplink running the worker image.
-    expect(defaults.map((entry) => entry.image)).toEqual(["web", "worker", "playout", "worker"]);
+    // web, worker, the relay watchdog (M114) and the uplink running the worker image, and playout.
+    expect(defaults.map((entry) => entry.image)).toEqual(["web", "worker", "worker", "playout", "worker"]);
     for (const entry of defaults) {
       expect(entry.tag, `compose default of stream247-${entry.image}`).toBe(newestRelease);
     }

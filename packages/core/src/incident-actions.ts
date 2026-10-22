@@ -105,7 +105,7 @@ export const INCIDENT_OPERATOR_ACTIONS: readonly IncidentOperatorAction[] = [
   {
     fingerprint: "relay.unreachable",
     keyed: false,
-    action: `Restart the relay with \`${restartCommand("relay")}\` on the host. The incident closes once it answers again.`
+    action: `The relay watchdog restarts the relay after three minutes; if the incident stays, restart it with \`${restartCommand("relay")}\` and check \`docker compose logs relay-watchdog\`. The incident closes once it answers again.`
   },
   {
     fingerprint: "twitch.refresh.failed",
