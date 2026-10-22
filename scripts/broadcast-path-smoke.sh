@@ -17,6 +17,11 @@
 #   4. A network outage (M82): the playout loses its way out for 90 s (`docker network disconnect`).
 #      Expected: `playout.probe.network_outage` lines, no breaker, no quarantine; once reconnected the
 #      remote items probe cleanly and one goes on air.
+#   5. A stock RTMP server (M115): a second primary destination points at MediaMTX 1.15.4, the relay's
+#      own image, which refuses an flv stream whose AVC sequence header is empty ("unable to parse H264
+#      config"). Over the phase-1 measurement it keeps one publishing connection, never refuses one, and a
+#      reader gets the stream back. Mutation run: the worker image's ffmpeg with the uplink's encoder and
+#      tee options but without `-flags:v +global_header` is refused by the same server.
 #
 # "The way out" is a second, internal compose network (`outside`) on a documentation range,
 # 198.51.100.0/24 (RFC 5737). The sink and the stub live only there; the playout and the uplink join it
@@ -57,13 +62,15 @@ SINK_DIR="$TMP_DIR/sink"
 FEED_PLAYLIST="$MEDIA_DIR/.stream247-program-feed/program.m3u8"
 BASE_URL="http://127.0.0.1:${PORT}"
 SINK_IP="198.51.100.10"
+STOCK_RTMP_IP="198.51.100.11"
+STOCK_RTMP_KEY="stock-rtmp-smoke"
 STUB_IP="198.51.100.20"
 OUTSIDE_SUBNET="198.51.100.0/24"
 # Seconds each measurement runs; the acceptance names 60.
 MEASURE_SECONDS="${STREAM247_BROADCAST_SMOKE_MEASURE_SECONDS:-60}"
 # How long the playout is cut off; the acceptance names 90.
 OUTAGE_SECONDS="${STREAM247_BROADCAST_SMOKE_OUTAGE_SECONDS:-90}"
-# Phases to run, for local iteration: all, path (1 and 2 only) or sources (3 and 4 only).
+# Phases to run, for local iteration: all, path (1, 2 and 5 only) or sources (3 and 4 only).
 PHASES="${STREAM247_BROADCAST_SMOKE_PHASES:-all}"
 
 # Set once this run has put its own .env in the repository root; before that the root .env is the
@@ -150,6 +157,8 @@ dump_failure_context() {
   echo
   compose logs --tail 30 sink || true
   echo
+  compose logs --tail 30 stock-rtmp || true
+  echo
   compose logs --tail 30 stub || true
 }
 
@@ -227,6 +236,33 @@ wait_for_uplink_publishing() {
     sleep 5
   done
   fail "the uplink never started publishing to the sink."
+}
+
+# The stock RTMP server's log (MediaMTX writes one line per connection event).
+stock_rtmp_log() {
+  compose logs --no-color --no-log-prefix stock-rtmp 2>/dev/null || true
+}
+
+stock_rtmp_count() {
+  stock_rtmp_log | grep -cF "$1" || true
+}
+
+wait_for_stock_rtmp_publishing() {
+  for _ in $(seq 1 36); do
+    if [ "$(stock_rtmp_count "unable to parse H264 config")" -gt 0 ]; then
+      fail "the stock RTMP server refused the uplink's H.264 header."
+    fi
+    if [ "$(stock_rtmp_count "is publishing to path 'live/${STOCK_RTMP_KEY}'")" -gt 0 ]; then
+      return 0
+    fi
+    sleep 5
+  done
+  fail "the uplink never published to the stock RTMP server."
+}
+
+# Bytes a reader gets back from the stock RTMP server in 5 s, read with the worker image's ffmpeg.
+stock_rtmp_read_bytes() {
+  compose exec -T sink sh -c "timeout -s KILL 20 ffmpeg -hide_banner -loglevel error -rw_timeout 10000000 -i rtmp://${STOCK_RTMP_IP}:1935/live/${STOCK_RTMP_KEY} -t 5 -map 0:v:0 -c copy -f flv - 2>/dev/null | wc -c" 2>/dev/null | tr -d ' ' || true
 }
 
 wait_for_feed() {
@@ -454,6 +490,11 @@ services:
   postgres:
     volumes:
       - ${POSTGRES_DIR}:/var/lib/postgresql/data
+  stock-rtmp:
+    image: \${STREAM247_RELAY_IMAGE:-bluenviron/mediamtx:1.15.4}
+    networks:
+      outside:
+        ipv4_address: ${STOCK_RTMP_IP}
   sink:
     image: \${STREAM247_WORKER_IMAGE}
     entrypoint: ["sh", "-c"]
@@ -486,6 +527,10 @@ wait_for_http
 api_post "/api/setup/bootstrap" "$(jq -nc --arg email "$OWNER_EMAIL" --arg password "$OWNER_PASSWORD" '{email: $email, password: $password}')" >/dev/null
 wait_for_local_library_assets
 
+# Phase 5's destination: a second primary, so the uplink's tee publishes to both sinks at once.
+api_post "/api/destinations" "$(jq -nc --arg url "rtmp://${STOCK_RTMP_IP}:1935/live" --arg key "$STOCK_RTMP_KEY" \
+  '{provider: "custom-rtmp", role: "primary", name: "Stock RTMP server", rtmpUrl: $url, streamKey: $key}')" >/dev/null
+
 LOCAL_POOL_ID="$(create_pool "Broadcast Smoke Local" "source-local-library")"
 [ -n "$LOCAL_POOL_ID" ] || fail "could not resolve the local pool."
 
@@ -502,8 +547,28 @@ wait_for_uplink_publishing
 
 if [ "$PHASES" != "sources" ]; then
 # --- 1. The path carries the programme --------------------------------------------------------------
-log "Phase 1: program feed and uplink output over ${MEASURE_SECONDS}s."
+log "Phase 1: program feed and uplink output over ${MEASURE_SECONDS}s (phase 5: and the stock RTMP server)."
+wait_for_stock_rtmp_publishing
+stock_closed_before="$(stock_rtmp_count "closed:")"
 measure_path || fail "the production path did not carry the programme over ${MEASURE_SECONDS}s."
+
+# --- 5. A stock RTMP server takes the uplink (M115) ---------------------------------------------------
+stock_closed_after="$(stock_rtmp_count "closed:")"
+stock_refused="$(stock_rtmp_count "unable to parse H264 config")"
+stock_read="$(stock_rtmp_read_bytes)"
+log "Stock RTMP server: closed connections ${stock_closed_before} -> ${stock_closed_after} over ${MEASURE_SECONDS}s; refused headers ${stock_refused}; a reader got ${stock_read:-0} bytes in 5 s"
+[ "$stock_refused" = "0" ] || fail "the stock RTMP server refused the uplink's H.264 header."
+# One reconnect is tolerated: an uplink restart for another reason (a watchdog after a feed hiccup) closes
+# the connection once. The fault this phase exists for closes one a second.
+[ "$stock_closed_after" -le $((stock_closed_before + 1)) ] || fail "the uplink's connection to the stock RTMP server closed $((stock_closed_after - stock_closed_before)) times during the measurement."
+[ "${stock_read:-0}" -gt 0 ] || fail "a reader got nothing back from the stock RTMP server."
+
+log "Phase 5 (mutation): the uplink's encoder and tee options without -flags:v +global_header."
+compose exec -T sink sh -c "timeout -s KILL 20 ffmpeg -hide_banner -loglevel error -re -f lavfi -i testsrc2=size=640x360:rate=30 -f lavfi -i sine=sample_rate=44100 -c:v libx264 -preset veryfast -pix_fmt yuv420p -g 60 -tune zerolatency -bf 0 -c:a aac -ar 44100 -map 0:v:0 -map 1:a:0 -f tee '[onfail=ignore:f=flv:use_fifo=1:fifo_options=attempt_recovery=1\\\\:recover_any_error=1\\\\:recovery_wait_time=1]rtmp://${STOCK_RTMP_IP}:1935/live/stock-rtmp-mutation' >/dev/null 2>&1" || true
+stock_refused_mutation="$(stock_rtmp_count "unable to parse H264 config")"
+log "Stock RTMP server: refused headers ${stock_refused} -> ${stock_refused_mutation} without the global header"
+[ "$stock_refused_mutation" -gt "$stock_refused" ] || fail "without -flags:v +global_header the stock RTMP server did not refuse the header, so phase 5 cannot detect the fault."
+log "Mutation detected: without the global header the stock RTMP server refuses the stream."
 
 # --- 2. Mutation run: the same check fails with the uplink stopped ----------------------------------
 log "Phase 2 (mutation): uplink stopped, the same measurement must fail."
