@@ -10,7 +10,10 @@
 // - a relay that is stopped or paused is left alone: that is someone's decision, not a hang;
 // - three minutes without an answer, so the worker's two-minute incident comes first;
 // - restarts back off (5, 10, 20, 40, then 60 min between them), and the sequence starts again after
-//   30 min of answers.
+//   30 min of answers;
+// - only a relay that has answered since the watchdog started or since its last restart: one that never
+//   answers (another network, `api: no`, an override) is a configuration matter, and restarting it
+//   every hour would only cut the air.
 
 import { request } from "node:http";
 import { RELAY_API_BASE_URL, isRelayApiReachable } from "./relay-watch.js";
@@ -25,21 +28,41 @@ export type RelayContainerState = "running" | "paused" | "stopped" | "missing";
 export type RelayRestartDecision =
   | { action: "none" }
   | { action: "restart"; unreachableForMs: number; attempt: number }
-  | { action: "hold"; unreachableForMs: number; retryAtMs: number };
+  | { action: "hold"; unreachableForMs: number; retryAtMs: number }
+  | { action: "never-answered"; unreachableForMs: number };
 
 export class RelayRestartPolicy {
   private unreachableSinceMs: number | null = null;
   private reachableSinceMs: number | null = null;
   private attempts = 0;
   private nextAllowedAtMs = 0;
+  private answeredSinceRestart = false;
+  private holdLogged = false;
+
+  /** True when the current hold was already logged; marks it logged. */
+  markLogged(): boolean {
+    const was = this.holdLogged;
+    this.holdLogged = true;
+    return was;
+  }
 
   observe(input: { reachable: boolean; container: RelayContainerState }, nowMs: number): RelayRestartDecision {
+    const decision = this.decide(input, nowMs);
+    if (decision.action !== "hold" && decision.action !== "never-answered") {
+      this.holdLogged = false;
+    }
+    return decision;
+  }
+
+  private decide(input: { reachable: boolean; container: RelayContainerState }, nowMs: number): RelayRestartDecision {
     if (input.container !== "running") {
       this.unreachableSinceMs = null;
+      this.reachableSinceMs = null;
       return { action: "none" };
     }
     if (input.reachable) {
       this.unreachableSinceMs = null;
+      this.answeredSinceRestart = true;
       if (this.reachableSinceMs === null) {
         this.reachableSinceMs = nowMs;
       }
@@ -57,12 +80,16 @@ export class RelayRestartPolicy {
     if (unreachableForMs < RELAY_RESTART_AFTER_MS) {
       return { action: "none" };
     }
+    if (!this.answeredSinceRestart) {
+      return { action: "never-answered", unreachableForMs };
+    }
     if (nowMs < this.nextAllowedAtMs) {
       return { action: "hold", unreachableForMs, retryAtMs: this.nextAllowedAtMs };
     }
     const backoff = RELAY_RESTART_BACKOFF_MS[Math.min(this.attempts, RELAY_RESTART_BACKOFF_MS.length - 1)] as number;
     this.attempts += 1;
     this.nextAllowedAtMs = nowMs + backoff;
+    this.answeredSinceRestart = false;
     // A fresh streak: the restarted relay gets the full three minutes to answer.
     this.unreachableSinceMs = null;
     return { action: "restart", unreachableForMs, attempt: this.attempts };
@@ -72,12 +99,16 @@ export class RelayRestartPolicy {
 export type DockerResponse = { status: number; body: string };
 export type DockerRequest = (method: "GET" | "POST", path: string) => Promise<DockerResponse>;
 
+/** A restart waits up to `t=10` s for the relay to stop, then starts it: give the daemon a minute. */
+export const DOCKER_RESTART_TIMEOUT_MS = 60_000;
+
 export function dockerSocketRequest(socketPath = "/var/run/docker.sock", timeoutMs = 15_000): DockerRequest {
   return (method, path) =>
     new Promise((resolve, reject) => {
-      const req = request({ socketPath, path, method, timeout: timeoutMs }, (res) => {
+      const req = request({ socketPath, path, method, timeout: method === "POST" ? DOCKER_RESTART_TIMEOUT_MS : timeoutMs }, (res) => {
         let body = "";
         res.setEncoding("utf8");
+        res.on("error", reject);
         res.on("data", (chunk) => (body += chunk));
         res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
       });
@@ -103,14 +134,14 @@ export async function findRelayContainer(
     return null;
   }
   const filters = JSON.stringify({
-    label: [`com.docker.compose.project=${project}`, "com.docker.compose.service=relay"]
+    label: [`com.docker.compose.project=${project}`, "com.docker.compose.service=relay", "com.docker.compose.oneoff=False"]
   });
   const list = await docker("GET", `/containers/json?all=1&filters=${encodeURIComponent(filters)}`);
   if (list.status !== 200) {
     return null;
   }
   const containers = JSON.parse(list.body) as Array<{ Id?: string; State?: string }>;
-  const relay = containers[0];
+  const relay = containers.find((container) => container.State === "running") ?? containers[0];
   if (!relay?.Id) {
     return { id: "", state: "missing" };
   }
@@ -160,8 +191,14 @@ export async function runRelayWatchdogRound(args: {
     } catch (error) {
       log("relay.watchdog.restart_failed", { attempt: decision.attempt, error: error instanceof Error ? error.message : String(error) });
     }
-  } else if (decision.action === "hold") {
-    log("relay.watchdog.hold", { unreachableForMs: decision.unreachableForMs, retryAt: new Date(decision.retryAtMs).toISOString() });
+  } else if (decision.action === "hold" || decision.action === "never-answered") {
+    // Once per streak, not every 30 s.
+    if (!args.policy.markLogged()) {
+      log(decision.action === "hold" ? "relay.watchdog.hold" : "relay.watchdog.never_answered", {
+        unreachableForMs: decision.unreachableForMs,
+        ...(decision.action === "hold" ? { retryAt: new Date(decision.retryAtMs).toISOString() } : {})
+      });
+    }
   }
   return decision;
 }
@@ -173,7 +210,12 @@ export function runRelayWatchdog(env: NodeJS.ProcessEnv = process.env): void {
   const selfId = env.HOSTNAME || "";
   log("relay.watchdog.started", { selfId, intervalMs: RELAY_WATCHDOG_INTERVAL_MS });
   const tick = async () => {
-    await runRelayWatchdogRound({ policy, docker, selfId });
+    try {
+      await runRelayWatchdogRound({ policy, docker, selfId });
+    } catch (error) {
+      // A crash would lose the backoff; the next round tries again.
+      log("relay.watchdog.round_failed", { error: error instanceof Error ? error.message : String(error) });
+    }
     setTimeout(() => void tick(), RELAY_WATCHDOG_INTERVAL_MS);
   };
   void tick();
