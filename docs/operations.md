@@ -461,6 +461,19 @@ critical incident `relay.unreachable` (log `relay.unreachable`); the card says t
 `docker compose restart relay`. The incident closes on the first answer again (log `relay.reachable`).
 A relay that crashes is restarted by `restart: unless-stopped` as before.
 
+Since the M114 follow-up the service `relay-watchdog` restarts a relay that runs but does not answer
+(`apps/worker/src/relay-restart.ts`). It asks the same API every 30 s, needs no database, and after three
+minutes without an answer restarts the relay container of its own Compose project through the Docker
+socket (log `relay.watchdog.restart` with `attempt`). Further restarts wait 5, 10, 20, 40, then 60 min
+(log `relay.watchdog.hold`), and the sequence starts again after 30 min of answers. A relay that was
+stopped or paused (`docker compose stop relay`, `docker pause`) is left alone. So is a relay that has not answered once since
+the watchdog started or since its last restart (log `relay.watchdog.never_answered`): that points to the
+configuration (another network, `api: no`), not to a hang. The watchdog finds itself by its hostname
+(Docker's default, the container id) and the relay by the Compose labels, so it does nothing with a
+`hostname:` override, `network_mode: host` or `docker stack deploy` (log `relay.watchdog.relay_not_found`). Each restart is a
+container restart, so a soak fails on it like on any other. To switch it off, stop the service
+(`docker compose stop relay-watchdog`); the incident above still reports a hanging relay.
+
 ### Restarts back off (since M103)
 
 - crash-loop protection (three failed ffmpeg exits within ten minutes) still waits for a playable item.

@@ -112,7 +112,8 @@ services:
     # the ONLY host ports are the two ingest doors for pushed camera feeds. The API port (9997)
     # must never be published to the host — it can inject and kick streams.
     # No healthcheck: the pinned image holds only the mediamtx binary, nothing that could run one.
-    # Since M114 the worker asks the API instead and raises `relay.unreachable` after two minutes.
+    # Since M114 the worker asks the API instead and raises `relay.unreachable` after two minutes, and
+    # `relay-watchdog` below restarts the relay after three.
     volumes:
       - ./docker/mediamtx.yml:/mediamtx.yml:ro
     expose:
@@ -122,6 +123,22 @@ services:
     ports:
       - "1935:1935"
       - "8890:8890/udp"
+  relay-watchdog:
+    image: ${STREAM247_WORKER_IMAGE:-ghcr.io/drjakeberg/stream247-worker:v2.3.1}
+    restart: unless-stopped
+    logging: *default-logging
+    # M114 follow-up (owner's choice): restarts the relay when its API has not answered for three
+    # minutes, with a backoff, and never a relay someone stopped or paused. The only service besides
+    # traefik that mounts the Docker socket; it uses it for exactly two things: finding the relay
+    # container of this project and restarting it (apps/worker/src/relay-restart.ts). No database.
+    command: ["node", "apps/worker/dist/relay-watchdog.js"]
+    environment:
+      NODE_ENV: production
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      relay:
+        condition: service_started
   playout:
     image: ${STREAM247_PLAYOUT_IMAGE:-ghcr.io/drjakeberg/stream247-playout:v2.3.1}
     restart: unless-stopped
