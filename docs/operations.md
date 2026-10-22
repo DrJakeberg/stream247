@@ -867,6 +867,8 @@ What counts time counts real time:
   `Europe/Berln`); the message names the value and the zone the schedule runs on instead
 - the channel stays on air: the bad value is skipped and the schedule falls back to the saved zone, then
   to `UTC`, so every block can run hours off until the value is fixed
+- the setup wizard's *Channel timezone* field says so for a bad `CHANNEL_TIMEZONE`: the variable is
+  ignored and the zone saved there is used (since M116; before, it said the variable overrides it)
 - fix the value in the deployment environment (or unset it and let the wizard manage the zone) and
   restart; the next worker cycle closes the incident
 

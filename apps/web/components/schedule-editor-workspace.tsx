@@ -164,7 +164,7 @@ export function ScheduleEditorWorkspace({
       <div className="toggle-row" style={{ flexWrap: "wrap", gap: 8 }}>
         <label className={`chip-toggle${conflictsOnly ? " chip-toggle-active" : ""}`}>
           <input checked={conflictsOnly} onChange={(event) => setConflictsOnly(event.target.checked)} type="checkbox" />
-          <span>Conflicts only<InfoTip text="Keeps only blocks that overlap another block on the same weekday, so clashes can be fixed without scrolling past everything that is fine." /></span>
+          <span>Conflicts only<InfoTip text="Keeps only blocks that overlap another block, counting the part of a block past midnight on the next day, so clashes can be fixed without scrolling past everything that is fine. A dated block over the weekly programme is not a clash: it takes that time over." /></span>
         </label>
         <label className={`chip-toggle${hideEnded ? " chip-toggle-active" : ""}`}>
           <input checked={hideEnded} onChange={(event) => setHideEnded(event.target.checked)} type="checkbox" />

@@ -280,3 +280,30 @@ describe("C6: day totals count only the part inside the day", () => {
     expect(tuesday?.totalProjectedMinutes).toBe(120);
   });
 });
+
+describe("M116: the editor's help texts say what C1 and C3 do (suggestion 12)", () => {
+  // The tips still described the model before M88: conflicts "on the same weekday", and cuepoints that
+  // "re-arm at 00:00". The cases above pin the behaviour the new texts describe.
+  const workspace = readFileSync("apps/web/components/schedule-editor-workspace.tsx", "utf8");
+  const blockForm = readFileSync("apps/web/components/schedule-block-form.tsx", "utf8");
+
+  it("the Conflicts only tip counts the part past midnight on the next day", () => {
+    expect(workspace).toContain(
+      "Keeps only blocks that overlap another block, counting the part of a block past midnight on the next day,"
+    );
+    expect(workspace).toContain("A dated block over the weekly programme is not a clash: it takes that time over.");
+    expect(workspace).not.toContain("on the same weekday");
+  });
+
+  it("the cuepoint tip says each time fires once per airing, also past midnight", () => {
+    expect(blockForm).toContain("once per airing, also when the block runs past midnight, since the times count from the block's start.");
+    expect(blockForm).not.toContain("re-arm");
+  });
+
+  it("the start tip names the next day's block a block past midnight runs into", () => {
+    expect(blockForm).toContain(
+      "it must not overlap another block, also not one on the next day that a block past midnight runs into;"
+    );
+    expect(blockForm).not.toContain("another block on the same day");
+  });
+});

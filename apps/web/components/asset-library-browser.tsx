@@ -433,6 +433,116 @@ export function AssetLibraryBrowser(props: {
         {assetGroups.length === 1 ? "" : "s"}.
       </div>
 
+      {/*
+        The list comes right after the filters (M116, R2 U3): it used to sit below the curated sets and the
+        bulk fields, so the first card was a long scroll away. What acts on a selection follows the list.
+      */}
+      <div className="library-group-stack">
+        {assetGroups.map((group) => (
+          <section className="library-group" key={group.key}>
+            <div className="library-group-header">
+              <div>
+                <strong>{group.label}</strong>
+                <div className="subtle">{group.assets.length} asset(s)</div>
+              </div>
+            </div>
+            <div className="asset-card-grid">
+              {group.assets.map((asset) => {
+                const sourceName = sourceById.get(asset.sourceId) || asset.sourceId;
+                const selected = selectedIds.includes(asset.id);
+                const memberships = collectionMemberships.get(asset.id) ?? [];
+                return (
+                  <article className="asset-card" key={`${group.key}:${asset.id}`}>
+                    <div className="asset-card-thumbnail">
+                      <Image
+                        alt={`Thumbnail for ${asset.title}`}
+                        fill
+                        loading="lazy"
+                        sizes="(max-width: 900px) 100vw, 180px"
+                        src={`/api/assets/${asset.id}/thumbnail`}
+                        unoptimized
+                      />
+                    </div>
+                    <div className="asset-card-body">
+                      <label className={`chip-toggle${selected ? " chip-toggle-active" : ""}`}>
+                        <input
+                          checked={selected}
+                          onChange={(event) =>
+                            setSelectedIds((current) =>
+                              event.target.checked
+                                ? [...new Set([...current, asset.id])].sort((left, right) => left.localeCompare(right))
+                                : current.filter((id) => id !== asset.id)
+                            )
+                          }
+                          type="checkbox"
+                        />
+                        <span>Select asset</span>
+                      </label>
+                      {/* The title is the thing people click to open a video. It was plain text and the way in
+                          was a small "Open asset detail" line further down; a reader of the card reported that
+                          clicking the title did nothing. */}
+                      <strong className="truncate-title">
+                        <Link className="asset-title-link" href={`/assets/${asset.id}`}>
+                          {asset.title}
+                        </Link>
+                      </strong>
+                      <div className="subtle">
+                        {sourceName} · {asset.status} · {formatDuration(asset)}
+                      </div>
+                      <div className="subtle">
+                        {asset.categoryName || "No source category"}
+                        {asset.publishedAt ? ` · ${asset.publishedAt.slice(0, 10)}` : ""}
+                      </div>
+                      <div className="subtle">
+                        Folder: {asset.folderPath || "root"} · Tags:{" "}
+                        {asset.tags && asset.tags.length > 0 ? asset.tags.join(", ") : "none"}
+                      </div>
+                      <div className="subtle">
+                        {asset.includeInProgramming ? "Included in programming" : "Excluded from programming"} ·{" "}
+                        {asset.isGlobalFallback ? `Global fallback (priority ${asset.fallbackPriority})` : "No global fallback flag"}
+                      </div>
+                      <div className="chip-grid">
+                        {memberships.map((collection) => (
+                          <span
+                            className="collection-chip collection-chip-static"
+                            key={collection.id}
+                            style={{ ["--collection-color" as string]: collection.color }}
+                          >
+                            {collection.name}
+                          </span>
+                        ))}
+                        {memberships.length === 0 ? <span className="subtle">No curated set</span> : null}
+                      </div>
+                      <div className="subtle asset-path">{asset.path}</div>
+                      <div>
+                        <Link className="subtle-link" href={`/assets/${asset.id}`}>
+                          Edit title, category, chapters
+                        </Link>
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+        ))}
+
+        {filteredAssets.length === 0 ? (
+          <LibraryEmptyState
+            onClearFilters={() => {
+              setQuery("");
+              setSourceId("all");
+              setStatus("all");
+              setProgrammingState("all");
+              setFolderFilter("");
+              setTagFilter("");
+              setCollectionFilter("all");
+            }}
+            totalCount={props.assets.length}
+          />
+        ) : null}
+      </div>
+
       <div className="subtle">
         {selectedAssets.length > 0
           ? `Selected ${selectedAssets.length} asset(s): ${selectedAssets.map((asset) => asset.title).join(", ")}`
@@ -689,112 +799,6 @@ export function AssetLibraryBrowser(props: {
         </button>
       </div>
       )}
-
-      <div className="library-group-stack">
-        {assetGroups.map((group) => (
-          <section className="library-group" key={group.key}>
-            <div className="library-group-header">
-              <div>
-                <strong>{group.label}</strong>
-                <div className="subtle">{group.assets.length} asset(s)</div>
-              </div>
-            </div>
-            <div className="asset-card-grid">
-              {group.assets.map((asset) => {
-                const sourceName = sourceById.get(asset.sourceId) || asset.sourceId;
-                const selected = selectedIds.includes(asset.id);
-                const memberships = collectionMemberships.get(asset.id) ?? [];
-                return (
-                  <article className="asset-card" key={`${group.key}:${asset.id}`}>
-                    <div className="asset-card-thumbnail">
-                      <Image
-                        alt={`Thumbnail for ${asset.title}`}
-                        fill
-                        loading="lazy"
-                        sizes="(max-width: 900px) 100vw, 180px"
-                        src={`/api/assets/${asset.id}/thumbnail`}
-                        unoptimized
-                      />
-                    </div>
-                    <div className="asset-card-body">
-                      <label className={`chip-toggle${selected ? " chip-toggle-active" : ""}`}>
-                        <input
-                          checked={selected}
-                          onChange={(event) =>
-                            setSelectedIds((current) =>
-                              event.target.checked
-                                ? [...new Set([...current, asset.id])].sort((left, right) => left.localeCompare(right))
-                                : current.filter((id) => id !== asset.id)
-                            )
-                          }
-                          type="checkbox"
-                        />
-                        <span>Select asset</span>
-                      </label>
-                      {/* The title is the thing people click to open a video. It was plain text and the way in
-                          was a small "Open asset detail" line further down; a reader of the card reported that
-                          clicking the title did nothing. */}
-                      <strong className="truncate-title">
-                        <Link className="asset-title-link" href={`/assets/${asset.id}`}>
-                          {asset.title}
-                        </Link>
-                      </strong>
-                      <div className="subtle">
-                        {sourceName} · {asset.status} · {formatDuration(asset)}
-                      </div>
-                      <div className="subtle">
-                        {asset.categoryName || "No source category"}
-                        {asset.publishedAt ? ` · ${asset.publishedAt.slice(0, 10)}` : ""}
-                      </div>
-                      <div className="subtle">
-                        Folder: {asset.folderPath || "root"} · Tags:{" "}
-                        {asset.tags && asset.tags.length > 0 ? asset.tags.join(", ") : "none"}
-                      </div>
-                      <div className="subtle">
-                        {asset.includeInProgramming ? "Included in programming" : "Excluded from programming"} ·{" "}
-                        {asset.isGlobalFallback ? `Global fallback (priority ${asset.fallbackPriority})` : "No global fallback flag"}
-                      </div>
-                      <div className="chip-grid">
-                        {memberships.map((collection) => (
-                          <span
-                            className="collection-chip collection-chip-static"
-                            key={collection.id}
-                            style={{ ["--collection-color" as string]: collection.color }}
-                          >
-                            {collection.name}
-                          </span>
-                        ))}
-                        {memberships.length === 0 ? <span className="subtle">No curated set</span> : null}
-                      </div>
-                      <div className="subtle asset-path">{asset.path}</div>
-                      <div>
-                        <Link className="subtle-link" href={`/assets/${asset.id}`}>
-                          Edit title, category, chapters
-                        </Link>
-                      </div>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-          </section>
-        ))}
-
-        {filteredAssets.length === 0 ? (
-          <LibraryEmptyState
-            onClearFilters={() => {
-              setQuery("");
-              setSourceId("all");
-              setStatus("all");
-              setProgrammingState("all");
-              setFolderFilter("");
-              setTagFilter("");
-              setCollectionFilter("all");
-            }}
-            totalCount={props.assets.length}
-          />
-        ) : null}
-      </div>
     </div>
   );
 }
