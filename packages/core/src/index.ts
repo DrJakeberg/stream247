@@ -3330,7 +3330,8 @@ function createBlockProjection(args: {
   const itemBound = (seconds: number) =>
     Math.min(
       maxProjectedItemsPerBlock,
-      Math.ceil(seconds / Math.max(shortestSeconds, minProjectedItemSeconds)) + cuepointOffsetsSeconds.length + 2
+      // Spare turns for the cuepoints, for each jump to the end of a hold, and for the item that runs over.
+      Math.ceil(seconds / Math.max(shortestSeconds, minProjectedItemSeconds)) + cuepointOffsetsSeconds.length + poolHolds.length + 2
     );
 
   const items: MaterializedProgrammingItem[] = [];
@@ -3770,7 +3771,9 @@ export function buildMaterializedProgrammingWeek(args: {
     // the air back (R7); otherwise the item finishes first.
     const startsWithCut =
       Boolean(entry.occurrence.dated) || Boolean(previous && previous.entry.occurrence.dated && previous.end >= task.start);
-    let fromMinute = onAirWindow ? (now as number) : task.start;
+    // Every window of the block on air starts from now at the earliest: one that has already ended takes
+    // nothing from the rotation, as before M118.
+    let fromMinute = isOnAir(entry) ? Math.max(task.start, now as number) : task.start;
     if (onAirWindow || !startsWithCut) {
       fromMinute = Math.max(fromMinute, busyUntil);
     }

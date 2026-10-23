@@ -812,4 +812,12 @@ Sections for milestones in **Open** that need more than their row, appended in m
   `schedule-midnight.test.ts` pinned `occurrenceKey: getScheduleOccurrenceRunKey(currentScheduleItem)` in
   `state.ts`; it now pins that worker and web call `getOccurrenceCuepointProgress` with the occurrence and
   that the core function keys by the run.
+- **Review without prior knowledge** (subagent, on `0103c03`): acceptance met. Fixed: without an item on
+  air (standby, a live input) a part of the block on air that had already ended was filled from its own
+  start and moved the pool on (weekly 10-14 cut by a dated 11-12, 12:30: a1-a3 at 10:00-10:40, then a4);
+  every window of the block on air now starts at now at the earliest (test). The item bound gets one spare
+  turn per hold. Left as is: the end of the item on air and of a cooldown are turned into wall-clock minutes
+  in a straight line from now, so one that crosses the clock change is placed an hour off that night; a
+  week of 1-second clips takes about half a second to project (the admin week view has no cache; `/channel`
+  keeps its 5-second one).
 - `CHANGELOG.md` is not touched: per `AGENTS.md` the release commit writes its section.

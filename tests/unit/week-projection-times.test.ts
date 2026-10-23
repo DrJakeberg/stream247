@@ -93,6 +93,23 @@ describe("15: the block on air goes on after the item on air, not now", () => {
     expect(day.totalProjectedMinutes).toBe(240);
     expect(day.blocks[0]!.fillStatus).toBe("balanced");
   });
+
+  it("without an item on air, a part of the block on air that has ended takes nothing from the rotation", () => {
+    // Weekly 10-14 with a dated 11-12 of another pool, 12:30, nothing on air (standby or a live input): the
+    // weekly block goes on from now with a1, as before M118 (review finding).
+    const days = buildMaterializedProgrammingWeek({
+      startDate: MONDAY,
+      blocks: [
+        block({ id: "Weekly", dayOfWeek: 1, startMinuteOfDay: 600, durationMinutes: 240 }),
+        block({ id: "Special", dayOfWeek: 1, startMinuteOfDay: 660, durationMinutes: 60, poolId: "b", validFrom: MONDAY, validUntil: MONDAY })
+      ],
+      pools: [pool("a"), pool("b")],
+      assets: [...assets("a", 9, 1200), ...assets("b", 3, 1200)],
+      nowMinuteOfDay: 750
+    });
+    const weekly = days[0]!.blocks.find((entry) => entry.blockId === "Weekly")!;
+    expect(startsOf(weekly).slice(0, 2)).toEqual(["a1@12:30", "a2@12:50"]);
+  });
 });
 
 describe("16: an item that runs over its block delays the next block", () => {
