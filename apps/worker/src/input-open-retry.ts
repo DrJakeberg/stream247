@@ -172,6 +172,8 @@ export interface InputOpenRetrySlateInput {
   selectedAssetId: string;
   selectedReasonCode: string;
   selectedIsRetry: boolean;
+  // A Live Bridge takes the air this cycle (the live arm selects no item).
+  selectedLive?: boolean;
   nowMs: number;
 }
 
@@ -180,15 +182,15 @@ export interface InputOpenRetrySlateDecision {
   // The runtime event to log for the owed retry, "" for none.
   event: "" | "playout.input.retry.deferred" | "playout.input.retry.dropped";
   assetId: string;
-  reason: "" | "reconnect-slate" | "standby" | "other-item";
+  reason: "" | "reconnect-slate" | "standby" | "other-item" | "live-bridge";
 }
 
 /**
  * What a cycle does with a retry that is owed (M120; M94 review "Left as is"). The reconnect slate that
  * replaces the retry keeps it owed (`playout.input.retry.deferred`), and the item starts after the slate
  * as the restart pressed for it intends. A reconnect slate or standby that takes a cycle whose selection
- * was not the retry (the item is held out by a Skip, or no longer playable), or another item that starts
- * while the slate kept the retry, ends it with `playout.input.retry.dropped`. Before, both went without a
+ * was not the retry (the item is held out by a Skip, or no longer playable), or another item or a Live
+ * Bridge that takes the air while the slate kept the retry, ends it with `playout.input.retry.dropped`. Before, both went without a
  * log line: the slate's running process failed decideInputOpenRetry's "nothing running" condition and the
  * retry ran out silently after ten minutes.
  */
@@ -212,6 +214,9 @@ export function decideInputOpenRetryAtSlate(input: InputOpenRetrySlateInput): In
   }
   if (input.slate !== "") {
     return { next: null, event: "playout.input.retry.dropped", assetId: retry.assetId, reason: input.slate === "reconnect" ? "reconnect-slate" : "standby" };
+  }
+  if (retry.coveredBySlate && input.selectedLive === true) {
+    return { next: null, event: "playout.input.retry.dropped", assetId: retry.assetId, reason: "live-bridge" };
   }
   if (retry.coveredBySlate && input.selectedAssetId !== "" && !selectedRetry) {
     return { next: null, event: "playout.input.retry.dropped", assetId: retry.assetId, reason: "other-item" };

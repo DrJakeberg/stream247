@@ -968,14 +968,15 @@ pair. To see what happened to one item:
   dark meanwhile, the local fallback covers the resolve and the item follows it. A second failure is
   final and the pool moves on. The retry's failure does not count towards crash-loop protection, so
   three different items that fail still bring it on and one item failing twice counts once; every
-  later failure of that item counts again. A Restart, Skip or Force reconnect pressed after the failure
-  no longer cancels the retry by itself (since M120). When the reconnect slate of direct mode takes the
+  later failure of that item counts again. A Restart or Force reconnect pressed after the failure no
+  longer cancels the retry by itself (since M120); a Skip of the failed item still ends it, since the
+  item is held out. When the reconnect slate of direct mode takes the
   cycle that was to start the retry (a Restart, a Force reconnect, the planned reconnect), the retry
   waits for the slate and the item starts after it: runtime event `playout.input.retry.deferred`
   (`reason: reconnect-slate`). When the slate or the standby slate takes a cycle that did not pick the
-  retry (a Skip holds the item out, the item is no longer playable), or another item airs after the
-  slate, the retry is given up with `playout.input.retry.dropped` (`reason` `reconnect-slate`,
-  `standby` or `other-item`). Before M120 it ran out silently in both cases. A queued
+  retry (a Skip holds the item out, the item is no longer playable), or another item or a Live Bridge
+  takes the air after the slate, the retry is given up with `playout.input.retry.dropped` (`reason`
+  `reconnect-slate`, `standby`, `other-item` or `live-bridge`). Before M120 it ran out silently in both cases. A queued
   Move next or a due insert waits for the retry, and takes the slot at once when the item failed
   without a retry (before M94 they let one more item pass).
 - Ask yt-dlp directly, in the playout container (the playout process resolves playback, not the

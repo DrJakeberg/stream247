@@ -8401,6 +8401,7 @@ async function runPlayoutCycle(): Promise<void> {
     selectedAssetId: selectedBeforeSlate.assetId,
     selectedReasonCode: selectedBeforeSlate.reasonCode,
     selectedIsRetry: selectedBeforeSlate.isRetry,
+    selectedLive: selection.queueKind === "live",
     nowMs: Date.now()
   });
   inputOpenRetry = retryAtSlate.next;

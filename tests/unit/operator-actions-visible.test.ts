@@ -385,6 +385,10 @@ describe("a retry the reconnect slate or standby takes the place of", () => {
       decideInputOpenRetryAtSlate({ retry: covered, slate: "", selectedAssetId: "P", selectedReasonCode: "operator_override", selectedIsRetry: false, nowMs })
     ).toEqual({ next: null, event: "playout.input.retry.dropped", assetId: "A", reason: "other-item" });
     expect(decideInputOpenRetry({ ...base, retry: covered, runtimeCurrentAssetId: "P", processRunning: true })).toBeNull();
+    // A Live Bridge that takes the air after the slate ends it too (review finding).
+    expect(
+      decideInputOpenRetryAtSlate({ retry: covered, slate: "", selectedAssetId: "", selectedReasonCode: "live_bridge", selectedIsRetry: false, selectedLive: true, nowMs })
+    ).toEqual({ next: null, event: "playout.input.retry.dropped", assetId: "A", reason: "live-bridge" });
     expect(decideInputOpenRetryAfterExit({ previous: covered, exitedAssetId: "P", immediateOpenFailure: false, nowMs }).next).toBeNull();
   });
 
