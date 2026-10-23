@@ -342,7 +342,7 @@ describe("M116: the setup text about CHANNEL_TIMEZONE (suggestion 8)", () => {
 
 describe("I7: the password warning sits under the field (M91)", () => {
   it("says to store the password and where it can be changed, right under the field", () => {
-    const html = renderToStaticMarkup(React.createElement(SetupForm));
+    const html = renderToStaticMarkup(React.createElement(SetupForm, { minPasswordLength: 10 }));
     const field = html.indexOf('name="password"');
     const warning = html.indexOf("Store this password now.");
     expect(field).toBeGreaterThan(-1);
@@ -350,6 +350,17 @@ describe("I7: the password warning sits under the field (M91)", () => {
     // In the same label as the field, not behind the (i) and not in the paragraph below the form.
     expect(html.slice(field, warning)).not.toContain("</label>");
     expect(html).toContain("There is no e-mail reset: you can change it under Admin → Settings → Security");
+  });
+
+  it("takes the minimum length from the one constant the server checks (M117)", () => {
+    const html = renderToStaticMarkup(React.createElement(SetupForm, { minPasswordLength: 12 }));
+    expect(html).toContain('minLength="12"');
+    expect(html).toContain("At least 12 characters");
+    expect(html).not.toContain("At least 10 characters");
+    const sources = ["apps/web/app/api/setup/bootstrap/route.ts", "apps/web/components/setup-form.tsx", "apps/web/components/change-password-form.tsx"]
+      .map((file) => readFileSync(path.join(process.cwd(), file), "utf8"))
+      .join("\n");
+    expect(sources).not.toMatch(/length < 10\b|minLength=\{10\}|least 10 characters/);
   });
 });
 

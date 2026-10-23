@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { InfoTip } from "@/components/ui/InfoTip";
 
-export function SetupForm() {
+export function SetupForm({ minPasswordLength }: { minPasswordLength: number }) {
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
@@ -45,8 +45,8 @@ export function SetupForm() {
         <input name="email" type="email" required placeholder="owner@example.com" />
       </label>
       <label>
-        <span className="label label-with-info">Password<InfoTip text="At least 10 characters. A one-time code from an authenticator app can be added later under Settings." /></span>
-        <input name="password" type="password" minLength={10} required placeholder="At least 10 characters" />
+        <span className="label label-with-info">Password<InfoTip text={`At least ${minPasswordLength} characters. A one-time code from an authenticator app can be added later under Settings.`} /></span>
+        <input name="password" type="password" minLength={minPasswordLength} required placeholder={`At least ${minPasswordLength} characters`} />
         {/* Under the field, not behind the (i) (M91, I7): the one thing to know before choosing it. */}
         <span className="field-hint password-warning">
           Store this password now. There is no e-mail reset: you can change it under Admin → Settings → Security while

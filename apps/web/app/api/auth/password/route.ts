@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { MIN_OWNER_PASSWORD_LENGTH } from "@stream247/db";
-import { getAuthenticatedUser, hashPassword, verifyPassword } from "@/lib/server/auth";
+import { getAuthenticatedUser, hashPassword, setSessionCookie, verifyPassword } from "@/lib/server/auth";
 import { appendAuditEvent, readAppState, setOwnerPasswordHash } from "@/lib/server/state";
 import { LOGIN_RATE_LIMIT, consumeRateLimit, getClientIdentifier, resetRateLimit } from "@/lib/server/rate-limit";
 
@@ -47,11 +47,15 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const email = await setOwnerPasswordHash(hashPassword(newPassword));
+  const newHash = hashPassword(newPassword);
+  const email = await setOwnerPasswordHash(newHash);
   if (!email) {
     return NextResponse.json({ message: "No owner account exists." }, { status: 409 });
   }
-  await appendAuditEvent("auth.password.changed", `Owner password changed by ${email}.`);
+  // Every session is bound to the password it signed in with (M117), so the others end here; this one
+  // gets a cookie for the new password and stays signed in.
+  await setSessionCookie(user.id, newHash);
+  await appendAuditEvent("auth.password.changed", `Owner password changed by ${email}; other sessions were signed out.`);
 
-  return NextResponse.json({ ok: true, message: "Password changed. Use the new one from the next sign-in on." });
+  return NextResponse.json({ ok: true, message: "Password changed. Every other signed-in session is signed out." });
 }
