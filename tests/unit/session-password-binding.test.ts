@@ -54,6 +54,10 @@ describe("sessions bound to the owner password (M117)", () => {
     // The pre-M117 shape userId:issuedAt:signature, even with a signature over that payload.
     expect(parseSessionValue(`${userId}:${issuedAt}:${signature}`)).toBeNull();
     expect(resolveSessionUser(`${userId}:${issuedAt}:${"0".repeat(16)}:${signature}`, state)).toBeNull();
+    // A correctly signed cookie whose stamp is of another password reaches the stamp check and fails it.
+    const otherStamp = buildSessionValue(owner.id, hashPassword("some-other-password"));
+    expect(parseSessionValue(otherStamp)?.userId).toBe("user_owner");
+    expect(resolveSessionUser(otherStamp, state)).toBeNull();
     expect(resolveSessionUser(`user_editor:${issuedAt}:${stamp}:${signature}`, state)).toBeNull();
   });
 

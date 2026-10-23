@@ -763,4 +763,13 @@ Sections for milestones in **Open** that need more than their row, appended in m
   change could not end.
 - **Minimum length.** The two forms take it as a prop from their server pages (`MIN_OWNER_PASSWORD_LENGTH`
   from `@stream247/db`), since a client component cannot import that package.
+- **Review without prior knowledge** (subagent, on `c1d2bba`): no high finding; every reader of the cookie
+  goes through the stamp check, and all five `setSessionCookie` callers pass the right hash. Fixed: the
+  forged-stamp case now builds a correctly signed cookie with another password's stamp (before, it failed
+  on the signature). Left as is, outside this milestone: a 2FA challenge issued in the five minutes before
+  a change still completes with a valid one-time code (the challenge is not bound to the password);
+  `upsertUserRecord` writes `password_hash` from the copy it read, so a sign-in racing a change can write the
+  old hash back (older than M117, which now also revives the old sessions in that window); a Twitch
+  identity linked to the local owner row would keep `authProvider: "local"` and change its e-mail, which
+  `setOwnerPasswordHash` matches on (not possible today).
 - `CHANGELOG.md` is not touched: per `AGENTS.md` the release commit writes its section.
