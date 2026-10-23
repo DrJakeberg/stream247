@@ -6,8 +6,9 @@
 // postgres:16-alpine: each row stores 120 s with its file version, the second scan probes nothing, and
 // the Day lens computed from the stored state reads 6m.
 //
-// Needs ffmpeg on the host to generate the files (locally, and in the worker image); CI's validate job has
-// none, so there this file skips and tests/unit/local-durations.test.ts carries the logic.
+// Needs ffmpeg on the host to generate the files (locally, and in the worker image); without it this file
+// skips and tests/unit/local-durations.test.ts carries the logic. CI runs it for real in `pnpm test:media`
+// (M121), where a missing ffmpeg fails instead of skipping.
 import { execFile, spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -17,12 +18,12 @@ import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildMaterializedProgrammingWeek } from "@stream247/core";
 import { ensureDatabase, readAppState, resetDatabaseConnectionsForTests } from "@stream247/db";
+import { mediaToolsAvailable } from "../support/media-tools";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "../..");
 const workerEntry = path.join(repoRoot, "apps/worker/dist/index.js");
-const ffmpegAvailable =
-  spawnSync("ffmpeg", ["-hide_banner", "-version"]).status === 0 && spawnSync("ffprobe", ["-hide_banner", "-version"]).status === 0;
+const ffmpegAvailable = mediaToolsAvailable("ffmpeg", "ffprobe");
 
 async function runDocker(args: string[]): Promise<string> {
   const { stdout } = await execFileAsync("docker", args);

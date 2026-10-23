@@ -6,7 +6,7 @@
 // exited the worker. The chapter backfill's probes add up the same way.
 //
 // The rules, each kept simple because every cleverer one cost a healthy source somewhere (three review
-// rounds, see the M112 notes in PLANS.md):
+// rounds, see the M112 notes in planning/milestone-notes.md):
 //
 // - A call always gets its whole own timeout: no timeout is ever cut short, so a slow but healthy
 //   listing is never reported as failed because of this budget.

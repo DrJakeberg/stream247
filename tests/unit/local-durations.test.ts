@@ -13,16 +13,16 @@ import {
   resolveLocalFileDurations,
   type LocalDurationEntry
 } from "../../apps/worker/src/local-durations";
+import { mediaToolsAvailable } from "../support/media-tools";
 
 /**
  * M96: local-library files carry their real length.
  *
  * The probe tests run against real ffprobe on generated files where ffmpeg is installed (locally, the
- * worker image); CI's validate job has no host ffmpeg, so there they skip and the stubbed tests below
- * carry the logic.
+ * worker image); without it they skip and the stubbed tests below carry the logic. CI runs them for real
+ * in `pnpm test:media` (M121), where a missing ffmpeg fails instead of skipping.
  */
-const ffmpegAvailable =
-  spawnSync("ffmpeg", ["-hide_banner", "-version"]).status === 0 && spawnSync("ffprobe", ["-hide_banner", "-version"]).status === 0;
+const ffmpegAvailable = mediaToolsAvailable("ffmpeg", "ffprobe");
 
 // 2026-10-05 is a Monday.
 const block: ScheduleBlock = {

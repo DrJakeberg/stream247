@@ -401,7 +401,7 @@ For production pinning, use `.env.production.example` or set the image tags expl
 
 ### Release Behavior
 
-- `push` to `main` validates, runs fresh-stack bootstrap checks, queue continuity, runtime parity, the relay-on broadcast path smoke, production-config release preflight, and browser smoke checks, and then publishes current images
+- `push` to `main` validates, runs fresh-stack bootstrap checks, the real ffmpeg/ffprobe tests, queue continuity, runtime parity, the relay-on broadcast path smoke, production-config release preflight, and browser smoke checks, and then publishes current images
 - `push` of `v*` tags pulls the CI-published `main-<sha>` candidate images for the tagged commit, smoke-validates them, and only then retags and publishes those same tested images as versioned GHCR artifacts
 - CI uses the public ECR mirror for `node:22-alpine` to avoid Docker Hub rate limits on GitHub-hosted runners
 - production should pin explicit release tags and not follow `latest`
@@ -603,6 +603,7 @@ The intended validation path is:
 - `pnpm validate`
 - `pnpm test:fresh-db`
 - `pnpm test:fresh-compose`
+- `pnpm test:media` (the tests with real ffmpeg and ffprobe, required; without host ffmpeg they use the worker image `stream247-worker:test`)
 - `pnpm test:queue-continuity`
 - `pnpm test:runtime-parity`
 - `pnpm test:broadcast-path`
