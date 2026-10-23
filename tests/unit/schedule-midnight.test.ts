@@ -116,8 +116,13 @@ describe("C1: cuepoints of a block crossing midnight", () => {
     expect(worker).toContain(
       'const cuepointWindowKey = waitingTakeover ? state.playout.cuepointWindowKey : currentScheduleItem ? getScheduleOccurrenceRunKey(currentScheduleItem) : "";'
     );
-    const web = readFileSync(new URL("../../apps/web/lib/server/state.ts", import.meta.url), "utf8");
-    expect(web).toContain("occurrenceKey: getScheduleOccurrenceRunKey(currentScheduleItem)");
+    // Since M118 both count through one core function, which keys by the run.
+    const web = readFileSync(new URL("../../apps/web/lib/server/state.ts", import.meta.url), "utf8").replace(/\s+/g, " ");
+    expect(web).toContain("getOccurrenceCuepointProgress({ occurrence: currentScheduleItem,");
+    const cuepoints = readFileSync(new URL("../../apps/worker/src/cuepoints.ts", import.meta.url), "utf8").replace(/\s+/g, " ");
+    expect(cuepoints).toContain("getOccurrenceCuepointProgress({ occurrence: currentScheduleItem,");
+    const core = readFileSync(new URL("../../packages/core/src/index.ts", import.meta.url), "utf8");
+    expect(core).toContain("occurrenceKey: getScheduleOccurrenceRunKey(occurrence)");
   });
 });
 

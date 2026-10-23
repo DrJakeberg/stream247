@@ -167,6 +167,7 @@ export const EN_VIEWER_MESSAGES = {
   // Was "Standby": the same standby term as on air.
   "channel.standby": "Stand by",
   "channel.timeRange": "{start} to {end}",
+  "channel.since": "since {start}",
   "channel.upNext": "Up next",
   "channel.noNext": "No next item published yet",
   // Was "...as soon as the runtime confirms it." — the runtime is the operator's machinery.

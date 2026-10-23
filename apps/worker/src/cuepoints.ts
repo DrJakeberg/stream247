@@ -1,8 +1,6 @@
 import {
-  getCuepointProgress,
   getCurrentScheduleMoment,
-  getScheduleOccurrenceAirWindowSeconds,
-  getScheduleOccurrenceRunKey,
+  getOccurrenceCuepointProgress,
   getScheduleRunElapsedSeconds,
   isCurrentScheduleTime,
   normalizeCuepointOffsetsSeconds,
@@ -105,24 +103,16 @@ function evaluateCuepoints(args: CuepointArgs) {
   // carry-over with a new key, and the cuepoints it fired before midnight must stay fired. Every stored key
   // names its run, so the whole list is read: since R8 it also holds the run before the last change, which
   // is what a block coming back after another one (the October fall-back night) finds its keys in.
-  const runKey = getScheduleOccurrenceRunKey(currentScheduleItem);
-  const firedCuepointKeys = args.state.playout.cuepointFiredKeys;
   // Real seconds, not wall-clock minutes (M101): on the spring-forward day a cuepoint fired an hour early.
+  // A weekly block cut around a dated one (M93) fires only the cuepoints of the window on air now. Shared
+  // with the live view's summary since M118.
   const elapsedSeconds = getScheduleRunElapsedSeconds({ occurrence: currentScheduleItem, now, timeZone });
-  const progress = getCuepointProgress({
-    occurrenceKey: runKey,
+  const progress = getOccurrenceCuepointProgress({
+    occurrence: currentScheduleItem,
     cuepointOffsetsSeconds,
-    firedCuepointKeys,
-    elapsedSeconds,
-    // A weekly block cut around a dated one (M93) fires only the cuepoints of the window on air now.
-    airWindowsSeconds: getScheduleOccurrenceAirWindowSeconds(
-      {
-        effectiveStartMinuteOfDay: currentScheduleItem.effectiveStartMinuteOfDay ?? currentScheduleItem.startMinuteOfDay,
-        airWindows: currentScheduleItem.airWindows,
-        date: currentScheduleItem.date
-      },
-      timeZone
-    )
+    firedCuepointKeys: args.state.playout.cuepointFiredKeys,
+    now,
+    timeZone
   });
 
   return { block, pool, asset, progress, elapsedSeconds };

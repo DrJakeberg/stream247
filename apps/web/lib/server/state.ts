@@ -10,7 +10,7 @@ import {
   buildOverlayScenePayload,
   buildMaterializedProgrammingWeek,
   buildSchedulePreviewVideoSlots,
-  getCuepointProgress,
+  getOccurrenceCuepointProgress,
   buildScheduleOccurrences,
   buildSchedulePreview,
   shiftDateToDayOfWeek,
@@ -19,9 +19,10 @@ import {
   findNextScheduleOccurrenceAcrossDays,
   listUpcomingScheduleOccurrencesAcrossDays,
   getDestinationFailureSecondsRemaining as getDestinationFailureHoldSecondsRemaining,
-  getScheduleOccurrenceRunKey,
-  getScheduleRunElapsedSeconds,
   getCurrentScheduleMoment,
+  getTwitchVodCacheCooldownEndMs,
+  resolveVodCacheTuning,
+  UNKNOWN_ITEM_LENGTH_ESTIMATE_SECONDS,
   isCurrentScheduleTime,
   normalizeOverlayPanelAnchor,
   normalizeOverlayScenePreset,
@@ -346,19 +347,42 @@ export function getPoolSourceGate(state: AppState, nowMs = Date.now()): PoolRota
 }
 
 export function getMaterializedProgrammingWeekPreview(state: AppState, now: Date = new Date()) {
-  const scheduleMoment = getCurrentScheduleMoment({
-    now,
-    timeZone: getWorkspaceTimeZone(state)
-  });
-
+  const clock = getProjectionClock(state, now);
   return buildMaterializedProgrammingWeek({
-    startDate: scheduleMoment.date,
+    startDate: clock.date,
     blocks: state.scheduleBlocks,
     pools: state.pools,
     assets: state.assets,
     sourceGate: getPoolSourceGate(state, now.getTime()),
-    nowMinuteOfDay: parseScheduleClockMinutes(scheduleMoment.time)
+    nowMinuteOfDay: clock.nowMinute,
+    onAirItemEndMinute: clock.onAirItemEndMinute,
+    itemHolds: clock.itemHolds
   });
+}
+
+/**
+ * What the week projection needs to know about now (M118), in minutes of today in the channel zone with the
+ * seconds as a fraction: the minute, when the item on air ends (so the block on air goes on after it, and a
+ * block it runs into waits for it), and the items the worker skips for a while, Twitch archives whose cache
+ * download failed (the worker's cooldown, `getTwitchVodCacheCooldownEndMs`).
+ */
+export function getProjectionClock(state: AppState, now: Date) {
+  const scheduleMoment = getCurrentScheduleMoment({ now, timeZone: getWorkspaceTimeZone(state) });
+  // Zone offsets are whole minutes, so the seconds of the UTC clock are the channel clock's.
+  const nowMinute = parseScheduleClockMinutes(scheduleMoment.time) + (now.getTime() % 60_000) / 60_000;
+  const minuteAt = (ms: number) => nowMinute + (ms - now.getTime()) / 60_000;
+  const current = getPublicProgrammeCurrentItem(state, now);
+  const cooldownMs = resolveVodCacheTuning(state.managedConfig, process.env).failureCooldownSeconds * 1000;
+  const itemHolds = state.assets.flatMap((asset) => {
+    const endMs = getTwitchVodCacheCooldownEndMs(asset, cooldownMs, now.getTime());
+    return endMs === null ? [] : [{ assetId: asset.id, untilMinute: minuteAt(endMs) }];
+  });
+  return {
+    date: scheduleMoment.date,
+    nowMinute,
+    onAirItemEndMinute: current ? minuteAt(Date.parse(current.plannedEndsAt || current.endsAt)) : undefined,
+    itemHolds
+  };
 }
 
 /**
@@ -392,35 +416,41 @@ let publicProgrammeCache: { key: string; at: number; value: PublicProgramme } | 
 
 function buildPublicProgrammeNow(state: AppState, now: Date): PublicProgramme {
   const timeZone = getWorkspaceTimeZone(state);
-  const scheduleMoment = getCurrentScheduleMoment({ now, timeZone });
+  const clock = getProjectionClock(state, now);
   const days = buildMaterializedProgrammingWeek({
-    startDate: scheduleMoment.date,
+    startDate: clock.date,
     blocks: state.scheduleBlocks,
     pools: state.pools,
     assets: state.assets,
     sourceGate: getPoolSourceGate(state, now.getTime()),
-    nowMinuteOfDay: parseScheduleClockMinutes(scheduleMoment.time),
+    nowMinuteOfDay: clock.nowMinute,
+    onAirItemEndMinute: clock.onAirItemEndMinute,
+    itemHolds: clock.itemHolds,
     maxListedItemsPerBlock: 5000
   });
-  return buildPublicProgramme({ days, timeZone, now, current: getPublicProgrammeCurrentItem(state) });
+  return buildPublicProgramme({ days, timeZone, now, current: getPublicProgrammeCurrentItem(state, now) });
 }
 
 /**
  * The item on air with its start and length, when the playout runs one: an item of a pool or an insert, not
  * a live input or the standby slate. The process starts once per item, so its start time is the item's.
+ * An item whose length is not known yet (M118) is still the item on air: `endsAt` is empty, and the programme
+ * plans with the 30-minute estimate the week view uses, or with now once that has passed.
  */
-function getPublicProgrammeCurrentItem(state: AppState): PublicProgrammeCurrentItem | null {
+function getPublicProgrammeCurrentItem(state: AppState, now: Date = new Date()): PublicProgrammeCurrentItem | null {
   const asset = state.playout.currentAssetId ? state.assets.find((entry) => entry.id === state.playout.currentAssetId) : undefined;
   const startedAt = Date.parse(state.playout.processStartedAt || "");
   const durationSeconds = Number(asset?.durationSeconds) || 0;
-  if (!asset || getChannelStatusKind(state.playout.status) !== "onAir" || !Number.isFinite(startedAt) || durationSeconds <= 0) {
+  if (!asset || getChannelStatusKind(state.playout.status) !== "onAir" || !Number.isFinite(startedAt)) {
     return null;
   }
+  const endsAt = durationSeconds > 0 ? new Date(startedAt + durationSeconds * 1000).toISOString() : "";
   return {
     title: asset.title,
     categoryName: getCurrentScheduleItem(state)?.categoryName || asset.categoryName || "",
     startsAt: new Date(startedAt).toISOString(),
-    endsAt: new Date(startedAt + durationSeconds * 1000).toISOString()
+    endsAt,
+    plannedEndsAt: endsAt || new Date(Math.max(startedAt + UNKNOWN_ITEM_LENGTH_ESTIMATE_SECONDS * 1000, now.getTime())).toISOString()
   };
 }
 
@@ -1459,16 +1489,16 @@ function summarizeAudioLane(
   };
 }
 
-function summarizeCuepoints(
+export function summarizeCuepoints(
   state: AppState,
-  currentScheduleItem: ReturnType<typeof getCurrentScheduleItem> | null
+  currentScheduleItem: ReturnType<typeof getCurrentScheduleItem> | null,
+  scheduleNow: Date = new Date()
 ): LiveCuepointSummary {
   const block = currentScheduleItem ? state.scheduleBlocks.find((entry) => entry.id === currentScheduleItem.blockId) ?? null : null;
   const pool = currentScheduleItem?.poolId ? state.pools.find((entry) => entry.id === currentScheduleItem.poolId) ?? null : null;
   const offsetsSeconds = normalizeCuepointOffsetsSeconds(block?.cuepointOffsetsSeconds ?? [], block?.durationMinutes ?? 0);
   const cuepointAssetId = resolveBlockCuepointAssetId(block, pool);
   const cuepointAsset = cuepointAssetId ? state.assets.find((entry) => entry.id === cuepointAssetId) ?? null : null;
-  const scheduleNow = new Date();
   const workspaceTimeZone = getWorkspaceTimeZone(state);
   const scheduleMoment = getCurrentScheduleMoment({
     now: scheduleNow,
@@ -1483,17 +1513,14 @@ function summarizeCuepoints(
     });
   const progress =
     currentScheduleItem && offsetsSeconds.length > 0 && active
-      ? getCuepointProgress({
-          occurrenceKey: getScheduleOccurrenceRunKey(currentScheduleItem),
+      ? // The worker's count (M101) and its air windows (M93), through the worker's own function (M118).
+        getOccurrenceCuepointProgress({
+          occurrence: currentScheduleItem,
           cuepointOffsetsSeconds: offsetsSeconds,
           // Every key names its run (the worker keeps the run before the last change too, R8).
           firedCuepointKeys: state.playout.cuepointFiredKeys,
-          // The worker's count (M101): real seconds since the run started.
-          elapsedSeconds: getScheduleRunElapsedSeconds({
-            occurrence: currentScheduleItem,
-            now: scheduleNow,
-            timeZone: workspaceTimeZone
-          })
+          now: scheduleNow,
+          timeZone: workspaceTimeZone
         })
       : {
           dueOffsetSeconds: null,
