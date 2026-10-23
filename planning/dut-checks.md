@@ -4,7 +4,6 @@ Moved out of `PLANS.md` in M121, text unchanged; `PLANS.md` points here. A miles
 device under test (DUT) can run to the end of this file; the release that runs them records the results in its
 notes.
 
-
 Checks a milestone could not run in the cloud. The owner runs them on the DUT after the next candidate is
 deployed; the release that ships them records the results.
 2.3.0's results are in the M106 notes of `planning/archive/plans-m84-m109.md`, the entries that
