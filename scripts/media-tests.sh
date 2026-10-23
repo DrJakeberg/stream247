@@ -42,5 +42,7 @@ SHIM
   echo "ffmpeg/ffprobe not on PATH; using $image."
 fi
 
-ffmpeg -hide_banner -version | head -n 1
+# Not `| head -n 1`: under pipefail the wrapper's docker run dies of SIGPIPE when head exits first.
+version="$(ffmpeg -hide_banner -version)"
+echo "${version%%$'\n'*}"
 STREAM247_REQUIRE_MEDIA_TOOLS=1 pnpm exec vitest run "${files[@]}"
