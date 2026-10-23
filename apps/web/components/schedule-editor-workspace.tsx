@@ -4,6 +4,7 @@ import Link from "next/link";
 import {
   describeScheduleBlockRun,
   formatMinuteOfDay,
+  formatScheduleHours,
   type MaterializedProgrammingDay,
   type ScheduleBlock
 } from "@stream247/core";
@@ -17,6 +18,7 @@ import { ScheduleBlockForm } from "@/components/schedule-block-form";
 import { ScheduleTimeline } from "@/components/schedule-timeline";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { InfoTip } from "@/components/ui/InfoTip";
+import { describeMaterializedBlockFill } from "@/lib/schedule-video-timeline";
 import type { ShowProfileRecord } from "@/lib/server/state";
 
 const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -190,36 +192,36 @@ export function ScheduleEditorWorkspace({
 
       <div className="programming-workspace-grid">
         <div className="programming-workspace-card">
-          <span className="label label-with-info">Day fill<InfoTip text="A dry run of the chosen weekday: how many blocks it has, and how many would repeat material, run late or have nothing to play. Scheduled minutes are set against what the material really adds up to." /></span>
+          <span className="label label-with-info">Day fill<InfoTip text="The chosen weekday played through in advance: how many blocks it has, and how many will repeat videos, run past their end or have nothing to play. The hours the blocks cover are set against the video planned for them." /></span>
           <strong>
             {activeMaterializedDay?.blockCount
-              ? `${activeMaterializedDay.blockCount} materialized block${activeMaterializedDay.blockCount === 1 ? "" : "s"}`
-              : "No materialized blocks"}
+              ? `${activeMaterializedDay.blockCount} block${activeMaterializedDay.blockCount === 1 ? "" : "s"}`
+              : "No blocks on this day"}
           </strong>
           <div className="programming-day-flags">
-            {dayUnderfilled ? <span className="programming-status-pill programming-status-underfilled">{dayUnderfilled} repeat risk</span> : null}
-            {dayOverflow ? <span className="programming-status-pill programming-status-overflow">{dayOverflow} overflow</span> : null}
-            {dayEmpty ? <span className="programming-status-pill programming-status-empty">{dayEmpty} empty</span> : null}
+            {dayUnderfilled ? <span className="programming-status-pill programming-status-underfilled">{dayUnderfilled} repeat{dayUnderfilled === 1 ? "s" : ""} videos</span> : null}
+            {dayOverflow ? <span className="programming-status-pill programming-status-overflow">{dayOverflow} run{dayOverflow === 1 ? "s" : ""} past the end</span> : null}
+            {dayEmpty ? <span className="programming-status-pill programming-status-empty">{dayEmpty} with nothing to play</span> : null}
             {!dayUnderfilled && !dayOverflow && !dayEmpty && (activeMaterializedDay?.blockCount ?? 0) > 0 ? (
               <span className="programming-status-pill programming-status-balanced">Balanced</span>
             ) : null}
           </div>
           <div className="subtle">
             {activeMaterializedDay
-              ? `${activeMaterializedDay.totalScheduledMinutes}m scheduled · ${activeMaterializedDay.totalProjectedMinutes}m projected`
-              : "No schedule blocks are materialized for this weekday yet."}
+              ? `${formatScheduleHours(activeMaterializedDay.totalScheduledMinutes)} scheduled · ${formatScheduleHours(activeMaterializedDay.totalProjectedMinutes)} of video planned`
+              : "This weekday has no blocks yet."}
           </div>
         </div>
         <div className="programming-workspace-card">
-          <span className="label label-with-info">Live queue context<InfoTip text="What is on air now and the next few items queued behind it, so the plan for this day can be checked against what is really playing." /></span>
-          <strong>{liveQueueItems.length > 0 ? "Current runtime queue" : "No live queue published"}</strong>
+          <span className="label label-with-info">On air now<InfoTip text="What is on air now and the next few items queued behind it, so the plan for this day can be checked against what is really playing." /></span>
+          <strong>{liveQueueItems.length > 0 ? "Playing and queued" : "Nothing queued"}</strong>
           <div className="subtle">
             {liveQueueItems.length > 0
               ? liveQueueItems
                   .slice(0, 4)
                   .map((item) => `${item.kind.toUpperCase()} · ${item.title}`)
                   .join(" · ")
-              : "Use this next to the day fill preview to compare planned blocks with real on-air state."}
+              : "The playout has not reported what it plays yet."}
           </div>
         </div>
       </div>
@@ -255,26 +257,20 @@ export function ScheduleEditorWorkspace({
                 {run.label && !run.ended ? <span className="subtle">{run.label}</span> : null}
               </div>
               <div className="subtle">
-                {dayLabels[block.dayOfWeek]} · {formatMinuteOfDay(block.startMinuteOfDay)} · {block.durationMinutes} minutes · {pool?.name || block.sourceName}
+                {dayLabels[block.dayOfWeek]} · {formatMinuteOfDay(block.startMinuteOfDay)} · {formatScheduleHours(block.durationMinutes)} · {pool?.name || block.sourceName}
               </div>
               <div className="subtle">
                 {block.categoryName}
                 {show ? ` · Show: ${show.name}` : ""}
-                {conflictSet.has(block.id) ? " · Conflict detected" : ""}
-                {pool?.insertAssetId && pool.insertEveryItems > 0 ? ` · Insert every ${pool.insertEveryItems}` : ""}
+                {conflictSet.has(block.id) ? " · Overlaps another block" : ""}
+                {pool?.insertAssetId && pool.insertEveryItems > 0 ? ` · Insert after every ${pool.insertEveryItems} video${pool.insertEveryItems === 1 ? "" : "s"}` : ""}
                 {pool?.audioLaneAssetId ? ` · Audio lane ${pool.audioLaneVolumePercent}%` : ""}
-                {block.cuepointOffsetsSeconds?.length ? ` · ${block.cuepointOffsetsSeconds.length} cuepoint${block.cuepointOffsetsSeconds.length === 1 ? "" : "s"}` : ""}
+                {block.cuepointOffsetsSeconds?.length ? ` · ${block.cuepointOffsetsSeconds.length} timed insert${block.cuepointOffsetsSeconds.length === 1 ? "" : "s"}` : ""}
               </div>
               {materialized ? (
                 <>
-                  <div className="subtle">
-                    Unique fill {materialized.uniqueMinutes}m · Projected {materialized.projectedMinutes}m
-                    {materialized.insertCount > 0 ? ` · ${materialized.insertCount} insert${materialized.insertCount === 1 ? "" : "s"}` : ""}
-                    {materialized.cuepointCount > 0 ? ` · ${materialized.cuepointCount} cuepoint-triggered` : ""}
-                  </div>
-                  {materialized.queuePreview.length > 0 ? (
-                    <div className="subtle">Queue preview: {materialized.queuePreview.join(" · ")}</div>
-                  ) : null}
+                  <div className="subtle">{describeMaterializedBlockFill(materialized)}</div>
+                  {materialized.repeatReason ? <div className="subtle">{materialized.repeatReason}</div> : null}
                   {materialized.items.length > 0 ? (
                     <div className="program-sequence-list" style={{ marginTop: 12 }}>
                       {materialized.items.map((item) => {
@@ -294,7 +290,7 @@ export function ScheduleEditorWorkspace({
                             <div>
                               <strong>{buildAssetDisplayTitle(asset, item.title)}</strong>
                               <div className="subtle">
-                                {item.startTime} to {item.endTime} · {item.durationMinutes}m
+                                {item.startTime} to {item.endTime} · {formatScheduleHours(item.durationMinutes)}
                                 {asset?.categoryName ? ` · ${asset.categoryName}` : block.categoryName ? ` · ${block.categoryName}` : ""}
                               </div>
                             </div>
@@ -312,7 +308,7 @@ export function ScheduleEditorWorkspace({
                                 <span className="programming-status-pill programming-status-empty">Estimated</span>
                               ) : null}
                               {item.overflow ? (
-                                <span className="programming-status-pill programming-status-empty">Overflow</span>
+                                <span className="programming-status-pill programming-status-empty">Runs over</span>
                               ) : null}
                             </div>
                           </Link>
@@ -327,7 +323,7 @@ export function ScheduleEditorWorkspace({
                         </Link>
                       }
                       description="Nothing in this block can play yet. Check that its pool has assets marked ready in the library."
-                      title="No playable video slots"
+                      title="Nothing to play yet"
                     />
                   )}
                   {materialized.notes.map((note) => (
@@ -338,7 +334,7 @@ export function ScheduleEditorWorkspace({
                 </>
               ) : null}
               <div style={{ marginTop: 12 }}>
-                <ScheduleBlockForm assets={assets} block={block} pools={pools} shows={showProfiles} today={today} />
+                <ScheduleBlockForm assets={assets} block={block} blocks={blocks} pools={pools} shows={showProfiles} today={today} />
               </div>
               <div style={{ marginTop: 8 }}>
                 <ScheduleBlockDuplicateForm block={block} />

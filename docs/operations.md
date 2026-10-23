@@ -694,6 +694,12 @@ zone and bound when the block starts.
   M118; before, it counted the skipped one too and could name it as due
 - "Daily" between two dates creates a block only on the weekdays those dates contain; a pool used by a
   dated block continues where it stopped the evening before (owner decision 5.1 Q2)
+- before saving, the form says what the block takes over (since M119): "Takes over 20:00–22:00 from
+  Evening on 10 days (Thu 1 Oct to Sat 10 Oct); Evening continues at 22:00." *For how many days* sets the
+  last date from the first (10 days from 1 Oct ends on 10 Oct)
+- an edit with *Apply to repeat set* gives every copy the same dates, so it is refused when a copy's
+  weekday is not between them, with those weekdays named (since M119; before, such copies were saved
+  and never aired). Turn the toggle off to give one occurrence its own dates
 - a block whose last date has passed airs no more and stays listed, faded and marked *Ended 10 Oct*,
   until it is re-dated or deleted (*Hide ended* filters it out); dates that lie entirely in the past are
   refused on save. A block crossing midnight on its last date still runs into the next day

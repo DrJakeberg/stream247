@@ -227,7 +227,7 @@ describe("M93 follow-up: a weekly block cut by a dated block projects only its a
     expect(weekly?.durationLabel).toBe("3 h");
     // 2 h up to the cut, then one 90-min item in the last hour: 30 min late, not 4 h of block time filled.
     expect(weekly?.projectedMinutes).toBe(210);
-    expect(weekly?.fillLabel).toBe("Ends 30m late");
+    expect(weekly?.fillLabel).toBe("Ends 30 min late");
     expect(weekly?.timeLabel).toBe("18:00 → 20:00 · 21:00 → 22:00");
     // Item 2 runs into the dated block and is cut at 20:00; item 3 starts when the weekly block is back.
     expect(weekly?.items.map((item) => [item.assetId, item.startTime, item.endTime])).toEqual([

@@ -340,7 +340,7 @@ describe("R7: between two weekly blocks the item still finishes first", () => {
     const [monday] = buildMaterializedProgrammingWeek({ startDate: MONDAY, blocks: [early, evening], pools, assets });
     const earlyBlock = monday?.blocks.find((entry) => entry.blockId === "early");
     expect(earlyBlock?.cutAtEnd).toBe(false);
-    expect(earlyBlock?.fillLabel).toBe("Ends 60m late");
+    expect(earlyBlock?.fillLabel).toBe("Ends 1 h late");
   });
 
   it("a weekly block ending where a dated block starts is cut there in the projection, as on air", () => {

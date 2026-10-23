@@ -455,3 +455,39 @@ describe("the block route saves dated and one-off blocks", () => {
     );
   });
 });
+
+// M119, suggestion 19: a repeat-set edit checks the dates against every copy's weekday, not only the edited one.
+describe("a repeat-set edit gives every copy the dates, so every copy's weekday must be between them", () => {
+  const pool = { id: "pool-1", name: "Evening pool", insertAssetId: "" };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-01T09:00:00.000Z"));
+    mockRequireApiRoles.mockResolvedValue(null);
+    mockGetAuthenticatedUser.mockResolvedValue({ displayName: "Owner" });
+    mockAppendAuditEvent.mockResolvedValue(undefined);
+    mockReadAppState.mockResolvedValue({ pools: [pool], showProfiles: [], assets: [], scheduleBlocks: [...grid, ...tenEvenings], managedConfig: {} });
+  });
+
+  const request = (body: Record<string, unknown>) => ({ json: async () => body }) as never;
+  const monday = tenEvenings.find((entry) => entry.dayOfWeek === 1)!;
+
+  it("refuses Mon 5 to Tue 6 Oct for the daily set and names the five weekdays that would never air", async () => {
+    const response = await PUT(request({ ...monday, applyToRepeatSet: true, runs: "between", validFrom: "2026-10-05", validUntil: "2026-10-06" }));
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as { message: string }).message).toBe(
+      "Sunday, Wednesday, Thursday, Friday and Saturday of this repeat set do not fall between these dates. Choose dates that contain every weekday of the set, or turn off Apply to repeat set to give this occurrence its own dates."
+    );
+  });
+
+  it("saves dates that contain every weekday of the set, and the same short dates for this occurrence alone", async () => {
+    const whole = await PUT(request({ ...monday, title: "Abendspecial", applyToRepeatSet: true, runs: "between", validFrom: "2026-10-03", validUntil: "2026-10-12" }));
+    expect(whole.status).toBe(200);
+    const alone = await PUT(request({ ...monday, applyToRepeatSet: false, runs: "between", validFrom: "2026-10-05", validUntil: "2026-10-06" }));
+    expect(alone.status).toBe(200);
+    expect(mockUpdateScheduleBlockRecord).toHaveBeenCalledWith(
+      expect.objectContaining({ id: monday.id, repeatGroupId: "", validFrom: "2026-10-05", validUntil: "2026-10-06" })
+    );
+  });
+});

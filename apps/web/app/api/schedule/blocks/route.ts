@@ -3,6 +3,7 @@ import {
   filterWeekdaysInDateWindow,
   findScheduleConflicts,
   findScheduleConflictsInvolving,
+  findWeekdaysOutsideDateWindow,
   getCurrentScheduleMoment,
   getRepeatDaysForMode,
   getScheduleDateDayOfWeek,
@@ -21,6 +22,13 @@ import {
   updateScheduleBlockRecord,
   updateScheduleRepeatGroupRecords
 } from "@/lib/server/state";
+
+const weekdayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+function joinWeekdayNames(days: number[]): string {
+  const names = days.map((day) => weekdayNames[day] ?? String(day));
+  return names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0] ?? "";
+}
 
 function normalizeBody(body: {
   action?: string;
@@ -450,13 +458,27 @@ export async function PUT(request: NextRequest) {
     if (applyToRepeatSet && payload.runs === "once") {
       throw new Error("A single date applies to one block. Turn off Apply to repeat set to run this occurrence once.");
     }
-    // The repeat set keeps each copy's weekday, so the dates are checked against the edited copy's own day.
+    // The repeat set keeps each copy's weekday, so the dates are checked against the edited copy's own day,
+    // and then against every other copy's (M119): a copy whose weekday is not between the dates would be
+    // saved and never air.
     const datesError = validateScheduleBlock(
       { ...payload, dayOfWeek: applyToRepeatSet ? existing.dayOfWeek : payload.dayOfWeek },
       { today: channelToday(state) }
     );
     if (datesError) {
       throw new Error(datesError);
+    }
+    if (applyToRepeatSet) {
+      const outside = findWeekdaysOutsideDateWindow(
+        state.scheduleBlocks.filter((block) => block.repeatGroupId === existing.repeatGroupId).map((block) => block.dayOfWeek),
+        payload.validFrom,
+        payload.validUntil
+      );
+      if (outside.length > 0) {
+        throw new Error(
+          `${joinWeekdayNames(outside)} of this repeat set ${outside.length === 1 ? "does" : "do"} not fall between these dates. Choose dates that contain every weekday of the set, or turn off Apply to repeat set to give this occurrence its own dates.`
+        );
+      }
     }
 
     const pool = state.pools.find((entry) => entry.id === payload.poolId);
