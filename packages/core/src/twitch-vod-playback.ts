@@ -43,3 +43,25 @@ export function isTwitchVodPlaybackAsset(asset: { path: string; cachePath?: stri
     return false;
   }
 }
+
+/**
+ * When the failure cooldown of a Twitch archive's cache ends (ms), or null when it has none now: a download
+ * that failed is not tried again, and the item not picked, until `cooldownMs` after the failure was recorded.
+ * The worker skips the item until then (`isTwitchVodCacheCoolingDown`); the week view (M118) leaves it out of
+ * the picks it projects before that time.
+ */
+export function getTwitchVodCacheCooldownEndMs(
+  asset: { path: string; externalId?: string; cachePath?: string; cacheStatus?: string; cacheUpdatedAt?: string },
+  cooldownMs: number,
+  nowMs = Date.now()
+): number | null {
+  if (cooldownMs <= 0 || asset.cacheStatus !== "failed" || !asset.cacheUpdatedAt || !isTwitchVodPlaybackAsset(asset)) {
+    return null;
+  }
+  const updatedAtMs = new Date(asset.cacheUpdatedAt).getTime();
+  if (!Number.isFinite(updatedAtMs)) {
+    return null;
+  }
+  const endMs = updatedAtMs + cooldownMs;
+  return nowMs < endMs ? endMs : null;
+}

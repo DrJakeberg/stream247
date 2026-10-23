@@ -690,7 +690,8 @@ zone and bound when the block starts.
   10-day run shows days 1-7 at once and days 8-10 as the 7-day window rolls
 - the weekly block keeps its start, so its cuepoints count from it; a cuepoint that falls into the dated
   part is skipped, and one that aired before the dated block does not air again when the weekly block
-  comes back
+  comes back. The live view's cuepoint count (*Live*, fired/total, next and due) counts the same way since
+  M118; before, it counted the skipped one too and could name it as due
 - "Daily" between two dates creates a block only on the weekdays those dates contain; a pool used by a
   dated block continues where it stopped the evening before (owner decision 5.1 Q2)
 - a block whose last date has passed airs no more and stays listed, faded and marked *Ended 10 Oct*,
@@ -711,13 +712,25 @@ and its scheduled time in hours (*24 h scheduled*).
   2. Before M97 every block started from the pool's stored position, so each day showed the same first
   video
 - on today's card a block that has ended reads *Aired earlier today* and takes nothing from its pool; the
-  block on air is filled from now
+  block on air is filled from when the video on air ends (since M118; before, from now), or from now when
+  nothing plays. A video on air whose length is not known yet counts as 30 minutes
+- a video that runs past its block delays the next block when that one takes the air without a cut (a
+  weekly block after a weekly block, as on air): the next block's first video starts when it ends (since
+  M118; before, on time). A block it covers completely reads *Covered by the item before*. A dated block
+  still starts on time and cuts it
 - a block past midnight is listed once, on the day it starts, as *23:00 → 01:00 Sun*; the next day still
   counts its hours. The first day keeps a block that started the evening before (*23:00 Sat → 01:00*)
 - a weekly block cut by a dated block is filled only in its air time: the video running when the dated
   block starts is cut there, and the next one starts when the weekly block comes back. The dated block's
   own last video is cut at its end when another block takes the air there (since M105, as on air), so
-  it no longer reads *Ends 20m late*; a block followed by a weekly block, or by nothing, still may
+  it no longer reads *Ends 20m late*; a block followed by a weekly block, or by nothing, still may. When
+  the dated block uses the weekly block's pool, its videos come between the two parts in the pool's order
+  (since M118; before, both parts of the weekly block took theirs first)
+- a Twitch video whose download failed is left out until its cache cooldown ends (30 minutes by default,
+  Settings → Operations → Replay cache), as the worker skips it; the block says how many it skips (since
+  M118; before, the week listed it)
+- a 24 h block of clips of a few seconds is projected to its end (since M118; before, it stopped after
+  5 000 clips, about 4 h of 3-second clips)
 - *Repeats inside block* says why, with numbers: *6 min of video for a 24 h block: plays ≈ 240 times. Add
   videos to Abendprogramm.* A pool that alternates between sources says when one source runs out first
 - *Edit block* (in an opened block) opens the day lens at that block's form; *Add block* (above the days)
@@ -735,7 +748,11 @@ The public page shows, in the channel language:
 - *Up next*: the next 24 hours video by video, from the same projection as `Program → Schedule → Week`
   (each pool carries on with the worker's rotation). Consecutive videos of one block are one card showing
   the next video, with *4 more videos* to unfold; the list runs across midnight without a break. A block
-  with nothing to play is listed with its own times. The block on air continues after the video on air
+  with nothing to play is listed with its own times. The block on air continues after the video on air,
+  and a block the video on air runs into starts when it ends unless it is a dated block (since M118)
+- a video on air whose length is not known yet is still *Now*, with only its start (*since 20:00*), no
+  progress bar; *Up next* goes on after a 30-minute estimate, or from now once that has passed (since
+  M118; before, *Now* showed the block and *Up next* listed a video from now that was not on air)
 - *The next 7 days*: each day's blocks with their times; a dated block is marked *Special*
 - times in the viewer's own time zone, as the browser reports it, with the channel time beside them when
   the zones differ (*20:00 to 22:00 channel time*); the days are the viewer's days
@@ -972,8 +989,8 @@ YouTube or Twitch source:
   for the pool's next item). Skip, Remove next, every operator action and a dated block's start or end
   still end it.
 - An insert whose item is quarantined, cooling down (Twitch VOD) or from a source the breaker holds is
-  not picked; it airs again once that ends. The week view leaves out a quarantined item or a held
-  source's item the same way (it does not know the Twitch cache cooldown).
+  not picked; it airs again once that ends. The week view leaves out a quarantined item, a held
+  source's item and, since M118, a Twitch VOD in its cache cooldown the same way.
 - When the insert is due and still not ready (the local fallback covers the resolve) or cannot be
   prepared, it is skipped once and counts as played: the pool's counter starts again, the cuepoint is
   fired. The same holds when ffmpeg cannot be started for it, and (since M105) when it starts but its

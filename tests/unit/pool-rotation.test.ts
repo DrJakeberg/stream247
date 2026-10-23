@@ -358,7 +358,7 @@ describe("pool rotation wiring", () => {
   it("walks every core preview through the rotation", () => {
     expect(bodyOf(coreSource, "export function lookaheadVideoTitleFromPool(")).toContain("walkPoolRotation(");
     expect(bodyOf(coreSource, "export function buildSchedulePreviewVideoSlots(")).toContain("createPoolRotation(");
-    expect(bodyOf(coreSource, "function materializePoolWindow(")).toContain("createPoolRotation(");
+    expect(bodyOf(coreSource, "function createBlockProjection(")).toContain("createPoolRotation(");
   });
 });
 

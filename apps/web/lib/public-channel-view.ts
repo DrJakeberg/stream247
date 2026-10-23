@@ -214,10 +214,16 @@ export function buildPublicChannelView(
     // V2: with the playout down the card says what the schedule has now, not what is on air.
     heading: viewerText(locale, statusKind === "onAir" ? "channel.onAirNow" : "channel.scheduledNow"),
     title: viewerWords(current?.title) || viewerText(locale, "channel.standby"),
+    // An item whose length is not known yet (M118) says only when it started.
     detail: current
-      ? joinDetail(range(current.startsAt, current.endsAt, viewerZone), viewerWords(current.categoryName))
+      ? joinDetail(
+          current.endsAt
+            ? range(current.startsAt, current.endsAt, viewerZone)
+            : viewerText(locale, "channel.since", { start: clock(current.startsAt, viewerZone) }),
+          viewerWords(current.categoryName)
+        )
       : getViewerChannelStatusLine(locale, snapshot.playout.status),
-    channelTime: current ? channelTime(current.startsAt, current.endsAt) : "",
+    channelTime: current && current.endsAt ? channelTime(current.startsAt, current.endsAt) : "",
     progressPercent: progress ? progress.percent : null,
     remaining: progress ? viewerText(locale, "channel.remaining", { time: formatProgrammeRemaining(progress.remainingSeconds) }) : ""
   };

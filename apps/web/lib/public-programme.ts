@@ -38,6 +38,7 @@ export type PublicProgrammeNow = {
   title: string;
   categoryName: string;
   startsAt: string;
+  /** Empty for an item whose length is not known yet (M118). */
   endsAt: string;
 };
 
@@ -62,7 +63,10 @@ export type PublicProgrammeCurrentItem = {
   title: string;
   categoryName: string;
   startsAt: string;
+  /** Empty when its length is not known yet (M118). */
   endsAt: string;
+  /** The end the programme plans with: `endsAt`, or an estimate when that is empty. */
+  plannedEndsAt?: string;
 };
 
 export const PUBLIC_PROGRAMME_NEXT_HOURS = 24;
@@ -162,7 +166,7 @@ export function buildPublicProgramme(args: {
   const blocks = collectBlocks(args.days, args.timeZone);
   const onAir = blocks.find((block) => block.windows.some((window) => window.start <= nowMs && nowMs < window.end)) ?? null;
 
-  const currentEnd = args.current ? Date.parse(args.current.endsAt) : Number.NaN;
+  const currentEnd = args.current ? Date.parse(args.current.endsAt || args.current.plannedEndsAt || "") : Number.NaN;
   if (onAir && Number.isFinite(currentEnd) && currentEnd > nowMs) {
     // Only the air window on now moves: after a dated block the weekly block comes back at its own time.
     const window = onAir.windows.find((candidate) => candidate.start <= nowMs && nowMs < candidate.end) as { start: number; end: number };
@@ -241,8 +245,8 @@ export function buildPublicProgramme(args: {
 
   const currentStart = args.current ? Date.parse(args.current.startsAt) : Number.NaN;
   const now: PublicProgrammeNow | null =
-    args.current && Number.isFinite(currentStart) && currentStart <= nowMs && currentEnd > nowMs
-      ? { kind: "item", ...args.current }
+    args.current && Number.isFinite(currentStart) && currentStart <= nowMs && (!args.current.endsAt || currentEnd > nowMs)
+      ? { kind: "item", title: args.current.title, categoryName: args.current.categoryName, startsAt: args.current.startsAt, endsAt: args.current.endsAt }
       : onAir
         ? (() => {
             const window = onAir.windows.find((candidate) => candidate.start <= nowMs && nowMs < candidate.end) as { start: number; end: number };
