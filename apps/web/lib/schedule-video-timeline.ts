@@ -4,6 +4,8 @@ export type ScheduleVideoTimelineSegment = {
   assetId: string;
   title: string;
   widthPercent: number;
+  /** Air time before it in the block that is not this block's (a dated block's cut, the item before running over). */
+  gapBeforePercent: number;
   startOffsetSeconds: number;
   estimatedDurationSeconds: number;
   estimatedDuration: boolean;
@@ -20,6 +22,7 @@ export function buildScheduleVideoTimelineSegments(block: MaterializedProgrammin
   const blockSeconds = Math.max(1, block.durationMinutes) * 60;
   const blockEndSecond = blockStartSecond + blockSeconds;
 
+  let drawnUntil = blockStartSecond;
   return block.items.flatMap((item) => {
     const start = item.startSecond ?? blockStartSecond;
     const end = item.endSecond ?? start + item.durationMinutes * 60;
@@ -29,11 +32,14 @@ export function buildScheduleVideoTimelineSegments(block: MaterializedProgrammin
     if (visibleEnd <= visibleStart) {
       return [];
     }
+    const gapBeforePercent = Math.max(0, ((visibleStart - drawnUntil) / blockSeconds) * 100);
+    drawnUntil = Math.max(drawnUntil, visibleEnd);
     return [
       {
         assetId: item.assetId,
         title: item.title,
         widthPercent: Math.max(0, Math.min(100, ((visibleEnd - visibleStart) / blockSeconds) * 100)),
+        gapBeforePercent,
         startOffsetSeconds: visibleStart - blockStartSecond,
         estimatedDurationSeconds: visibleEnd - visibleStart,
         estimatedDuration: item.estimatedDuration

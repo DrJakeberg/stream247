@@ -73,7 +73,8 @@ export function ScheduleBlockForm({ pools, assets, shows, block, today = "", def
   const [validUntil, setValidUntil] = useState(block?.validUntil ?? "");
   const [editDay, setEditDay] = useState(block?.dayOfWeek ?? 1);
   const [startHour, setStartHour] = useState(Math.floor((block?.startMinuteOfDay ?? 0) / 60));
-  const [startMinute, setStartMinute] = useState((block?.startMinuteOfDay ?? 0) % 60);
+  // The select offers quarter hours; a stored start off them (a template, the API) shows and saves as :00.
+  const [startMinute, setStartMinute] = useState([0, 15, 30, 45].includes((block?.startMinuteOfDay ?? 0) % 60) ? (block?.startMinuteOfDay ?? 0) % 60 : 0);
   const router = useRouter();
   const { pushToast } = useToast();
 
@@ -239,10 +240,12 @@ export function ScheduleBlockForm({ pools, assets, shows, block, today = "", def
                 <InfoTip text="Counts the days from the first date to the last, both included. Type a number to set the last date from the first: 10 days from 1 Oct ends on 10 Oct." />
               </span>
               <input
+                disabled={!isScheduleDateString(validFrom)}
+                max={3660}
                 min={1}
                 onChange={(event) => {
                   const count = Math.floor(Number(event.target.value));
-                  if (isScheduleDateString(validFrom) && count >= 1) {
+                  if (isScheduleDateString(validFrom) && count >= 1 && count <= 3660) {
                     setValidUntil(addDaysToDateString(validFrom, count - 1));
                   }
                 }}

@@ -308,7 +308,7 @@ export function ScheduleEditorWorkspace({
                                 <span className="programming-status-pill programming-status-empty">Estimated</span>
                               ) : null}
                               {item.overflow ? (
-                                <span className="programming-status-pill programming-status-empty">Overflow</span>
+                                <span className="programming-status-pill programming-status-empty">Runs over</span>
                               ) : null}
                             </div>
                           </Link>
@@ -323,7 +323,7 @@ export function ScheduleEditorWorkspace({
                         </Link>
                       }
                       description="Nothing in this block can play yet. Check that its pool has assets marked ready in the library."
-                      title="No playable video slots"
+                      title="Nothing to play yet"
                     />
                   )}
                   {materialized.notes.map((note) => (

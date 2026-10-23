@@ -156,7 +156,7 @@ describe("16: an item that runs over its block delays the next block", () => {
       })[0]!.blocks;
     const weekly = week(false);
     expect(startsOf(weekly[0]!)).toEqual(["a1@10:00", "a2@10:50"]);
-    expect(weekly[0]!.fillLabel).toBe("Ends 40m late");
+    expect(weekly[0]!.fillLabel).toBe("Ends 40 min late");
     expect(startsOf(weekly[1]!).slice(0, 2)).toEqual(["b1@11:40", "b2@12:40"]);
     const dated = week(true);
     expect(dated[0]!.cutAtEnd).toBe(true);

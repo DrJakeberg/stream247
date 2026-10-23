@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import type { MaterializedProgrammingBlock } from "@stream247/core";
 import { buildScheduleVideoTimelineSegments, describeMaterializedBlockFill } from "@/lib/schedule-video-timeline";
 
@@ -50,19 +50,30 @@ export function ScheduleVideoTimeline({
                 {segments.length > 0 ? (
                   <div className="schedule-video-timeline" role="list">
                     {segments.map((segment, index) => (
-                      <div
-                        className="schedule-video-slot"
-                        key={`${segment.assetId}-${segment.startOffsetSeconds}-${index}`}
-                        role="listitem"
-                        style={{ flexBasis: `${segment.widthPercent}%` }}
-                        title={segment.title}
-                      >
-                        <span>{segment.title}</span>
-                      </div>
+                      <Fragment key={`${segment.assetId}-${segment.startOffsetSeconds}-${index}`}>
+                        {/* Time the block is not on air (a dated block's cut), so later videos sit at their real time. */}
+                        {segment.gapBeforePercent > 0 ? (
+                          <div aria-hidden="true" style={{ flexBasis: `${segment.gapBeforePercent}%`, flexShrink: 0 }} />
+                        ) : null}
+                        <div
+                          className="schedule-video-slot"
+                          role="listitem"
+                          style={{ flexBasis: `${segment.widthPercent}%` }}
+                          title={segment.title}
+                        >
+                          <span>{segment.title}</span>
+                        </div>
+                      </Fragment>
                     ))}
                   </div>
                 ) : (
-                  <div className="subtle">{block.poolId ? "Nothing in this pool can play yet" : "No pool linked to this block"}</div>
+                  <div className="subtle">
+                    {block.fillLabel === "Covered by the item before"
+                      ? "The item before runs past this block, so none of its videos air."
+                      : block.poolId
+                        ? "Nothing in this pool can play yet"
+                        : "No pool linked to this block"}
+                  </div>
                 )}
               </div>
             ) : null}

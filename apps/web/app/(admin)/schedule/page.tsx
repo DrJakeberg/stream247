@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
 
 import Link from "next/link";
-import { findScheduleConflicts, getCurrentScheduleMoment } from "@stream247/core";
+import { findScheduleConflicts, formatScheduleHours, getCurrentScheduleMoment } from "@stream247/core";
 import { AssetMetadataDrawer } from "@/components/asset-metadata-drawer";
 import { Panel } from "@/components/panel";
 import { ProgramNowNextLens } from "@/components/program-now-next-lens";
@@ -167,7 +167,7 @@ export default async function SchedulePage(props: { searchParams?: Promise<Sched
                           <strong>{show.name}</strong>
                           <span className="show-swatch" style={{ background: show.color }} />
                           <span className="subtle">{show.categoryName || "No category"}</span>
-                          <span className="subtle">{show.defaultDurationMinutes}m default</span>
+                          <span className="subtle">{formatScheduleHours(show.defaultDurationMinutes)} default</span>
                         </div>
                         {show.description ? <div className="subtle">{show.description}</div> : null}
                         <div style={{ marginTop: 12 }}>

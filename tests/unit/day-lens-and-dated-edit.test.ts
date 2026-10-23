@@ -104,6 +104,29 @@ describe("18: the Day lens's video bars carry the rotation from block to block",
     ]);
   });
 
+  it("leaves the part a dated block takes over empty, so the videos after it sit at their real time", () => {
+    const poolB = { ...pool, id: "b", name: "Special pool", sourceIds: ["source-b"] };
+    const assetsB = assets.map((asset) => ({ ...asset, id: `b-${asset.id}`, sourceId: "source-b", title: `b-${asset.title}` }));
+    const day = buildMaterializedProgrammingWeek({
+      startDate: MONDAY,
+      blocks: [
+        block({ id: "Evening", dayOfWeek: 1, startMinuteOfDay: 18 * 60, durationMinutes: 300 }),
+        block({ id: "Special", dayOfWeek: 1, startMinuteOfDay: 20 * 60, durationMinutes: 120, poolId: "b", validFrom: MONDAY, validUntil: MONDAY })
+      ],
+      pools: [pool, poolB],
+      assets: [...assets, ...assetsB]
+    })[0]!;
+    const segments = buildScheduleVideoTimelineSegments(day.blocks.find((entry) => entry.blockId === "Evening")!);
+    expect(segments.map((segment) => [segment.title, segment.gapBeforePercent, segment.startOffsetSeconds / 60])).toEqual([
+      ["a1", 0, 0],
+      ["a2", 0, 30],
+      ["a3", 0, 60],
+      ["a4", 0, 90],
+      ["a5", 40, 240],
+      ["a6", 0, 270]
+    ]);
+  });
+
   it("lists a block that has aired as such, with no videos to open", () => {
     const html = renderToStaticMarkup(React.createElement(ScheduleVideoTimeline, { blocks: monday(12 * 60).blocks, dayLabels: ["Sun", "Mon"] }));
     expect(html).toContain("Aired earlier today");
@@ -178,7 +201,7 @@ describe("19: what a dated block takes over, before it is saved", () => {
     // Once on Fri 2 Oct 23:30 for 2 h, into Saturday's 00:00-06:00.
     expect(
       describeScheduleTakeover({ dayOfWeeks: [5], startMinuteOfDay: 23 * 60 + 30, durationMinutes: 120, validFrom: "2026-10-02", validUntil: "2026-10-02", blocks: [night] })
-    ).toEqual(["Takes over 00:00–01:30 from Night on Fri 2 Oct; Night continues at 01:30."]);
+    ).toEqual(["Takes over 00:00–01:30 from Night on Sat 3 Oct; Night continues at 01:30."]);
     expect(
       describeScheduleTakeover({ dayOfWeeks: [5], startMinuteOfDay: 23 * 60 + 30, durationMinutes: 120, validFrom: "2026-10-02", validUntil: "2026-10-02", blocks: [night], excludeIds: ["night"] })
     ).toEqual([]);

@@ -3550,7 +3550,7 @@ function createBlockProjection(args: {
         : fillStatus === "underfilled"
           ? "Repeats inside block"
           : fillStatus === "overflow"
-            ? `Ends ${overflowMinutes}m late`
+            ? `Ends ${formatScheduleHours(overflowMinutes)} late`
             : "Balanced window";
     // Why a block repeats, with the numbers an operator can act on (U5).
     let repeatReason = "";
@@ -4076,7 +4076,8 @@ export function describeScheduleTakeover(args: {
         const continuesAt = blockEnd > end ? end : null;
         const key = `${block.title || block.categoryName}|${from % 1440}|${to % 1440}|${continuesAt === null ? "" : continuesAt % 1440}`;
         const group = groups.get(key) ?? { title: block.title || block.categoryName, from, to, continuesAt, dates: [] };
-        group.dates.push(date);
+        // The day the cut happens: the next morning for the part of a dated block past midnight.
+        group.dates.push(from >= 24 * 60 ? addDaysToDateString(date, 1) : date);
         groups.set(key, group);
       }
     }
