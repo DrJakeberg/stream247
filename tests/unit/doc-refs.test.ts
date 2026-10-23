@@ -11,7 +11,8 @@ import path from "node:path";
  * reads every backticked repo path in the files below and fails on one that is missing, so a rename
  * or a deletion has to take its references along.
  *
- * Checked: `AGENTS.md`, `PLANS.md`, `README.md`, `CONTRIBUTING.md` and `docs/*.md`. Not checked: the
+ * Checked: `AGENTS.md`, `PLANS.md` with the two files it points to since M121 (`planning/dut-checks.md`,
+ * `planning/milestone-notes.md`), `README.md`, `CONTRIBUTING.md` and `docs/*.md`. Not checked: the
  * archive under `planning/archive/`, which records history as it was, and `CHANGELOG.md`, whose
  * release sections describe the tree of their release.
  *
@@ -35,7 +36,15 @@ function checkedFiles() {
   const docs = readdirSync(path.join(ROOT, "docs"))
     .filter((name) => name.endsWith(".md"))
     .map((name) => `docs/${name}`);
-  return ["AGENTS.md", "PLANS.md", "README.md", "CONTRIBUTING.md", ...docs];
+  return [
+    "AGENTS.md",
+    "PLANS.md",
+    "planning/dut-checks.md",
+    "planning/milestone-notes.md",
+    "README.md",
+    "CONTRIBUTING.md",
+    ...docs
+  ];
 }
 
 /**

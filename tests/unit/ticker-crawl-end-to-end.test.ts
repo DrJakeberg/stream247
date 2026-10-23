@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { overlayScale, overlayTickerCrawlPlan, type OverlayScenePayloadView } from "@stream247/core";
 import { loadSceneRendererFonts, renderSceneFrame, renderTickerStrip } from "../../apps/worker/src/scene-renderer";
 import { buildTickerCrawlFilter, resolveTickerCrawlCopies } from "../../apps/worker/src/ffmpeg-runtime";
+import { mediaToolsAvailable } from "../support/media-tools";
 
 /**
  * The whole ticker, end to end: the scene the rasteriser draws, the strip it draws beside it, and
@@ -19,7 +20,7 @@ import { buildTickerCrawlFilter, resolveTickerCrawlCopies } from "../../apps/wor
 const FRAME = { width: 1920, height: 1080 };
 const FPS = 30;
 const LINE = "Schedule at stream247.example";
-const ffmpegAvailable = spawnSync("ffmpeg", ["-hide_banner", "-version"]).status === 0;
+const ffmpegAvailable = mediaToolsAvailable("ffmpeg");
 
 function payload(): OverlayScenePayloadView {
   return {

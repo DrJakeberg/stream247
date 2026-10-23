@@ -54,14 +54,14 @@ unless the owner says otherwise in the brief; name the conflict in the report.
   prior context (a subagent) has checked the diff against the acceptance, and the pull request's CI is
   green. Merge only on the owner's word (a brief that says "merge" is that word), with a merge commit
   titled `Merge: …`.
-- Checks that only the DUT can run do not hold the merge: add them to "DUT checks for the next release
-  candidate" in `PLANS.md`.
+- Checks that only the DUT can run do not hold the merge: add them to `planning/dut-checks.md` (DUT checks
+  for the next release candidate).
 - On a conflict, merge `main` into your branch (no rebase of a pushed branch). Never resolve a conflict
   in `PLANS.md` or `CHANGELOG.md` by deduplicating identical lines, and never drop another thread's
   entries.
 - Commit and push work in progress before waiting on anything; a cloud container can be lost.
-- At milestone end set its row in `PLANS.md` to Complete and add a section under "Milestone notes" when
-  the row is not enough (decisions, measurements, follow-ups).
+- At milestone end set its row in `PLANS.md` to Complete and add a section to `planning/milestone-notes.md`
+  when the row is not enough (decisions, measurements, follow-ups). `PLANS.md` stays under 300 lines.
 
 ## GitHub from a cloud session
 

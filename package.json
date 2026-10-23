@@ -12,6 +12,7 @@
     "test": "pnpm test:unit && pnpm test:integration",
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
+    "test:media": "bash ./scripts/media-tests.sh",
     "test:e2e": "pnpm exec playwright test --config=playwright.config.ts",
     "test:e2e:smoke": "bash ./scripts/e2e-smoke.sh",
     "test:fresh-db": "bash ./scripts/fresh-db-bootstrap-smoke.sh",
