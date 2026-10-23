@@ -480,4 +480,25 @@ describe("R2 U3: the empty library", () => {
     expect(html).not.toContain("The library is empty");
     expect(html).not.toContain("The filters hide every asset");
   });
+
+  it("lists the assets before the curated sets and the bulk fields (M116, suggestion 13)", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(AssetLibraryBrowser, {
+        assets: [readyAsset("a1"), readyAsset("a2")],
+        sources: [{ id: "source-local-library", name: "Local Media Library" } as AppState["sources"][number]],
+        assetCollections: []
+      }) as never
+    );
+    const firstCard = html.indexOf('class="asset-card"');
+    const filters = html.indexOf("Search assets");
+    const curatedSets = html.indexOf("<strong>Curated sets</strong>");
+    const bulkFolder = html.indexOf("Bulk folder path");
+    const selection = html.indexOf("No assets selected yet.");
+    expect(firstCard).toBeGreaterThan(filters);
+    expect(curatedSets).toBeGreaterThan(firstCard);
+    expect(bulkFolder).toBeGreaterThan(firstCard);
+    // The selection line belongs to what acts on it, after the list.
+    expect(selection).toBeGreaterThan(html.indexOf("Video a2"));
+    expect(selection).toBeLessThan(curatedSets);
+  });
 });

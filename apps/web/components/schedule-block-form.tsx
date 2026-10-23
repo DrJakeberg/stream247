@@ -317,7 +317,7 @@ export function ScheduleBlockForm({ pools, assets, shows, block, today = "", def
         <label>
           <span className="label label-with-info">
             Start hour
-            <InfoTip text="Sets the hour the block goes on air, in the channel's time zone. Together with the length it must not overlap another block on the same day; an overlap is refused when you save." />
+            <InfoTip text="Sets the hour the block goes on air, in the channel's time zone. Together with the length it must not overlap another block, also not one on the next day that a block past midnight runs into; an overlap is refused when you save." />
           </span>
           <select defaultValue={String(Math.floor((block?.startMinuteOfDay ?? 0) / 60))} name="startHour">
             {Array.from({ length: 24 }, (_, hour) => (
@@ -391,7 +391,7 @@ export function ScheduleBlockForm({ pools, assets, shows, block, today = "", def
         <label>
           <span className="label label-with-info">
             Play it at (seconds into the block)
-            <InfoTip text="Times at which the insert is queued, separated by commas, spaces or semicolons; each fires in the next gap between two videos rather than by cutting one, once per airing unless the block runs past midnight, when its earlier times re-arm at 00:00. Times under 15 seconds or at or past the end of the block are dropped, only the earliest 24 are kept, and an insert must be chosen here or on the pool." />
+            <InfoTip text="Times at which the insert is queued, separated by commas, spaces or semicolons; each fires in the next gap between two videos rather than by cutting one, once per airing, also when the block runs past midnight, since the times count from the block's start. Times under 15 seconds or at or past the end of the block are dropped, only the earliest 24 are kept, and an insert must be chosen here or on the pool." />
           </span>
           <input
             name="cuepointOffsetsText"
