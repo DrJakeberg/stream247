@@ -1,4 +1,5 @@
 import {
+  addPendingPlayoutAction,
   decideTwitchVodPlaybackSource,
   isAssetHeldOut,
   isTwitchVodPlaybackAsset,
@@ -8,6 +9,7 @@ import {
   resolveVodCacheTuning,
   type OperatorOverrideHold
 } from "@stream247/core";
+import { resumeTakesTheAir } from "@/lib/operator-holds";
 import { appendAuditEvent, readAppState, updateDestinationRecord, updatePlayoutRuntime } from "@/lib/server/state";
 
 type BroadcastAction =
@@ -58,7 +60,7 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
         : "Broadcast queue rebuild requested. The next playout cycle will recalculate the visible queue.";
     await updatePlayoutRuntime((playout) => ({
       ...playout,
-      pendingAction: action.type,
+      pendingAction: addPendingPlayoutAction(playout.pendingAction, action.type),
       pendingActionRequestedAt: now,
       heartbeatAt: now,
       message
@@ -80,8 +82,6 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
       status: "recovering",
       restartRequestedAt: now,
       heartbeatAt: now,
-      pendingAction: "",
-      pendingActionRequestedAt: "",
       message
     }));
     await appendAuditEvent(
@@ -110,8 +110,6 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
       status: "reconnecting",
       restartRequestedAt: now,
       heartbeatAt: now,
-      pendingAction: "",
-      pendingActionRequestedAt: "",
       message
     }));
     await appendAuditEvent("broadcast.reconnect.requested", "Manual reconnect was requested.");
@@ -158,8 +156,6 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
       status: "recovering",
       restartRequestedAt: now,
       heartbeatAt: now,
-      pendingAction: "",
-      pendingActionRequestedAt: "",
       message
     }));
     await appendAuditEvent("broadcast.output-recovery.requested", auditMessage);
@@ -193,8 +189,6 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
       liveBridgeStartedAt: "",
       liveBridgeReleasedAt: "",
       liveBridgeLastError: "",
-      pendingAction: "",
-      pendingActionRequestedAt: "",
       message
     }));
     await appendAuditEvent("broadcast.live-bridge.requested", `Live Bridge requested for ${label}.`);
@@ -214,7 +208,7 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
       heartbeatAt: now,
       liveBridgeStatus: "releasing",
       liveBridgeReleasedAt: now,
-      pendingAction: "rebuild_queue",
+      pendingAction: addPendingPlayoutAction(playout.pendingAction, "rebuild_queue"),
       pendingActionRequestedAt: now,
       message
     }));
@@ -248,8 +242,6 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
       ...(playout.removeNextAssetId === fallback.id ? { removeNextAssetId: "", removeNextUntil: "" } : {}),
       manualNextAssetId: "",
       manualNextRequestedAt: "",
-      pendingAction: "",
-      pendingActionRequestedAt: "",
       message: `Manual fallback requested for asset ${fallback.title}.`
     }));
     await appendAuditEvent("playout.fallback.requested", `Manual fallback requested for ${fallback.title}.`);
@@ -260,11 +252,14 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
     // Without the relay a restart puts the reconnect slate on air and the pool continues after it, as
     // before. Under the relay there is no slate, and a restart would replay from its beginning whatever
     // the schedule keeps on air; the worker switches to the pool's item by itself once the override and
-    // the insert are cleared (M74).
+    // the insert are cleared (M74). Only a Pin, Fallback or insert holds the air: Resume of a skip hold,
+    // a Remove next or a Move next alone (enabled since M120) changes what comes next, not what is on air,
+    // so it restarts nothing.
     const relayEnabled = isRelayEnabled();
+    const nowMs = Date.now();
     await updatePlayoutRuntime((playout) => ({
       ...playout,
-      ...(relayEnabled ? {} : { status: "recovering" as const, restartRequestedAt: now }),
+      ...(relayEnabled || !resumeTakesTheAir(playout, nowMs) ? {} : { status: "recovering" as const, restartRequestedAt: now }),
       desiredAssetId: "",
       heartbeatAt: now,
       overrideMode: "schedule",
@@ -279,8 +274,6 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
       skipUntil: "",
       removeNextAssetId: "",
       removeNextUntil: "",
-      pendingAction: "",
-      pendingActionRequestedAt: "",
       message: "Operator override cleared. Schedule control resumed."
     }));
     await appendAuditEvent("playout.resume.schedule", "Operator override cleared and schedule control resumed.");
@@ -350,8 +343,6 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
       insertStatus: "pending",
       manualNextAssetId: "",
       manualNextRequestedAt: "",
-      pendingAction: "",
-      pendingActionRequestedAt: "",
       message: `${action.type === "play_now" ? "Play now" : "Insert"} requested for ${asset.title}.`
     }));
     await appendAuditEvent(
@@ -382,7 +373,7 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
       manualNextRequestedAt: now,
       // Moving the item the operator removed from next back to next is the newer word (M89).
       ...(playout.removeNextAssetId === asset.id ? { removeNextAssetId: "", removeNextUntil: "" } : {}),
-      pendingAction: "rebuild_queue",
+      pendingAction: addPendingPlayoutAction(playout.pendingAction, "rebuild_queue"),
       pendingActionRequestedAt: now,
       heartbeatAt: now,
       message: `${asset.title} has been pinned as the next queue item.`
@@ -406,7 +397,7 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
       removeNextUntil: addMinutes(60),
       manualNextAssetId: playout.manualNextAssetId === nextQueueItem.assetId ? "" : playout.manualNextAssetId,
       manualNextRequestedAt: playout.manualNextAssetId === nextQueueItem.assetId ? "" : playout.manualNextRequestedAt,
-      pendingAction: "rebuild_queue",
+      pendingAction: addPendingPlayoutAction(playout.pendingAction, "rebuild_queue"),
       pendingActionRequestedAt: now,
       heartbeatAt: now,
       message: `${nextQueueItem.title} was removed from the immediate next slot.`
@@ -428,7 +419,7 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
       manualNextAssetId: previousAsset.id,
       manualNextRequestedAt: now,
       ...(playout.removeNextAssetId === previousAsset.id ? { removeNextAssetId: "", removeNextUntil: "" } : {}),
-      pendingAction: "rebuild_queue",
+      pendingAction: addPendingPlayoutAction(playout.pendingAction, "rebuild_queue"),
       pendingActionRequestedAt: now,
       heartbeatAt: now,
       message: `${previousAsset.title} will replay as the next item.`
@@ -472,8 +463,6 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
           : {}),
         skipAssetId: currentAsset.id,
         skipUntil: addMinutes(minutes),
-        pendingAction: "",
-        pendingActionRequestedAt: "",
         message:
           endedOverride !== ""
             ? `Skipped ${currentAsset.title} for ${minutes} minutes and ended the ${endedOverride}.`
@@ -515,8 +504,6 @@ export async function runBroadcastAction(action: BroadcastAction): Promise<{ ok:
     ...(playout.removeNextAssetId === asset.id ? { removeNextAssetId: "", removeNextUntil: "" } : {}),
     manualNextAssetId: "",
     manualNextRequestedAt: "",
-    pendingAction: "",
-    pendingActionRequestedAt: "",
     message: `Operator override selected ${asset.title} for ${minutes} minutes.`
   }));
   await appendAuditEvent("playout.override.asset", `Operator pinned ${asset.title} for ${minutes} minutes.`);

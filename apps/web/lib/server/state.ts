@@ -1425,6 +1425,8 @@ function summarizePlayout(playout: PlayoutRuntimeRecord): LivePlayoutSummary {
     insertStatus: playout.insertStatus,
     skipAssetId: playout.skipAssetId,
     skipUntil: playout.skipUntil,
+    removeNextAssetId: playout.removeNextAssetId,
+    removeNextUntil: playout.removeNextUntil,
     currentAssetId: playout.currentAssetId,
     currentTitle: playout.currentTitle,
     previousAssetId: playout.previousAssetId,

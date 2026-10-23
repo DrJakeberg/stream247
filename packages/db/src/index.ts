@@ -815,7 +815,7 @@ export type PlayoutRuntimeRecord = {
   // no longer lift it. Held out of every arm like a skip hold until removeNextUntil.
   removeNextAssetId: string;
   removeNextUntil: string;
-  pendingAction: "" | "refresh" | "rebuild_queue";
+  pendingAction: "" | "refresh" | "rebuild_queue" | "refresh_and_rebuild_queue";
   pendingActionRequestedAt: string;
   uplinkStatus: "" | "idle" | "waiting-for-feed" | "running" | "scheduled-reconnect" | "failed";
   uplinkInputMode: "" | "hls" | "rtmp";

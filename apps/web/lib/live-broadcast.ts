@@ -191,6 +191,8 @@ export type LivePlayoutSummary = {
   insertStatus: string;
   skipAssetId: string;
   skipUntil: string;
+  removeNextAssetId: string;
+  removeNextUntil: string;
   currentAssetId: string;
   currentTitle: string;
   previousAssetId: string;
