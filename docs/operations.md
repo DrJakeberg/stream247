@@ -1188,7 +1188,12 @@ It asks for the new password twice without showing it (at least 10 characters), 
 piping). Two-factor settings stay as
 they are. Without Compose (a Portainer stack), run the same in the worker container:
 `docker exec -it <worker container> node apps/worker/dist/reset-owner-password.js`. There is no e-mail
-reset. Sessions already signed in stay valid until they expire.
+reset.
+
+Since M117 every session is bound to the password it signed in with. The reset therefore signs every
+owner session out, including one opened with a leaked password; a change under Security signs out every
+other session and keeps the one that made it. Twitch sign-ins of the team are not touched. Updating to
+M117 signs everyone out once, because older session cookies carry no password stamp.
 
 ### Secrets in the audit trail and incidents
 

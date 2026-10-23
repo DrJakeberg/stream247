@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildWorkspaceHref } from "@/lib/workspace-navigation";
 import { consumeOAuthState, describeOAuthStateFailure } from "@/lib/server/oauth-state";
-import { setSessionCookie } from "@/lib/server/auth";
+import { sessionPasswordHash, setSessionCookie } from "@/lib/server/auth";
 import { readAppState } from "@/lib/server/state";
 import { exchangeTwitchLoginCode, getAbsoluteAppUrl, recordTwitchError } from "@/lib/server/twitch";
 
@@ -36,7 +36,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const user = await exchangeTwitchLoginCode(code);
-    await setSessionCookie(user.id);
+    await setSessionCookie(user.id, sessionPasswordHash(user, state));
     return NextResponse.redirect(getAbsoluteAppUrl(state, buildWorkspaceHref("live")));
   } catch (caught) {
     const message = caught instanceof Error ? caught.message : "Unknown Twitch login callback failure.";

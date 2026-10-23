@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { parseTwoFactorChallengeValue, setSessionCookie } from "@/lib/server/auth";
+import { parseTwoFactorChallengeValue, sessionPasswordHash, setSessionCookie } from "@/lib/server/auth";
 import { findUserById, readAppState, upsertUserRecord } from "@/lib/server/state";
 import { verifyTotpCode } from "@/lib/server/two-factor";
 import { TWO_FACTOR_RATE_LIMIT, consumeRateLimit, resetRateLimit } from "@/lib/server/rate-limit";
@@ -41,6 +41,6 @@ export async function POST(request: NextRequest) {
     lastLoginAt: new Date().toISOString()
   });
 
-  await setSessionCookie(user.id);
+  await setSessionCookie(user.id, sessionPasswordHash(user, state));
   return NextResponse.json({ ok: true });
 }

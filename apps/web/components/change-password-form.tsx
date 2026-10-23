@@ -7,7 +7,7 @@ import { InfoTip } from "@/components/ui/InfoTip";
  * Change the owner password (M91, owner decision 2026-10-01): the current password is required. A
  * forgotten one is reset on the host with the command in docs/operations.md, never by e-mail.
  */
-export function ChangePasswordForm() {
+export function ChangePasswordForm({ minPasswordLength }: { minPasswordLength: number }) {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [repeatPassword, setRepeatPassword] = useState("");
@@ -66,10 +66,10 @@ export function ChangePasswordForm() {
           <span className="label">New password</span>
           <input
             autoComplete="new-password"
-            minLength={10}
+            minLength={minPasswordLength}
             name="new-password"
             onChange={(event) => setNewPassword(event.target.value)}
-            placeholder="At least 10 characters"
+            placeholder={`At least ${minPasswordLength} characters`}
             required
             type="password"
             value={newPassword}
@@ -91,7 +91,7 @@ export function ChangePasswordForm() {
         {message ? <p className="subtle">{message}</p> : null}
         <button
           className="button secondary"
-          disabled={isPending || !currentPassword || newPassword.length < 10 || repeatPassword !== newPassword}
+          disabled={isPending || !currentPassword || newPassword.length < minPasswordLength || repeatPassword !== newPassword}
           type="submit"
         >
           {isPending ? "Changing..." : "Change password"}

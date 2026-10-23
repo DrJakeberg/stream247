@@ -43,6 +43,7 @@ vi.mock("next/server", () => ({
 }));
 
 import { POST as signIn } from "../../apps/web/app/api/auth/login/route";
+import { resolveSessionUser } from "../../apps/web/lib/server/auth";
 import { clearAllRateLimits } from "../../apps/web/lib/server/rate-limit";
 
 const execFileAsync = promisify(execFile);
@@ -201,7 +202,10 @@ describe.sequential("first run (M91)", () => {
       createdAt,
       lastLoginAt: createdAt
     });
+    cookieWrites.length = 0;
     expect(await signInWith(email, "forgotten-password-1")).toBe(200);
+    const oldSession = cookieWrites[0]?.value;
+    expect(resolveSessionUser(oldSession, await readAppState())?.id).toBe("user_owner");
 
     const tooShort = await runReset("short\n");
     expect(tooShort.code).toBe(2);
@@ -210,7 +214,7 @@ describe.sequential("first run (M91)", () => {
     const reset = await runReset("brand-new-password-91\n");
     expect(reset.stderr).toBe("");
     expect(reset.code).toBe(0);
-    expect(reset.stdout).toContain(`The owner password for ${email} is reset.`);
+    expect(reset.stdout).toContain(`The owner password for ${email} is reset, and its sessions are signed out.`);
     expect(reset.stdout).not.toContain("brand-new-password-91");
 
     cookieWrites.length = 0;
@@ -218,7 +222,10 @@ describe.sequential("first run (M91)", () => {
     expect(cookieWrites.map((cookie) => cookie.name)).toEqual(["stream247_session"]);
     expect(await signInWith(email, "forgotten-password-1")).toBe(401);
 
+    // M117: the session signed in with the old password ends with the reset; the new sign-in holds.
     const state = await readAppState();
+    expect(resolveSessionUser(oldSession, state)).toBeNull();
+    expect(resolveSessionUser(cookieWrites[0]?.value, state)?.id).toBe("user_owner");
     expect(state.auditEvents.some((event) => event.type === "auth.password.reset")).toBe(true);
   }, 60_000);
 });

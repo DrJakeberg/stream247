@@ -4,7 +4,7 @@ import Link from "next/link";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { isScheduleBlockDated } from "@stream247/core";
-import { DEV_FALLBACK_APP_SECRET, isUsableTimeZone, resolveAppBaseUrl, resolveAppSecret } from "@stream247/db";
+import { DEV_FALLBACK_APP_SECRET, isUsableTimeZone, MIN_OWNER_PASSWORD_LENGTH, resolveAppBaseUrl, resolveAppSecret } from "@stream247/db";
 import { GoLiveChecklist } from "@/components/go-live-checklist";
 import { InsecureHttpNotice } from "@/components/insecure-http-notice";
 import { LibraryUploadForm } from "@/components/library-upload-form";
@@ -143,7 +143,7 @@ export default async function SetupPage(props: { searchParams?: Promise<{ step?:
         </Panel>
         {active === "owner" ? (
           <Panel title="Owner account" eyebrow={`Step ${activeIndex + 1}`}>
-            <SetupForm />
+            <SetupForm minPasswordLength={MIN_OWNER_PASSWORD_LENGTH} />
           </Panel>
         ) : null}
         {active === "instance" ? (
