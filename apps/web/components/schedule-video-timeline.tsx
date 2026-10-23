@@ -1,48 +1,50 @@
 "use client";
 
 import { useState } from "react";
-import type { SchedulePreview } from "@stream247/core";
-import { buildScheduleVideoTimelineSegments } from "@/lib/schedule-video-timeline";
-
-type SchedulePreviewItem = SchedulePreview["items"][number];
-
-function itemKey(item: SchedulePreviewItem): string {
-  return `${item.dayOfWeek}:${item.id}:${item.startTime}:${item.endTime}`;
-}
+import type { MaterializedProgrammingBlock } from "@stream247/core";
+import { buildScheduleVideoTimelineSegments, describeMaterializedBlockFill } from "@/lib/schedule-video-timeline";
 
 export function ScheduleVideoTimeline({
-  items,
+  blocks,
   dayLabels
 }: {
-  items: SchedulePreviewItem[];
+  blocks: MaterializedProgrammingBlock[];
   dayLabels: string[];
 }) {
   const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
 
-  function toggle(item: SchedulePreviewItem) {
-    const key = itemKey(item);
+  function toggle(key: string) {
     setExpandedKeys((current) => (current.includes(key) ? current.filter((entry) => entry !== key) : [...current, key]));
   }
 
   return (
     <div className="list">
-      {items.map((item) => {
-        const key = itemKey(item);
+      {blocks.map((block) => {
+        const key = `${block.dayOfWeek}:${block.blockId}:${block.startTime}`;
         const expanded = expandedKeys.includes(key);
-        const segments = buildScheduleVideoTimelineSegments(item);
+        const segments = buildScheduleVideoTimelineSegments(block);
 
         return (
           <div className="item" key={key}>
             <div className="stats-row">
-              <strong>{item.title}</strong>
+              <strong>{block.title}</strong>
+              <span className={`programming-status-pill programming-status-${block.fillStatus}`}>{block.fillLabel}</span>
               <span className="subtle">
-                {dayLabels[item.dayOfWeek]} · {item.startTime} to {item.endTime} · {item.sourceName}
+                {dayLabels[block.dayOfWeek]} · {block.timeLabel || `${block.startTime} → ${block.endTime}`} · {block.poolName}
               </span>
-              <button className="button secondary" onClick={() => toggle(item)} type="button">
-                {expanded ? "Hide videos" : "Show videos"}
-              </button>
+              {block.aired ? null : (
+                <button className="button secondary" onClick={() => toggle(key)} type="button">
+                  {expanded ? "Hide videos" : "Show videos"}
+                </button>
+              )}
             </div>
-            <div className="subtle">{item.reason}</div>
+            <div className="subtle">{block.aired ? "Aired earlier today" : describeMaterializedBlockFill(block)}</div>
+            {block.repeatReason ? <div className="subtle">{block.repeatReason}</div> : null}
+            {block.notes.map((note) => (
+              <div className="subtle" key={note}>
+                {note}
+              </div>
+            ))}
             {expanded ? (
               <div className="schedule-video-timeline-panel">
                 {segments.length > 0 ? (
@@ -60,17 +62,17 @@ export function ScheduleVideoTimeline({
                     ))}
                   </div>
                 ) : (
-                  <div className="subtle">{item.poolId ? "No videos in pool" : "No pool linked to block"}</div>
+                  <div className="subtle">{block.poolId ? "Nothing in this pool can play yet" : "No pool linked to this block"}</div>
                 )}
               </div>
             ) : null}
           </div>
         );
       })}
-      {items.length === 0 ? (
+      {blocks.length === 0 ? (
         <div className="item">
-          <strong>No schedule blocks</strong>
-          <div className="subtle">Add schedule blocks to see video-level timeline predictions.</div>
+          <strong>No blocks on this day</strong>
+          <div className="subtle">Add a block to see which videos it will play.</div>
         </div>
       ) : null}
     </div>

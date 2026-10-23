@@ -1,5 +1,6 @@
 import {
   formatMinuteOfDay,
+  formatScheduleHours,
   type MaterializedProgrammingDay,
   type ScheduleBlock,
   summarizeScheduleWeek
@@ -18,7 +19,7 @@ export function ScheduleWeekOverview(props: { blocks: ScheduleBlock[]; materiali
           <span className="label">{dayLabels[day.dayOfWeek]}</span>
           <strong>{day.blockCount === 0 ? "No programming" : `${day.blockCount} block${day.blockCount === 1 ? "" : "s"}`}</strong>
           <div className="subtle">
-            {day.scheduledMinutes === 0 ? "No scheduled minutes" : `${Math.round(day.scheduledMinutes / 60)}h scheduled`}
+            {day.scheduledMinutes === 0 ? "Nothing scheduled" : `${formatScheduleHours(day.scheduledMinutes)} scheduled`}
           </div>
           <div className="subtle">
             {day.firstStartMinute !== null && day.lastEndMinute !== null
@@ -29,17 +30,17 @@ export function ScheduleWeekOverview(props: { blocks: ScheduleBlock[]; materiali
             <div className="programming-day-flags">
               {materializedByDay.get(day.dayOfWeek)?.underfilledCount ? (
                 <span className="programming-status-pill programming-status-underfilled">
-                  {materializedByDay.get(day.dayOfWeek)?.underfilledCount} repeat risk
+                  {materializedByDay.get(day.dayOfWeek)?.underfilledCount} repeat{materializedByDay.get(day.dayOfWeek)?.underfilledCount === 1 ? "s" : ""} videos
                 </span>
               ) : null}
               {materializedByDay.get(day.dayOfWeek)?.overflowCount ? (
                 <span className="programming-status-pill programming-status-overflow">
-                  {materializedByDay.get(day.dayOfWeek)?.overflowCount} overflow
+                  {materializedByDay.get(day.dayOfWeek)?.overflowCount} run{materializedByDay.get(day.dayOfWeek)?.overflowCount === 1 ? "s" : ""} past the end
                 </span>
               ) : null}
               {materializedByDay.get(day.dayOfWeek)?.emptyCount ? (
                 <span className="programming-status-pill programming-status-empty">
-                  {materializedByDay.get(day.dayOfWeek)?.emptyCount} empty
+                  {materializedByDay.get(day.dayOfWeek)?.emptyCount} with nothing to play
                 </span>
               ) : null}
               {!materializedByDay.get(day.dayOfWeek)?.underfilledCount &&

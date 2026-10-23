@@ -232,8 +232,8 @@ item. The worker's selection and runtime queue, the overlay lookahead, the sched
 materialized week all use this one rotation. Since M97 the materialized week (week view, Day lens fill
 preview) carries each pool's rotation from one block to the next in time order, as the worker does, and
 since M118 from one air window to the next (a dated block between the two parts of the weekly block it
-cuts takes its items between theirs), starting the block on air when the item on air ends; the
-Day lens's video timeline still starts every block from the stored position. The runtime queue walks on from the running
+cuts takes its items between theirs), starting the block on air when the item on air ends; since M119 the
+Day lens's video bars are drawn from it too (until then they started every block from the stored position). The runtime queue walks on from the running
 item only in the cycle that starts and stores it; an item the pool never stored (one another pool on the
 same source started, or a manual next) leaves the queue on the stored position, where the next pick comes
 from. A started pool item stores the cursor and

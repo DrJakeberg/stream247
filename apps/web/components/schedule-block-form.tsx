@@ -2,6 +2,10 @@
 
 import {
   SCHEDULE_REPEAT_MODE_OPTIONS,
+  addDaysToDateString,
+  countScheduleDatesInWindow,
+  describeScheduleTakeover,
+  findWeekdaysOutsideDateWindow,
   formatMinuteOfDay,
   getScheduleDateDayOfWeek,
   isScheduleDateString,
@@ -26,6 +30,8 @@ type Props = {
   today?: string;
   /** A new block on this weekday, one weekday every week ("Add block" on the week view). */
   defaultDayOfWeek?: number;
+  /** Every schedule block, for the notice of what a dated block takes over before it is saved (M119). */
+  blocks?: ScheduleBlock[];
 };
 
 type ScheduleRuns = "weekly" | "between" | "once";
@@ -47,7 +53,7 @@ const dayOptions = [
   { value: 6, label: "Saturday" }
 ];
 
-export function ScheduleBlockForm({ pools, assets, shows, block, today = "", defaultDayOfWeek }: Props) {
+export function ScheduleBlockForm({ pools, assets, shows, block, today = "", defaultDayOfWeek, blocks = [] }: Props) {
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
   const [selectedDays, setSelectedDays] = useState<number[]>(block ? [block.dayOfWeek] : [defaultDayOfWeek ?? 1]);
@@ -65,6 +71,9 @@ export function ScheduleBlockForm({ pools, assets, shows, block, today = "", def
   const [runs, setRuns] = useState<ScheduleRuns>(initialRuns(block));
   const [validFrom, setValidFrom] = useState(block?.validFrom || today);
   const [validUntil, setValidUntil] = useState(block?.validUntil ?? "");
+  const [editDay, setEditDay] = useState(block?.dayOfWeek ?? 1);
+  const [startHour, setStartHour] = useState(Math.floor((block?.startMinuteOfDay ?? 0) / 60));
+  const [startMinute, setStartMinute] = useState((block?.startMinuteOfDay ?? 0) % 60);
   const router = useRouter();
   const { pushToast } = useToast();
 
@@ -79,6 +88,33 @@ export function ScheduleBlockForm({ pools, assets, shows, block, today = "", def
         : repeatMode === "custom"
           ? selectedDays
           : getRepeatDaysForMode(repeatMode, selectedDays[0] ?? 1, selectedDays);
+  // What a dated block takes over, said before it is saved (M119): the copies a save would write, minus the
+  // block itself (or its whole repeat set when the edit reaches it).
+  const repeatSet = block?.repeatGroupId ? blocks.filter((entry) => entry.repeatGroupId === block.repeatGroupId) : [];
+  const editsRepeatSet = isEditing && applyToRepeatSet && repeatSet.length > 0;
+  const noticeDays = onceDayOfWeek !== null
+    ? [onceDayOfWeek]
+    : editsRepeatSet
+      ? repeatSet.map((entry) => entry.dayOfWeek)
+      : isEditing
+        ? [editDay]
+        : resolvedCreateDays;
+  const noticeUntil = isOnce ? validFrom : validUntil;
+  const takeoverLines =
+    runs === "weekly"
+      ? []
+      : describeScheduleTakeover({
+          dayOfWeeks: noticeDays,
+          startMinuteOfDay: startHour * 60 + startMinute,
+          durationMinutes,
+          validFrom,
+          validUntil: noticeUntil,
+          blocks,
+          excludeIds: editsRepeatSet ? repeatSet.map((entry) => entry.id) : block ? [block.id] : []
+        });
+  const setDaysOutside =
+    editsRepeatSet && runs === "between" ? findWeekdaysOutsideDateWindow(noticeDays, validFrom, validUntil) : [];
+  const runDays = runs === "between" ? countScheduleDatesInWindow(validFrom, validUntil) : 0;
 
   return (
     <form
@@ -197,6 +233,23 @@ export function ScheduleBlockForm({ pools, assets, shows, block, today = "", def
               <span className="label">Last date</span>
               <input min={validFrom || undefined} onChange={(event) => setValidUntil(event.target.value)} required type="date" value={validUntil} />
             </label>
+            <label>
+              <span className="label label-with-info">
+                For how many days
+                <InfoTip text="Counts the days from the first date to the last, both included. Type a number to set the last date from the first: 10 days from 1 Oct ends on 10 Oct." />
+              </span>
+              <input
+                min={1}
+                onChange={(event) => {
+                  const count = Math.floor(Number(event.target.value));
+                  if (isScheduleDateString(validFrom) && count >= 1) {
+                    setValidUntil(addDaysToDateString(validFrom, count - 1));
+                  }
+                }}
+                type="number"
+                value={runDays > 0 ? runDays : ""}
+              />
+            </label>
           </>
         ) : null}
         {isOnce ? (
@@ -214,7 +267,12 @@ export function ScheduleBlockForm({ pools, assets, shows, block, today = "", def
                 Day
                 <InfoTip text="Moves this occurrence to another weekday. It is locked while Apply to repeat set is on, because each copy keeps its own day; saving with that toggle off detaches this occurrence from its set whether or not the day changed." />
               </span>
-              <select defaultValue={String(block?.dayOfWeek ?? 1)} disabled={applyToRepeatSet} name="dayOfWeek">
+              <select
+                disabled={applyToRepeatSet}
+                name="dayOfWeek"
+                onChange={(event) => setEditDay(Number(event.target.value))}
+                value={String(applyToRepeatSet ? block?.dayOfWeek ?? 1 : editDay)}
+              >
                 {dayOptions.map((day) => (
                   <option key={day.value} value={day.value}>
                     {day.label}
@@ -319,7 +377,7 @@ export function ScheduleBlockForm({ pools, assets, shows, block, today = "", def
             Start hour
             <InfoTip text="Sets the hour the block goes on air, in the channel's time zone. Together with the length it must not overlap another block, also not one on the next day that a block past midnight runs into; an overlap is refused when you save." />
           </span>
-          <select defaultValue={String(Math.floor((block?.startMinuteOfDay ?? 0) / 60))} name="startHour">
+          <select name="startHour" onChange={(event) => setStartHour(Number(event.target.value))} value={String(startHour)}>
             {Array.from({ length: 24 }, (_, hour) => (
               <option key={hour} value={hour}>
                 {String(hour).padStart(2, "0")}
@@ -332,7 +390,7 @@ export function ScheduleBlockForm({ pools, assets, shows, block, today = "", def
             Start minute
             <InfoTip text="Fine-tunes the start in quarter-hour steps. The same start applies to every weekday the block repeats on." />
           </span>
-          <select defaultValue={String((block?.startMinuteOfDay ?? 0) % 60)} name="startMinute">
+          <select name="startMinute" onChange={(event) => setStartMinute(Number(event.target.value))} value={String(startMinute)}>
             {[0, 15, 30, 45].map((minute) => (
               <option key={minute} value={minute}>
                 {String(minute).padStart(2, "0")}
@@ -401,6 +459,21 @@ export function ScheduleBlockForm({ pools, assets, shows, block, today = "", def
           />
         </label>
       </div>
+      {takeoverLines.length > 0 ? (
+        <div className="subtle" data-testid="schedule-takeover-notice" role="status">
+          {takeoverLines.slice(0, 6).map((line) => (
+            <p key={line}>{line}</p>
+          ))}
+          {takeoverLines.length > 6 ? <p>And {takeoverLines.length - 6} more.</p> : null}
+        </div>
+      ) : null}
+      {setDaysOutside.length > 0 ? (
+        <p className="danger">
+          {setDaysOutside.map((day) => dayOptions[day]?.label ?? String(day)).join(", ")} of this repeat set{" "}
+          {setDaysOutside.length === 1 ? "does" : "do"} not fall between these dates, so saving is refused. Widen the dates or
+          turn off Apply to repeat set.
+        </p>
+      ) : null}
       {block ? (
         <p className="subtle">
           Current start: {formatMinuteOfDay(block.startMinuteOfDay)}
@@ -416,7 +489,7 @@ export function ScheduleBlockForm({ pools, assets, shows, block, today = "", def
         </p>
       )}
       <p className="subtle">
-        Cuepoints trigger safe-boundary inserts after the configured second offset has passed. They never cut the current asset mid-file.
+        A timed insert plays in the next gap between two videos once its time has passed; it never cuts a video.
       </p>
       {error ? <p className="danger">{error}</p> : null}
       <button className="button" disabled={isPending} type="submit">

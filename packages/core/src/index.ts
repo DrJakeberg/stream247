@@ -3497,7 +3497,7 @@ function createBlockProjection(args: {
     }
 
     if (insertAsset && Math.max(args.pool?.insertEveryItems ?? 0, 0) > 0) {
-      notes.push(`Automatic insert every ${args.pool?.insertEveryItems} scheduled item${args.pool?.insertEveryItems === 1 ? "" : "s"}.`);
+      notes.push(`The pool's insert plays after every ${args.pool?.insertEveryItems} video${args.pool?.insertEveryItems === 1 ? "" : "s"}.`);
     }
 
     if (args.pool?.audioLaneAssetId) {
@@ -3515,14 +3515,16 @@ function createBlockProjection(args: {
 
     if (cuepointOffsetsSeconds.length > 0) {
       notes.push(
-        `Cuepoints at ${summarizeCuepointOffsets(cuepointOffsetsSeconds)} fire safe-boundary inserts${
-          cuepointAsset ? ` using ${cuepointAsset.title}` : ""
-        }.`
+        `Timed inserts${cuepointAsset ? ` of ${cuepointAsset.title}` : ""} at ${summarizeCuepointOffsets(
+          cuepointOffsetsSeconds
+        )} into the block, each played between two videos.`
       );
     }
 
     if (estimatedDurationCount > 0) {
-      notes.push(`${estimatedDurationCount} item${estimatedDurationCount === 1 ? "" : "s"} use a 30-minute estimate because natural length is missing.`);
+      notes.push(
+        `${estimatedDurationCount} video${estimatedDurationCount === 1 ? " has" : "s have"} no known length and ${estimatedDurationCount === 1 ? "is" : "are"} planned as 30 minutes.`
+      );
     }
 
     // The item before runs past the whole block (M118): nothing of the block airs, which is not a lack of
@@ -4010,6 +4012,99 @@ export function getScheduleDateDayOfWeek(date: string): number {
 /** The weekdays among `days` that occur between two dates, inclusive; all of them for a week or more. */
 export function filterWeekdaysInDateWindow(days: number[], validFrom: string, validUntil: string): number[] {
   return days.filter((day) => scheduleDateWindowHasWeekday(validFrom, validUntil, day));
+}
+
+/** How many dates lie between two dates, both counted ("for N days"); 0 when either is not a date or they are reversed. */
+export function countScheduleDatesInWindow(validFrom: string, validUntil: string): number {
+  if (!isScheduleDateString(validFrom) || !isScheduleDateString(validUntil) || validUntil < validFrom) {
+    return 0;
+  }
+  const from = Date.parse(`${validFrom}T00:00:00.000Z`);
+  const until = Date.parse(`${validUntil}T00:00:00.000Z`);
+  return Math.round((until - from) / 86_400_000) + 1;
+}
+
+/**
+ * The block form's takeover notice (M119, R1 1.3 step 8): which weekly blocks a dated block would take
+ * over, before it is saved. One line per weekly block and time span: "Takes over 20:00–22:00 from Evening
+ * on 10 days (Thu 1 Oct to Sat 10 Oct); Evening continues at 22:00." It reads the same rule the schedule
+ * applies (`applyScheduleLayers`): a dated block's start date bounds it, and it cuts any undated block it
+ * overlaps on that date, the evening before (a block past midnight) or the next morning (the dated block
+ * past midnight). Dated blocks it meets are conflicts, refused on save, and not named here.
+ */
+export function describeScheduleTakeover(args: {
+  dayOfWeeks: number[];
+  startMinuteOfDay: number;
+  durationMinutes: number;
+  validFrom: string;
+  validUntil: string;
+  blocks: ScheduleBlock[];
+  /** The block being edited, or its whole repeat set: it does not take over from itself. */
+  excludeIds?: string[];
+}): string[] {
+  const dates = countScheduleDatesInWindow(args.validFrom, args.validUntil);
+  const duration = Math.floor(Number(args.durationMinutes) || 0);
+  const start = Math.floor(Number(args.startMinuteOfDay) || 0);
+  if (dates === 0 || duration <= 0 || args.dayOfWeeks.length === 0) {
+    return [];
+  }
+  const excluded = new Set(args.excludeIds ?? []);
+  const weekly = args.blocks.filter((block) => !excluded.has(block.id) && !isScheduleBlockDated(block));
+  const days = new Set(args.dayOfWeeks);
+  const groups = new Map<string, { title: string; from: number; to: number; continuesAt: number | null; dates: string[] }>();
+
+  // A year is the longest run the form can describe in one line; longer runs repeat the same week.
+  for (let offset = 0; offset < Math.min(dates, 366); offset += 1) {
+    const date = addDaysToDateString(args.validFrom, offset);
+    const dayOfWeek = getDayOfWeekForDate(date);
+    if (!days.has(dayOfWeek)) {
+      continue;
+    }
+    const end = start + duration;
+    for (const block of weekly) {
+      for (const shift of [-1, 0, 1]) {
+        if (block.dayOfWeek !== (dayOfWeek + shift + 7) % 7) {
+          continue;
+        }
+        const blockStart = block.startMinuteOfDay + shift * 24 * 60;
+        const blockEnd = blockStart + block.durationMinutes;
+        const from = Math.max(start, blockStart);
+        const to = Math.min(end, blockEnd);
+        if (to <= from) {
+          continue;
+        }
+        const continuesAt = blockEnd > end ? end : null;
+        const key = `${block.title || block.categoryName}|${from % 1440}|${to % 1440}|${continuesAt === null ? "" : continuesAt % 1440}`;
+        const group = groups.get(key) ?? { title: block.title || block.categoryName, from, to, continuesAt, dates: [] };
+        group.dates.push(date);
+        groups.set(key, group);
+      }
+    }
+  }
+
+  return [...groups.values()]
+    .sort((left, right) => left.dates[0]!.localeCompare(right.dates[0]!) || left.from - right.from)
+    .map((group) => {
+      const when =
+        group.dates.length === 1
+          ? formatScheduleDayHeading(group.dates[0]!)
+          : `${group.dates.length} days (${formatScheduleDayHeading(group.dates[0]!)} to ${formatScheduleDayHeading(group.dates.at(-1)!)})`;
+      const continues =
+        group.continuesAt === null ? "" : `; ${group.title} continues at ${formatMinuteOfDay(group.continuesAt)}`;
+      return `Takes over ${formatMinuteOfDay(group.from)}–${formatMinuteOfDay(group.to)} from ${group.title} on ${when}${continues}.`;
+    });
+}
+
+/**
+ * The weekdays of a repeat set that do not occur between two dates (M119). A set edited with "Apply to
+ * repeat set" gives every copy the same dates; a copy whose weekday is not among them would be saved and
+ * never air, so the edit is refused with these days named.
+ */
+export function findWeekdaysOutsideDateWindow(days: number[], validFrom: string, validUntil: string): number[] {
+  if (!validFrom || !validUntil) {
+    return [];
+  }
+  return [...new Set(days)].sort((left, right) => left - right).filter((day) => !scheduleDateWindowHasWeekday(validFrom, validUntil, day));
 }
 
 function scheduleDateWindowHasWeekday(validFrom: string, validUntil: string, dayOfWeek: number): boolean {
