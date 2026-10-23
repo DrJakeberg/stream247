@@ -69,7 +69,7 @@ import {
   writeChatOverlayMessagesRecord,
   writeChatSkipVoteRecord
 } from "@stream247/db";
-import { CHAPTER_PROBE_RECHECK_CAP, DEFAULT_OVERLAY_SCENE_LAYER_ORDER, isProvisionalProbedChapterList, type AsRunRecord } from "@stream247/core";
+import { addPendingPlayoutAction, CHAPTER_PROBE_RECHECK_CAP, DEFAULT_OVERLAY_SCENE_LAYER_ORDER, isProvisionalProbedChapterList, type AsRunRecord } from "@stream247/core";
 import { decideCycleEndPendingAction, decideCycleEndRestartFlag } from "../../apps/worker/src/playout-boundary";
 
 const execFileAsync = promisify(execFile);
@@ -2579,6 +2579,41 @@ describe.sequential("database roundtrip", () => {
       }));
       const cleared = (await readAppState()).playout;
       expect({ restart: cleared.restartRequestedAt, action: cleared.pendingAction }).toEqual({ restart: "", action: "" });
+    }, 60_000);
+
+    // M120: a Refresh, then a Move next's queue rebuild, then a Restart. Before M120 the rebuild replaced the
+    // Refresh and the Restart cleared the rebuild; the next cycle did neither.
+    it("keeps a Refresh and a queue rebuild through a Restart until the cycle carries out both", async () => {
+      await ensureDatabaseWithRetry();
+      await updatePlayoutRuntime((playout) => ({ ...playout, restartRequestedAt: "", pendingAction: "", pendingActionRequestedAt: "" }));
+      const refreshAt = new Date().toISOString();
+      await updatePlayoutRuntime((playout) => ({
+        ...playout,
+        pendingAction: addPendingPlayoutAction(playout.pendingAction, "refresh"),
+        pendingActionRequestedAt: refreshAt
+      }));
+      const rebuildAt = new Date(Date.parse(refreshAt) + 1).toISOString();
+      await updatePlayoutRuntime((playout) => ({
+        ...playout,
+        pendingAction: addPendingPlayoutAction(playout.pendingAction, "rebuild_queue"),
+        pendingActionRequestedAt: rebuildAt
+      }));
+      // The Restart's write as broadcast.ts makes it since M120: no pending action fields.
+      const pressedAt = new Date(Date.parse(rebuildAt) + 1).toISOString();
+      await updatePlayoutRuntime((playout) => ({ ...playout, status: "recovering", restartRequestedAt: pressedAt, heartbeatAt: pressedAt }));
+
+      const cycleRead = (await readAppState()).playout;
+      expect({ action: cycleRead.pendingAction, at: cycleRead.pendingActionRequestedAt, restart: cycleRead.restartRequestedAt }).toEqual({
+        action: "refresh_and_rebuild_queue",
+        at: rebuildAt,
+        restart: pressedAt
+      });
+
+      // The cycle's two writes (index.ts): the Refresh leaves the request, the rebuild clears it.
+      await updatePlayoutRuntime((playout) => ({ ...playout, message: "Broadcast refresh completed." }));
+      expect((await readAppState()).playout.pendingAction).toBe("refresh_and_rebuild_queue");
+      await updatePlayoutRuntime((playout) => ({ ...playout, queueItems: [], ...decideCycleEndPendingAction({ consumed: cycleRead, row: playout }) }));
+      expect((await readAppState()).playout.pendingAction).toBe("");
     }, 60_000);
   });
 

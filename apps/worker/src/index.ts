@@ -122,7 +122,8 @@ import {
   type SourceBreakerRecord,
   type SourceBreakerTransition,
   createTwitchTokenScopeCache,
-  describeIncidentOperatorAction
+  describeIncidentOperatorAction,
+  pendingPlayoutActionIncludes
 } from "@stream247/core";
 import {
   buildSourceLiveStateWrite,
@@ -221,6 +222,7 @@ import { getCuepointInsertPlan, getCuepointWarmAsset } from "./cuepoints.js";
 import {
   decideInputOpenRetry,
   decideInputOpenRetryAfterExit,
+  decideInputOpenRetryAtSlate,
   isCurrentItemSlotFree,
   isFailedScheduledInsertRetry,
   isFinalScheduledInsertOpenFailure,
@@ -8250,7 +8252,11 @@ async function runPlayoutCycle(): Promise<void> {
     pendingAction: state.playout.pendingAction,
     pendingActionRequestedAt: state.playout.pendingActionRequestedAt
   };
-  if (state.playout.pendingAction === "refresh") {
+  // A Refresh and a queue rebuild asked for one after the other are both carried out (M120,
+  // addPendingPlayoutAction); the last write of the two clears the request.
+  const pendingRefresh = pendingPlayoutActionIncludes(state.playout.pendingAction, "refresh");
+  const pendingRebuild = pendingPlayoutActionIncludes(state.playout.pendingAction, "rebuild_queue");
+  if (pendingRefresh) {
     if (playoutProcess && !playoutProcess.killed && state.playout.liveBridgeStatus === "active") {
       if (state.overlay.enabled) {
         await writeOnAirOverlay(state, null, "live", {
@@ -8276,12 +8282,13 @@ async function runPlayoutCycle(): Promise<void> {
 
     await updatePlayoutRuntime((playout) => ({
       ...playout,
-      ...decideCycleEndPendingAction({ consumed: consumedPendingAction, row: playout }),
+      ...(pendingRebuild ? {} : decideCycleEndPendingAction({ consumed: consumedPendingAction, row: playout })),
       heartbeatAt: new Date().toISOString(),
       message: "Broadcast refresh completed."
     }));
     state = await readAppState();
-  } else if (state.playout.pendingAction === "rebuild_queue") {
+  }
+  if (pendingRebuild) {
     await updatePlayoutRuntime((playout) => ({
       ...playout,
       nextAssetId: "",
@@ -8328,6 +8335,13 @@ async function runPlayoutCycle(): Promise<void> {
   // What the selection picked before the reconnect slate took its place: the item a restart request of
   // direct mode was for, which only the as-run row reads (M76).
   let selectedBeforeSlateAssetId = "";
+  // The selection the slate replaced, for a retry it covers (M120, decideInputOpenRetryAtSlate).
+  const selectedBeforeSlate = {
+    assetId: selection.asset?.id ?? "",
+    reasonCode: selection.reasonCode as string,
+    isRetry: Boolean(selection.inputOpenRetry)
+  };
+  let slateTakesCycle: "" | "reconnect" | "standby" = "";
   if (
     shouldShowReconnectSlate({
       relayEnabled: STREAM247_RELAY_ENABLED,
@@ -8338,6 +8352,7 @@ async function runPlayoutCycle(): Promise<void> {
   ) {
     await writeStandbySlate(state, "reconnect");
     selectedBeforeSlateAssetId = selection.asset?.id ?? "";
+    slateTakesCycle = "reconnect";
     selection = {
       asset: null,
       queueKind: "reconnect",
@@ -8361,6 +8376,7 @@ async function runPlayoutCycle(): Promise<void> {
       fingerprint: "playout.no-asset"
     });
     await writeStandbySlate(state, "standby");
+    slateTakesCycle = "standby";
     selection = {
       asset: null,
       queueKind: "standby",
@@ -8375,6 +8391,22 @@ async function runPlayoutCycle(): Promise<void> {
       reasonCode: "standby" as const,
       fallbackTier: "standby" as const
     };
+  }
+
+  // An owed retry that a slate takes the place of is kept for after the slate or dropped, with a log line
+  // either way (M120).
+  const retryAtSlate = decideInputOpenRetryAtSlate({
+    retry: inputOpenRetry,
+    slate: slateTakesCycle,
+    selectedAssetId: selectedBeforeSlate.assetId,
+    selectedReasonCode: selectedBeforeSlate.reasonCode,
+    selectedIsRetry: selectedBeforeSlate.isRetry,
+    selectedLive: selection.queueKind === "live",
+    nowMs: Date.now()
+  });
+  inputOpenRetry = retryAtSlate.next;
+  if (retryAtSlate.event !== "") {
+    logRuntimeEvent(retryAtSlate.event, { assetId: retryAtSlate.assetId, reason: retryAtSlate.reason });
   }
 
   // The retry is used up once a cycle goes on to start it: a further failure of the item is final.

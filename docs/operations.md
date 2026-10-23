@@ -120,10 +120,19 @@ the pool's next item. Under the relay no operator action shows that slate.
   the pin (below). Pinning an item that a Skip holds out lifts that hold; the pin would not take the air
   otherwise.
 - **Resume schedule** clears a Pin or Fallback, a pending or running Play now / insert, a queued Move
-  next, a skip hold and a Remove next hold, and is enabled while a Pin, a Fallback or an insert is in effect. With the relay
+  next, a skip hold and a Remove next hold, and is enabled while any of them is in effect (since M120;
+  before, only while a Pin, a Fallback or an insert was). With the relay
   the next cycle hands back to the pool: a running insert gives way to the pool's next item (if that is
   the insert's item itself, it plays on and counts as the pool's item), a pinned pool item plays on.
-  Without the relay the slate comes first, then the pool's next item.
+  Without the relay the slate comes first, then the pool's next item. A Resume that clears only a skip
+  hold, a Remove next or a Move next restarts nothing, with or without the relay: those change what comes
+  next, not what is on air.
+- **Operator holds** on the *Current and next* panel of the live view lists what the actions above still
+  hold, with the time left (since M120): "Pinned on air: … for 42 more min", "Fallback on air: …",
+  "Play now: … takes the air at the next playout cycle", "Move next: … plays next", "Skipped: … stays out
+  for 2 h 5 min more", "Removed from next: … stays out for 1 h more", and a Refresh scenes or Rebuild
+  queue that waits for the next playout cycle. A hold that ran out is not listed. Before, a Skip's hold
+  or a Remove next kept an item out for up to four hours without a trace on the page.
 - **Skip current** holds the item on air out for the override minutes and moves on to the pool's next
   item (or a queued Move next): with the relay at once, without it after the slate. When a Pin or
   Fallback holds that item on air, Skip also ends the override (since M78; before, the pinned item
@@ -175,6 +184,11 @@ the pool's next item. Under the relay no operator action shows that slate.
   while that cycle was already switching to the next item, before the new ffmpeg started, counts as done
   by that start (since M105): it was aimed at the item the switch took off air, and kept, it restarted
   the new item from 0 on the next cycle as an operator restart nobody pressed.
+- The admin's own actions no longer clear each other's Refresh or queue rebuild (since M120): a Skip
+  pressed right after Rebuild queue, or a Soft restart after Refresh scenes, used to wipe the request, and
+  a Move next turned a waiting Refresh into a rebuild. A request stays until the cycle that carries it out
+  clears it, and a Refresh and a rebuild asked for one after the other are both done by the next cycle
+  (`addPendingPlayoutAction` in `packages/core/src/operator-precedence.ts`).
 - **Force reconnect** restarts the encoder into the reconnect window without the relay. With the relay
   it is refused: the uplink reconnects by itself (the planned reconnect interval, the encoder-stall and
   destination-stall watchdogs). Since M90 the button is greyed out with the relay on.
@@ -954,7 +968,15 @@ pair. To see what happened to one item:
   dark meanwhile, the local fallback covers the resolve and the item follows it. A second failure is
   final and the pool moves on. The retry's failure does not count towards crash-loop protection, so
   three different items that fail still bring it on and one item failing twice counts once; every
-  later failure of that item counts again. A queued
+  later failure of that item counts again. A Restart or Force reconnect pressed after the failure no
+  longer cancels the retry by itself (since M120); a Skip of the failed item still ends it, since the
+  item is held out. When the reconnect slate of direct mode takes the
+  cycle that was to start the retry (a Restart, a Force reconnect, the planned reconnect), the retry
+  waits for the slate and the item starts after it: runtime event `playout.input.retry.deferred`
+  (`reason: reconnect-slate`). When the slate or the standby slate takes a cycle that did not pick the
+  retry (a Skip holds the item out, the item is no longer playable), or another item or a Live Bridge
+  takes the air after the slate, the retry is given up with `playout.input.retry.dropped` (`reason`
+  `reconnect-slate`, `standby`, `other-item` or `live-bridge`). Before M120 it ran out silently in both cases. A queued
   Move next or a due insert waits for the retry, and takes the slot at once when the item failed
   without a retry (before M94 they let one more item pass).
 - Ask yt-dlp directly, in the playout container (the playout process resolves playback, not the

@@ -467,7 +467,7 @@ export function decideCycleEndRestartFlag(input: CycleEndRestartFlagInput): stri
 }
 
 export interface PendingActionFields {
-  pendingAction: "" | "refresh" | "rebuild_queue";
+  pendingAction: "" | "refresh" | "rebuild_queue" | "refresh_and_rebuild_queue";
   pendingActionRequestedAt: string;
 }
 

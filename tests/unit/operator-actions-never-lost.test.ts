@@ -166,8 +166,14 @@ describe("the playout cycle's writes use the decisions", () => {
     );
     expect(flat).toContain("const consumedRequests = { restartRequestedAt: state.playout.restartRequestedAt, ...consumedPendingAction };");
     expect(flat).toContain(
-      "const consumedPendingAction: PendingActionFields = { pendingAction: state.playout.pendingAction, pendingActionRequestedAt: state.playout.pendingActionRequestedAt }; if (state.playout.pendingAction === \"refresh\") {"
+      "const consumedPendingAction: PendingActionFields = { pendingAction: state.playout.pendingAction, pendingActionRequestedAt: state.playout.pendingActionRequestedAt };"
     );
+    // A Refresh and a rebuild asked for together are both carried out; the rebuild's write clears (M120).
+    expect(flat).toContain(
+      'const pendingRefresh = pendingPlayoutActionIncludes(state.playout.pendingAction, "refresh"); const pendingRebuild = pendingPlayoutActionIncludes(state.playout.pendingAction, "rebuild_queue"); if (pendingRefresh) {'
+    );
+    expect(flat).toContain("...(pendingRebuild ? {} : decideCycleEndPendingAction({ consumed: consumedPendingAction, row: playout })),");
+    expect(flat).toContain("state = await readAppState(); } if (pendingRebuild) {");
     // The restart branch and the cycle end, each with its own reconnect rule as before M89.
     expect(flat).toContain(
       'restartRequestedAt: decideCycleEndRestartFlag({ consumed: consumedRequests.restartRequestedAt, row: playout.restartRequestedAt, keepReconnectWindow: reconnectActive || selection.reasonCode === "scheduled_reconnect" })'
@@ -182,7 +188,7 @@ describe("the playout cycle's writes use the decisions", () => {
     expect(flat).toContain("const asRunStartedAtMs = playoutProcessStartedAtMs;");
     expect(flat).toContain("...decideCycleEndPendingAction({ consumed: args.consumed, row: playout }),");
     expect(flat.match(/consumed: consumedRequests \}\);/g)?.length).toBe(2);
-    expect(flat.match(/\.\.\.decideCycleEndPendingAction\(\{ consumed: consumedPendingAction, row: playout \}\),/g)?.length).toBe(2);
+    expect(flat.match(/\.\.\.decideCycleEndPendingAction\(\{ consumed: consumedPendingAction, row: playout \}\),/g)?.length).toBe(1);
     expect(flat).toContain("...decideCycleEndPendingAction({ consumed: consumedRequests, row: playout }),");
   });
 

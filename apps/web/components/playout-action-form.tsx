@@ -45,6 +45,9 @@ export function PlayoutActionForm(props: {
   overrideMode: "schedule" | "asset" | "fallback";
   // "pending" or "active" while a Play now / Insert waits for or holds the air; Resume cancels it.
   insertStatus?: string;
+  // A skip hold, a Remove next or a Move next is in effect too (M120, operator-holds.ts): Resume clears
+  // those, and it was greyed out for them.
+  resumeEnabled?: boolean;
   liveBridgeStatus?: "idle" | "pending" | "active" | "releasing" | "error";
   liveBridgeLabel?: string;
   liveBridgeInputType?: "" | "rtmp" | "hls";
@@ -187,7 +190,10 @@ export function PlayoutActionForm(props: {
         </button>
         <button
           className="button button-secondary"
-          disabled={isPending || (props.overrideMode === "schedule" && props.insertStatus !== "pending" && props.insertStatus !== "active")}
+          disabled={
+            isPending ||
+            (props.overrideMode === "schedule" && props.insertStatus !== "pending" && props.insertStatus !== "active" && !props.resumeEnabled)
+          }
           onClick={() => startTransition(() => void runAction({ type: "resume" }))}
           type="button"
         >
