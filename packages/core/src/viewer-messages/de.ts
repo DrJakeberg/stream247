@@ -144,6 +144,7 @@ export const DE_VIEWER_MESSAGES: ViewerMessageCatalogue = {
   "channel.onAirNow": "Jetzt auf Sendung",
   "channel.standby": "Gleich geht’s weiter",
   "channel.timeRange": "{start} bis {end}",
+  "channel.since": "seit {start}",
   "channel.upNext": "Als Nächstes",
   "channel.noNext": "Noch nichts angekündigt",
   "channel.noNextBody": "Sobald feststeht, was als Nächstes läuft, steht es hier.",

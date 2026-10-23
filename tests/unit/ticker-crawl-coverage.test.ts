@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { overlayScale, overlayTickerCrawlPlan, type OverlayScenePayloadView } from "@stream247/core";
 import { buildTickerCrawlFilter, resolveTickerCrawlCopies } from "../../apps/worker/src/ffmpeg-runtime";
 import { loadSceneRendererFonts, renderTickerStrip } from "../../apps/worker/src/scene-renderer";
+import { mediaToolsAvailable } from "../support/media-tools";
 
 /**
  * Whether the line actually covers the band, measured across a WHOLE crawl period.
@@ -24,7 +25,7 @@ import { loadSceneRendererFonts, renderTickerStrip } from "../../apps/worker/src
  */
 const FRAME = { width: 1920, height: 1080 };
 const FPS = 30;
-const ffmpegAvailable = spawnSync("ffmpeg", ["-hide_banner", "-version"]).status === 0;
+const ffmpegAvailable = mediaToolsAvailable("ffmpeg");
 
 function payload(ticker: string, seconds: number): OverlayScenePayloadView {
   return {

@@ -69,7 +69,7 @@ import {
   writeChatOverlayMessagesRecord,
   writeChatSkipVoteRecord
 } from "@stream247/db";
-import { CHAPTER_PROBE_RECHECK_CAP, isProvisionalProbedChapterList, type AsRunRecord } from "@stream247/core";
+import { addPendingPlayoutAction, CHAPTER_PROBE_RECHECK_CAP, DEFAULT_OVERLAY_SCENE_LAYER_ORDER, isProvisionalProbedChapterList, type AsRunRecord } from "@stream247/core";
 import { decideCycleEndPendingAction, decideCycleEndRestartFlag } from "../../apps/worker/src/playout-boundary";
 
 const execFileAsync = promisify(execFile);
@@ -2580,6 +2580,41 @@ describe.sequential("database roundtrip", () => {
       const cleared = (await readAppState()).playout;
       expect({ restart: cleared.restartRequestedAt, action: cleared.pendingAction }).toEqual({ restart: "", action: "" });
     }, 60_000);
+
+    // M120: a Refresh, then a Move next's queue rebuild, then a Restart. Before M120 the rebuild replaced the
+    // Refresh and the Restart cleared the rebuild; the next cycle did neither.
+    it("keeps a Refresh and a queue rebuild through a Restart until the cycle carries out both", async () => {
+      await ensureDatabaseWithRetry();
+      await updatePlayoutRuntime((playout) => ({ ...playout, restartRequestedAt: "", pendingAction: "", pendingActionRequestedAt: "" }));
+      const refreshAt = new Date().toISOString();
+      await updatePlayoutRuntime((playout) => ({
+        ...playout,
+        pendingAction: addPendingPlayoutAction(playout.pendingAction, "refresh"),
+        pendingActionRequestedAt: refreshAt
+      }));
+      const rebuildAt = new Date(Date.parse(refreshAt) + 1).toISOString();
+      await updatePlayoutRuntime((playout) => ({
+        ...playout,
+        pendingAction: addPendingPlayoutAction(playout.pendingAction, "rebuild_queue"),
+        pendingActionRequestedAt: rebuildAt
+      }));
+      // The Restart's write as broadcast.ts makes it since M120: no pending action fields.
+      const pressedAt = new Date(Date.parse(rebuildAt) + 1).toISOString();
+      await updatePlayoutRuntime((playout) => ({ ...playout, status: "recovering", restartRequestedAt: pressedAt, heartbeatAt: pressedAt }));
+
+      const cycleRead = (await readAppState()).playout;
+      expect({ action: cycleRead.pendingAction, at: cycleRead.pendingActionRequestedAt, restart: cycleRead.restartRequestedAt }).toEqual({
+        action: "refresh_and_rebuild_queue",
+        at: rebuildAt,
+        restart: pressedAt
+      });
+
+      // The cycle's two writes (index.ts): the Refresh leaves the request, the rebuild clears it.
+      await updatePlayoutRuntime((playout) => ({ ...playout, message: "Broadcast refresh completed." }));
+      expect((await readAppState()).playout.pendingAction).toBe("refresh_and_rebuild_queue");
+      await updatePlayoutRuntime((playout) => ({ ...playout, queueItems: [], ...decideCycleEndPendingAction({ consumed: cycleRead, row: playout }) }));
+      expect((await readAppState()).playout.pendingAction).toBe("");
+    }, 60_000);
   });
 
   describe("local file durations (M96)", () => {
@@ -3239,6 +3274,73 @@ describe.sequential("database roundtrip", () => {
       expect(studio.liveOverlay.activeSceneId).toBe("scene-main");
       expect(studio.liveOverlay.customLayers).toEqual([]);
       await expect(readAppState()).resolves.toBeTruthy();
+    }, 60_000);
+
+    it("reads overlay rows and presets whose other JSON columns are unreadable or wrongly shaped (M113)", async () => {
+      // M85 guarded only custom_layers_json; every other JSON column of the overlay row and of a stored preset
+      // was parsed bare, so one hand-edited or corrupted column failed every state read.
+      const columns = ["layer_order_json", "disabled_layers_json", "scenes_json", "panel_placements_json"];
+      const saved = await executeSql(
+        `SELECT json_build_array(${columns.join(", ")})::text FROM overlay_settings WHERE singleton_id = 1;`
+      );
+      const savedDraft = await executeSql(
+        `SELECT json_build_array(${columns.join(", ")})::text FROM overlay_drafts WHERE singleton_id = 1;`
+      );
+      const restore = async () => {
+        const values = JSON.parse(saved) as string[];
+        const draftValues = JSON.parse(savedDraft) as string[];
+        const quote = (value: string) => `'${value.replace(/'/g, "''")}'`;
+        await executeSql(`
+          UPDATE overlay_settings SET ${columns.map((column, index) => `${column} = ${quote(values[index] ?? "")}`).join(", ")} WHERE singleton_id = 1;
+          UPDATE overlay_drafts SET ${columns.map((column, index) => `${column} = ${quote(draftValues[index] ?? "")}`).join(", ")} WHERE singleton_id = 1;
+          DELETE FROM overlay_scene_presets WHERE id LIKE 'preset_m113_%';
+        `);
+      };
+
+      try {
+        const now = new Date().toISOString();
+        for (const [index, [broken, wrongShape]] of [
+          ["[\"chat", "5"],
+          ["{", "\"chat\""],
+          ["[{\"id\": ", "null"],
+          ["{\"brand\":", "[1, 2]"]
+        ].entries()) {
+          const column = columns[index];
+          // The live row gets text that is not JSON, the draft JSON of the wrong shape.
+          await executeSql(`
+            UPDATE overlay_settings SET ${column} = '${broken}' WHERE singleton_id = 1;
+            UPDATE overlay_drafts SET ${column} = '${wrongShape}' WHERE singleton_id = 1;
+          `);
+        }
+        await executeSql(`
+          INSERT INTO overlay_scene_presets (id, name, description, overlay_json, created_at, updated_at) VALUES
+            ('preset_m113_broken', 'Broken', '', '{"headline": "cut', '${now}', '${now}'),
+            ('preset_m113_null', 'Null', '', 'null', '${now}', '${now}'),
+            ('preset_m113_shapes', 'Shapes', '', '{"disabledLayers": 5, "customLayers": 5, "scenes": "x", "panelPlacements": [1], "layerOrder": {}}', '${now}', '${now}');
+        `);
+
+        const studio = await readOverlayStudioState();
+        expect(studio.liveOverlay.layerOrder).toEqual(DEFAULT_OVERLAY_SCENE_LAYER_ORDER);
+        expect(studio.liveOverlay.disabledLayers).toEqual([]);
+        expect(studio.liveOverlay.panelPlacements).toEqual({});
+        expect(studio.liveOverlay.scenes.length).toBeGreaterThan(0);
+        expect(studio.draftOverlay.layerOrder).toEqual(DEFAULT_OVERLAY_SCENE_LAYER_ORDER);
+        expect(studio.draftOverlay.disabledLayers).toEqual([]);
+        expect(studio.draftOverlay.panelPlacements).toEqual({});
+        expect(studio.draftOverlay.scenes.length).toBeGreaterThan(0);
+
+        const presets = await listOverlayScenePresetRecords();
+        for (const id of ["preset_m113_broken", "preset_m113_null", "preset_m113_shapes"]) {
+          const preset = presets.find((entry) => entry.id === id);
+          expect(preset, id).toBeTruthy();
+          expect(preset?.overlay.layerOrder).toEqual(DEFAULT_OVERLAY_SCENE_LAYER_ORDER);
+          expect(preset?.overlay.disabledLayers).toEqual([]);
+          expect(preset?.overlay.panelPlacements).toEqual({});
+        }
+        await expect(readAppState()).resolves.toBeTruthy();
+      } finally {
+        await restore();
+      }
     }, 60_000);
 
     it("turns the one overlay of an existing installation into the first named scene, picture unchanged", async () => {

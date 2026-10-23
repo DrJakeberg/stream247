@@ -34,4 +34,4 @@ COPY --from=builder /app/packages/core ./packages/core
 COPY --from=builder /app/packages/db ./packages/db
 COPY --from=builder /app/packages/render ./packages/render
 ENTRYPOINT ["/sbin/tini", "--"]
-CMD ["node", "apps/worker/dist/index.js", "worker"]
+CMD ["node", "apps/worker/dist/supervisor.js", "worker"]

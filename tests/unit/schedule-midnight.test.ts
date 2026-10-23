@@ -116,8 +116,13 @@ describe("C1: cuepoints of a block crossing midnight", () => {
     expect(worker).toContain(
       'const cuepointWindowKey = waitingTakeover ? state.playout.cuepointWindowKey : currentScheduleItem ? getScheduleOccurrenceRunKey(currentScheduleItem) : "";'
     );
-    const web = readFileSync(new URL("../../apps/web/lib/server/state.ts", import.meta.url), "utf8");
-    expect(web).toContain("occurrenceKey: getScheduleOccurrenceRunKey(currentScheduleItem)");
+    // Since M118 both count through one core function, which keys by the run.
+    const web = readFileSync(new URL("../../apps/web/lib/server/state.ts", import.meta.url), "utf8").replace(/\s+/g, " ");
+    expect(web).toContain("getOccurrenceCuepointProgress({ occurrence: currentScheduleItem,");
+    const cuepoints = readFileSync(new URL("../../apps/worker/src/cuepoints.ts", import.meta.url), "utf8").replace(/\s+/g, " ");
+    expect(cuepoints).toContain("getOccurrenceCuepointProgress({ occurrence: currentScheduleItem,");
+    const core = readFileSync(new URL("../../packages/core/src/index.ts", import.meta.url), "utf8");
+    expect(core).toContain("occurrenceKey: getScheduleOccurrenceRunKey(occurrence)");
   });
 });
 
@@ -159,12 +164,15 @@ describe("C2/B1: the Twitch schedule plan", () => {
 
   it("records each created segment before the next request", () => {
     const worker = readFileSync(new URL("../../apps/worker/src/index.ts", import.meta.url), "utf8");
-    const sync = worker.slice(worker.indexOf("async function syncTwitchSchedule("), worker.indexOf("await replaceTwitchScheduleSegments(nextSegments);"));
+    const sync = worker.slice(worker.indexOf("async function syncTwitchSchedule("), worker.indexOf("await replaceTwitchScheduleSegments([...nextSegments"));
     expect(sync).toContain("planTwitchScheduleSegments({");
     const loop = sync.slice(sync.indexOf("for (const occurrence of plan.segments)"));
-    expect(loop.indexOf("await upsertTwitchScheduleSegment(syncedSegment);")).toBeGreaterThan(loop.indexOf("const response = await fetchWithTimeout("));
+    expect(loop.indexOf("await upsertTwitchScheduleSegment(syncedSegment);")).toBeGreaterThan(loop.indexOf("let response = await writeSegment("));
     // Inside the loop body: the upsert comes before the loop closes and the stale pass begins.
-    expect(loop.indexOf("await upsertTwitchScheduleSegment(syncedSegment);")).toBeLessThan(loop.indexOf("for (const staleSegment of"));
+    expect(loop.indexOf("const staleCleanup = await deleteStaleTwitchScheduleSegments({")).toBeGreaterThan(0);
+    expect(loop.indexOf("await upsertTwitchScheduleSegment(syncedSegment);")).toBeLessThan(
+      loop.indexOf("const staleCleanup = await deleteStaleTwitchScheduleSegments({")
+    );
   });
 });
 
@@ -275,5 +283,32 @@ describe("C6: day totals count only the part inside the day", () => {
     // Before M88: 180 on Monday and 180 on Tuesday.
     expect(monday?.totalProjectedMinutes).toBe(60);
     expect(tuesday?.totalProjectedMinutes).toBe(120);
+  });
+});
+
+describe("M116: the editor's help texts say what C1 and C3 do (suggestion 12)", () => {
+  // The tips still described the model before M88: conflicts "on the same weekday", and cuepoints that
+  // "re-arm at 00:00". The cases above pin the behaviour the new texts describe.
+  const workspace = readFileSync("apps/web/components/schedule-editor-workspace.tsx", "utf8");
+  const blockForm = readFileSync("apps/web/components/schedule-block-form.tsx", "utf8");
+
+  it("the Conflicts only tip counts the part past midnight on the next day", () => {
+    expect(workspace).toContain(
+      "Keeps only blocks that overlap another block, counting the part of a block past midnight on the next day,"
+    );
+    expect(workspace).toContain("A dated block over the weekly programme is not a clash: it takes that time over.");
+    expect(workspace).not.toContain("on the same weekday");
+  });
+
+  it("the cuepoint tip says each time fires once per airing, also past midnight", () => {
+    expect(blockForm).toContain("once per airing, also when the block runs past midnight, since the times count from the block's start.");
+    expect(blockForm).not.toContain("re-arm");
+  });
+
+  it("the start tip names the next day's block a block past midnight runs into", () => {
+    expect(blockForm).toContain(
+      "it must not overlap another block, also not one on the next day that a block past midnight runs into;"
+    );
+    expect(blockForm).not.toContain("another block on the same day");
   });
 });

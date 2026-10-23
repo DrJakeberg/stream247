@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
 
 import Link from "next/link";
-import { findScheduleConflicts, getCurrentScheduleMoment } from "@stream247/core";
+import { findScheduleConflicts, formatScheduleHours, getCurrentScheduleMoment } from "@stream247/core";
 import { AssetMetadataDrawer } from "@/components/asset-metadata-drawer";
 import { Panel } from "@/components/panel";
 import { ProgramNowNextLens } from "@/components/program-now-next-lens";
@@ -20,7 +20,6 @@ import { getShowProfileCategoryOptions } from "@/lib/asset-metadata";
 import {
   getBroadcastSnapshot,
   getMaterializedProgrammingWeekPreview,
-  getSchedulePreview,
   getWorkspaceTimeZone,
   readAppState
 } from "@/lib/server/state";
@@ -77,9 +76,6 @@ export default async function SchedulePage(props: { searchParams?: Promise<Sched
   const categoryOptions = getShowProfileCategoryOptions(shows);
   const defaultDay = materializedWeek[0]?.dayOfWeek ?? 1;
   const activeDay = resolveDayOfWeek(searchParams.day, defaultDay);
-  // Built for the day being viewed. A preview is per-date, so building it for today and filtering by
-  // the selected day left the video timeline empty on every day but one.
-  const schedulePreview = getSchedulePreview(state, activeDay);
   const materializedActiveDay = materializedWeek.find((day) => day.dayOfWeek === activeDay) ?? null;
   const liveQueue = state.playout.queueItems.slice(0, 5);
   const lens = resolveScheduleLens(searchParams.lens);
@@ -150,6 +146,7 @@ export default async function SchedulePage(props: { searchParams?: Promise<Sched
                   <div id="add-schedule-block">
                     <ScheduleBlockForm
                       assets={readyAssetOptions}
+                      blocks={state.scheduleBlocks}
                       defaultDayOfWeek={getFirstParam(searchParams.add) ? activeDay : undefined}
                       pools={poolOptions}
                       shows={shows}
@@ -170,7 +167,7 @@ export default async function SchedulePage(props: { searchParams?: Promise<Sched
                           <strong>{show.name}</strong>
                           <span className="show-swatch" style={{ background: show.color }} />
                           <span className="subtle">{show.categoryName || "No category"}</span>
-                          <span className="subtle">{show.defaultDurationMinutes}m default</span>
+                          <span className="subtle">{formatScheduleHours(show.defaultDurationMinutes)} default</span>
                         </div>
                         {show.description ? <div className="subtle">{show.description}</div> : null}
                         <div style={{ marginTop: 12 }}>
@@ -209,75 +206,13 @@ export default async function SchedulePage(props: { searchParams?: Promise<Sched
                   </p>
                   <ScheduleDayCloneForm />
                 </Panel>
-                <Panel title="Materialized fill preview" eyebrow="Program">
+                <Panel title="What this day plays" eyebrow="Program">
                   <p className="subtle">
-                    The scheduler preview now follows pool rotation, insert rules, and natural asset lengths. Times are
-                    shown in {timeZone}.
+                    Each block of the chosen day with the videos it will play, in {timeZone}. Each pool carries on from
+                    where its previous block left off, the way the channel plays it, with its inserts and the videos&apos;
+                    real lengths. What is on air right now still comes first.
                   </p>
-                  <div className="list">
-                    {materializedActiveDay?.blocks.map((block) => (
-                      <div className="item" key={block.blockId}>
-                        <div className="stats-row">
-                          <strong>{block.title}</strong>
-                          <span className={`programming-status-pill programming-status-${block.fillStatus}`}>
-                            {block.fillLabel}
-                          </span>
-                          <span className="subtle">{block.repeatLabel}</span>
-                        </div>
-                        <div className="subtle">
-                          {dayLabels[block.dayOfWeek]} · {block.startTime} to {block.endTime} · {block.poolName}
-                        </div>
-                        <div className="subtle">
-                          Unique library: {block.uniqueMinutes}m · Projected: {block.projectedMinutes}m
-                          {block.insertCount > 0 ? ` · ${block.insertCount} insert${block.insertCount === 1 ? "" : "s"}` : ""}
-                          {block.cuepointCount > 0 ? ` · ${block.cuepointCount} cuepoint-triggered` : ""}
-                        </div>
-                        {block.queuePreview.length > 0 ? (
-                          <div className="subtle">Queue preview: {block.queuePreview.join(" · ")}</div>
-                        ) : null}
-                        {block.notes.map((note) => (
-                          <div className="subtle" key={note}>
-                            {note}
-                          </div>
-                        ))}
-                      </div>
-                    ))}
-                    {materializedActiveDay?.blocks.length ? null : (
-                      <EmptyState
-                        description="Add schedule blocks or ready assets to see fill behavior for the selected programming day."
-                        title="No materialized items for this day"
-                      />
-                    )}
-                  </div>
-                  <div className="list" style={{ marginTop: 14 }}>
-                    <div className="item">
-                      <strong>Live queue context</strong>
-                      <div className="subtle">
-                        Current on-air controls still win. This queue helps compare the selected day&apos;s programming
-                        against the real runtime.
-                      </div>
-                      {liveQueue.length > 0 ? (
-                        <div className="subtle" style={{ marginTop: 8 }}>
-                          {liveQueue
-                            .map((item) => `${item.kind.toUpperCase()} · ${item.title}${item.subtitle ? ` (${item.subtitle})` : ""}`)
-                            .join(" · ")}
-                        </div>
-                      ) : (
-                        <div className="subtle" style={{ marginTop: 8 }}>
-                          No live queue items are currently published.
-                        </div>
-                      )}
-                    </div>
-                    <div className="item">
-                      <strong>Video-level timeline</strong>
-                      <div className="subtle">
-                        Expand any block to inspect the predicted pool sequence. The preview alternates between the
-                        pool&apos;s sources from where each source stands and loops each source when a block is longer
-                        than its ready items.
-                      </div>
-                    </div>
-                    <ScheduleVideoTimeline dayLabels={dayLabels} items={schedulePreview.items.filter((item) => item.dayOfWeek === activeDay)} />
-                  </div>
+                  <ScheduleVideoTimeline blocks={materializedActiveDay?.blocks ?? []} dayLabels={dayLabels} />
                 </Panel>
               </section>
 

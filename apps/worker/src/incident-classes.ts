@@ -225,6 +225,13 @@ const STATE_FAMILIES: IncidentFamily[] = [
     why: "The system volume is below its mark and nothing here can free it; only an operator ends it."
   },
   {
+    fingerprint: "relay.unreachable",
+    keyed: false,
+    kind: "state",
+    area: "system",
+    why: "The relay has not answered its API for two minutes while something uses it (M114); the worker closes it on the next answer."
+  },
+  {
     fingerprint: "source.local-library.empty",
     keyed: false,
     kind: "state",
@@ -308,6 +315,13 @@ const STATE_FAMILIES: IncidentFamily[] = [
     kind: "state",
     area: "twitch",
     why: "Schedule blocks stay unpublishable while they exceed the duration limit; shortening them closes it."
+  },
+  {
+    fingerprint: "twitch.schedule.delete.failed",
+    keyed: false,
+    kind: "state",
+    area: "twitch",
+    why: "Old segments stay on the channel's Twitch schedule while Twitch refuses or does not answer their delete; a sync with no such segment left closes it (M113)."
   },
   {
     fingerprint: "twitch.eventsub.sync.failed",
@@ -503,6 +517,27 @@ const EVENT_FAMILIES: IncidentFamily[] = [
     kind: "event",
     area: "uplink",
     why: "The uplink failed its own healthcheck for five minutes and exited (M103); the restart is the end of it."
+  },
+  {
+    fingerprint: "worker.health.frozen-restart",
+    keyed: false,
+    kind: "event",
+    area: "worker",
+    why: "The worker sent no heartbeat for five minutes and its supervisor restarted it (M114); the restart is the end of it."
+  },
+  {
+    fingerprint: "playout.health.frozen-restart",
+    keyed: false,
+    kind: "event",
+    area: "playout",
+    why: "The playout sent no heartbeat for five minutes and its supervisor restarted it (M114); the restart is the end of it."
+  },
+  {
+    fingerprint: "uplink.health.frozen-restart",
+    keyed: false,
+    kind: "event",
+    area: "uplink",
+    why: "The uplink sent no heartbeat for five minutes and its supervisor restarted it (M114); the restart is the end of it."
   },
   {
     fingerprint: "uplink.loop.stalled",

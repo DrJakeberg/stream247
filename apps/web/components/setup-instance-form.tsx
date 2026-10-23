@@ -27,6 +27,8 @@ export function SetupInstanceForm(props: {
   /** Set when env variables override the managed values; saving still works, env just wins. */
   envAppUrl: string;
   envTimezone: string;
+  /** CHANNEL_TIMEZONE when it is set but not a zone this install knows: ignored, the saved zone is used. */
+  envTimezoneRejected?: string;
   envLanguage: string;
   /**
    * The channel already runs on the saved zone: the basics were saved once (a stored public URL) or the
@@ -100,11 +102,13 @@ export function SetupInstanceForm(props: {
         hint={
           props.envTimezone
             ? `CHANNEL_TIMEZONE is set to ${props.envTimezone} in the environment and overrides whatever is saved here.`
-            : zoneDetected
-              ? "Your browser's time zone; check it. IANA name like Europe/Berlin. The schedule grid and every on-air clock use it."
-              : props.zoneInUse && !props.initialTimezone && typedTimezone === null
-                ? "Empty means UTC, and the channel runs on UTC now. IANA name like Europe/Berlin; another zone keeps each block's clock times, so every block moves."
-                : "IANA name like Europe/Berlin. The schedule grid and every on-air clock use it. Empty means UTC."
+            : props.envTimezoneRejected
+              ? `CHANNEL_TIMEZONE is set to ${props.envTimezoneRejected} in the environment, which is not a time zone name this install knows, so it is ignored and the zone saved here is used (empty means UTC). ${zoneDetected ? "Prefilled with your browser's time zone; check it." : "IANA name like Europe/Berlin."}`
+              : zoneDetected
+                ? "Your browser's time zone; check it. IANA name like Europe/Berlin. The schedule grid and every on-air clock use it."
+                : props.zoneInUse && !props.initialTimezone && typedTimezone === null
+                  ? "Empty means UTC, and the channel runs on UTC now. IANA name like Europe/Berlin; another zone keeps each block's clock times, so every block moves."
+                  : "IANA name like Europe/Berlin. The schedule grid and every on-air clock use it. Empty means UTC."
         }
         label="Channel timezone"
         onChange={setTypedTimezone}

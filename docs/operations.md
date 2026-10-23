@@ -120,10 +120,19 @@ the pool's next item. Under the relay no operator action shows that slate.
   the pin (below). Pinning an item that a Skip holds out lifts that hold; the pin would not take the air
   otherwise.
 - **Resume schedule** clears a Pin or Fallback, a pending or running Play now / insert, a queued Move
-  next, a skip hold and a Remove next hold, and is enabled while a Pin, a Fallback or an insert is in effect. With the relay
+  next, a skip hold and a Remove next hold, and is enabled while any of them is in effect (since M120;
+  before, only while a Pin, a Fallback or an insert was). With the relay
   the next cycle hands back to the pool: a running insert gives way to the pool's next item (if that is
   the insert's item itself, it plays on and counts as the pool's item), a pinned pool item plays on.
-  Without the relay the slate comes first, then the pool's next item.
+  Without the relay the slate comes first, then the pool's next item. A Resume that clears only a skip
+  hold, a Remove next or a Move next restarts nothing, with or without the relay: those change what comes
+  next, not what is on air.
+- **Operator holds** on the *Current and next* panel of the live view lists what the actions above still
+  hold, with the time left (since M120): "Pinned on air: … for 42 more min", "Fallback on air: …",
+  "Play now: … takes the air at the next playout cycle", "Move next: … plays next", "Skipped: … stays out
+  for 2 h 5 min more", "Removed from next: … stays out for 1 h more", and a Refresh scenes or Rebuild
+  queue that waits for the next playout cycle. A hold that ran out is not listed. Before, a Skip's hold
+  or a Remove next kept an item out for up to four hours without a trace on the page.
 - **Skip current** holds the item on air out for the override minutes and moves on to the pool's next
   item (or a queued Move next): with the relay at once, without it after the slate. When a Pin or
   Fallback holds that item on air, Skip also ends the override (since M78; before, the pinned item
@@ -175,6 +184,11 @@ the pool's next item. Under the relay no operator action shows that slate.
   while that cycle was already switching to the next item, before the new ffmpeg started, counts as done
   by that start (since M105): it was aimed at the item the switch took off air, and kept, it restarted
   the new item from 0 on the next cycle as an operator restart nobody pressed.
+- The admin's own actions no longer clear each other's Refresh or queue rebuild (since M120): a Skip
+  pressed right after Rebuild queue, or a Soft restart after Refresh scenes, used to wipe the request, and
+  a Move next turned a waiting Refresh into a rebuild. A request stays until the cycle that carries it out
+  clears it, and a Refresh and a rebuild asked for one after the other are both done by the next cycle
+  (`addPendingPlayoutAction` in `packages/core/src/operator-precedence.ts`).
 - **Force reconnect** restarts the encoder into the reconnect window without the relay. With the relay
   it is refused: the uplink reconnects by itself (the planned reconnect interval, the encoder-stall and
   destination-stall watchdogs). Since M90 the button is greyed out with the relay on.
@@ -435,6 +449,45 @@ row; the restart policy
 - a self-restart is a Docker restart: the soak monitor's restart counts see it and fail the soak, as for
   any other container restart
 
+### A frozen process restarts (since M114)
+
+The rule above needs a running event loop. A process whose event loop is blocked, or one that was
+stopped (SIGSTOP), never gets to its own check. So the worker, playout and uplink containers run
+`node apps/worker/dist/supervisor.js <mode>`, which starts `index.js <mode>` as its child
+(`apps/worker/src/process-supervisor.ts`). The child sends a heartbeat every 10 s from its own event
+loop; after five minutes without one the supervisor kills it (SIGKILL) and exits, and the restart
+policy starts the container again. No Docker socket is involved.
+
+- the log shows `worker.supervisor.frozen` (with `mode` and `silentForMs`) before the kill, and the next
+  process logs `worker.health.frozen_restart` and raises the warning incident
+  `<mode>.health.frozen-restart`, which closes once the area is healthy again
+- the container healthcheck still calls `index.js healthcheck <mode>` directly; nothing changes there
+- not covered: `docker pause` freezes the supervisor too, and the relay (below)
+- a compose file of your own that still says `command: ["node", "apps/worker/dist/index.js", ...]` keeps
+  working without the supervisor; take the commands from `docker-compose.yml` to get it
+
+### Relay is not answering (since M114)
+
+The relay image holds only the mediamtx binary, so it cannot run a healthcheck, and its pin stays as it
+is. Instead the worker asks the relay's API (`http://relay:9997`) every cycle while something uses the
+relay (`STREAM247_RELAY_ENABLED=1` or live sources). After two minutes without any answer it raises the
+critical incident `relay.unreachable` (log `relay.unreachable`); the card says to run
+`docker compose restart relay`. The incident closes on the first answer again (log `relay.reachable`).
+A relay that crashes is restarted by `restart: unless-stopped` as before.
+
+Since the M114 follow-up the service `relay-watchdog` restarts a relay that runs but does not answer
+(`apps/worker/src/relay-restart.ts`). It asks the same API every 30 s, needs no database, and after three
+minutes without an answer restarts the relay container of its own Compose project through the Docker
+socket (log `relay.watchdog.restart` with `attempt`). Further restarts wait 5, 10, 20, 40, then 60 min
+(log `relay.watchdog.hold`), and the sequence starts again after 30 min of answers. A relay that was
+stopped or paused (`docker compose stop relay`, `docker pause`) is left alone. So is a relay that has not answered once since
+the watchdog started or since its last restart (log `relay.watchdog.never_answered`): that points to the
+configuration (another network, `api: no`), not to a hang. The watchdog finds itself by its hostname
+(Docker's default, the container id) and the relay by the Compose labels, so it does nothing with a
+`hostname:` override, `network_mode: host` or `docker stack deploy` (log `relay.watchdog.relay_not_found`). Each restart is a
+container restart, so a soak fails on it like on any other. To switch it off, stop the service
+(`docker compose stop relay-watchdog`); the incident above still reports a hanging relay.
+
 ### Restarts back off (since M103)
 
 - crash-loop protection (three failed ffmpeg exits within ten minutes) still waits for a playable item.
@@ -576,6 +629,23 @@ row; the restart policy
 - review Twitch incidents in `/live?tab=status`; "Reconnect Twitch" means the stored refresh token was
   refused (see *Twitch asks for a reconnect* above)
 
+### Old Twitch schedule segments stay up (since M113)
+
+- the incident `twitch.schedule.delete.failed` (warning, twitch) means Twitch refused or did not answer
+  the delete of one or more segments whose block run is no longer planned (a block deleted, moved or
+  shortened); the message names how many and Twitch's answer (`status 500`, `status 429`, a timeout).
+  Viewers may still see those segments on the channel's schedule
+- nothing to do in most cases: the segments stay in the stored list and the next schedule sync, within
+  15 minutes, deletes them again (a segment planned again in the meantime is updated, or created anew
+  when Twitch no longer has it); a sync with none left closes the incident (while schedule sync is
+  off or waits for the broadcaster, it stays open). A 2xx or a 404 counts as
+  deleted. A segment whose start has passed is dropped after a failed delete and only logged
+  (`twitch.schedule.segment.delete_failed`, `kept: false`), as it is no longer an upcoming entry
+- open for hours: check the incident's answer. `status 401` or `403` points to the account that writes
+  the schedule (see *Twitch sync unhealthy* above); delete the segment by hand in the Twitch creator
+  dashboard under *Schedule* if it must go at once. Before M113 such a segment stayed on Twitch
+  unnoticed
+
 ### A block that runs past midnight (since M88)
 
 A block such as Monday 23:00 for two hours is one block everywhere, although the schedule lists its
@@ -634,9 +704,16 @@ zone and bound when the block starts.
   10-day run shows days 1-7 at once and days 8-10 as the 7-day window rolls
 - the weekly block keeps its start, so its cuepoints count from it; a cuepoint that falls into the dated
   part is skipped, and one that aired before the dated block does not air again when the weekly block
-  comes back
+  comes back. The live view's cuepoint count (*Live*, fired/total, next and due) counts the same way since
+  M118; before, it counted the skipped one too and could name it as due
 - "Daily" between two dates creates a block only on the weekdays those dates contain; a pool used by a
   dated block continues where it stopped the evening before (owner decision 5.1 Q2)
+- before saving, the form says what the block takes over (since M119): "Takes over 20:00–22:00 from
+  Evening on 10 days (Thu 1 Oct to Sat 10 Oct); Evening continues at 22:00." *For how many days* sets the
+  last date from the first (10 days from 1 Oct ends on 10 Oct)
+- an edit with *Apply to repeat set* gives every copy the same dates, so it is refused when a copy's
+  weekday is not between them, with those weekdays named (since M119; before, such copies were saved
+  and never aired). Turn the toggle off to give one occurrence its own dates
 - a block whose last date has passed airs no more and stays listed, faded and marked *Ended 10 Oct*,
   until it is re-dated or deleted (*Hide ended* filters it out); dates that lie entirely in the past are
   refused on save. A block crossing midnight on its last date still runs into the next day
@@ -655,13 +732,25 @@ and its scheduled time in hours (*24 h scheduled*).
   2. Before M97 every block started from the pool's stored position, so each day showed the same first
   video
 - on today's card a block that has ended reads *Aired earlier today* and takes nothing from its pool; the
-  block on air is filled from now
+  block on air is filled from when the video on air ends (since M118; before, from now), or from now when
+  nothing plays. A video on air whose length is not known yet counts as 30 minutes
+- a video that runs past its block delays the next block when that one takes the air without a cut (a
+  weekly block after a weekly block, as on air): the next block's first video starts when it ends (since
+  M118; before, on time). A block it covers completely reads *Covered by the item before*. A dated block
+  still starts on time and cuts it
 - a block past midnight is listed once, on the day it starts, as *23:00 → 01:00 Sun*; the next day still
   counts its hours. The first day keeps a block that started the evening before (*23:00 Sat → 01:00*)
 - a weekly block cut by a dated block is filled only in its air time: the video running when the dated
   block starts is cut there, and the next one starts when the weekly block comes back. The dated block's
   own last video is cut at its end when another block takes the air there (since M105, as on air), so
-  it no longer reads *Ends 20m late*; a block followed by a weekly block, or by nothing, still may
+  it no longer reads *Ends 20m late*; a block followed by a weekly block, or by nothing, still may. When
+  the dated block uses the weekly block's pool, its videos come between the two parts in the pool's order
+  (since M118; before, both parts of the weekly block took theirs first)
+- a Twitch video whose download failed is left out until its cache cooldown ends (30 minutes by default,
+  Settings → Operations → Replay cache), as the worker skips it; the block says how many it skips (since
+  M118; before, the week listed it)
+- a 24 h block of clips of a few seconds is projected to its end (since M118; before, it stopped after
+  5 000 clips, about 4 h of 3-second clips)
 - *Repeats inside block* says why, with numbers: *6 min of video for a 24 h block: plays ≈ 240 times. Add
   videos to Abendprogramm.* A pool that alternates between sources says when one source runs out first
 - *Edit block* (in an opened block) opens the day lens at that block's form; *Add block* (above the days)
@@ -679,7 +768,11 @@ The public page shows, in the channel language:
 - *Up next*: the next 24 hours video by video, from the same projection as `Program → Schedule → Week`
   (each pool carries on with the worker's rotation). Consecutive videos of one block are one card showing
   the next video, with *4 more videos* to unfold; the list runs across midnight without a break. A block
-  with nothing to play is listed with its own times. The block on air continues after the video on air
+  with nothing to play is listed with its own times. The block on air continues after the video on air,
+  and a block the video on air runs into starts when it ends unless it is a dated block (since M118)
+- a video on air whose length is not known yet is still *Now*, with only its start (*since 20:00*), no
+  progress bar; *Up next* goes on after a 30-minute estimate, or from now once that has passed (since
+  M118; before, *Now* showed the block and *Up next* listed a video from now that was not on air)
 - *The next 7 days*: each day's blocks with their times; a dated block is marked *Special*
 - times in the viewer's own time zone, as the browser reports it, with the channel time beside them when
   the zones differ (*20:00 to 22:00 channel time*); the days are the viewer's days
@@ -811,8 +904,22 @@ What counts time counts real time:
   `Europe/Berln`); the message names the value and the zone the schedule runs on instead
 - the channel stays on air: the bad value is skipped and the schedule falls back to the saved zone, then
   to `UTC`, so every block can run hours off until the value is fixed
+- the setup wizard's *Channel timezone* field says so for a bad `CHANNEL_TIMEZONE`: the variable is
+  ignored and the zone saved there is used (since M116; before, it said the variable overrides it)
 - fix the value in the deployment environment (or unset it and let the wizard manage the zone) and
   restart; the next worker cycle closes the incident
+
+### An overlay setting or preset that does not read (since M113)
+
+- every JSON column of the live overlay and the draft (layer order, disabled layers, custom layers,
+  scenes, panel placements) and every stored scene preset is read with a fallback: a column that is not
+  JSON, or JSON of the wrong shape (a hand edit in `psql`, a cut-off restore), reads as an empty column.
+  Before M113 only the custom layers did (M85), and any other such column failed every state read of
+  the admin and the worker
+- what is on air then: the default layer order, no disabled layers, no placed panels, and, for an
+  unreadable scene list, one scene made from the custom layers. A preset that is not a JSON object
+  reads as the default overlay; one with a field of the wrong type is listed with its other fields (applying
+  it can still be refused; save the preset again). Save the overlay again in the studio (or re-save the preset) to write the column anew
 
 ### No playable asset
 
@@ -861,7 +968,15 @@ pair. To see what happened to one item:
   dark meanwhile, the local fallback covers the resolve and the item follows it. A second failure is
   final and the pool moves on. The retry's failure does not count towards crash-loop protection, so
   three different items that fail still bring it on and one item failing twice counts once; every
-  later failure of that item counts again. A queued
+  later failure of that item counts again. A Restart or Force reconnect pressed after the failure no
+  longer cancels the retry by itself (since M120); a Skip of the failed item still ends it, since the
+  item is held out. When the reconnect slate of direct mode takes the
+  cycle that was to start the retry (a Restart, a Force reconnect, the planned reconnect), the retry
+  waits for the slate and the item starts after it: runtime event `playout.input.retry.deferred`
+  (`reason: reconnect-slate`). When the slate or the standby slate takes a cycle that did not pick the
+  retry (a Skip holds the item out, the item is no longer playable), or another item or a Live Bridge
+  takes the air after the slate, the retry is given up with `playout.input.retry.dropped` (`reason`
+  `reconnect-slate`, `standby`, `other-item` or `live-bridge`). Before M120 it ran out silently in both cases. A queued
   Move next or a due insert waits for the retry, and takes the slot at once when the item failed
   without a retry (before M94 they let one more item pass).
 - Ask yt-dlp directly, in the playout container (the playout process resolves playback, not the
@@ -902,8 +1017,8 @@ YouTube or Twitch source:
   for the pool's next item). Skip, Remove next, every operator action and a dated block's start or end
   still end it.
 - An insert whose item is quarantined, cooling down (Twitch VOD) or from a source the breaker holds is
-  not picked; it airs again once that ends. The week view leaves out a quarantined item or a held
-  source's item the same way (it does not know the Twitch cache cooldown).
+  not picked; it airs again once that ends. The week view leaves out a quarantined item, a held
+  source's item and, since M118, a Twitch VOD in its cache cooldown the same way.
 - When the insert is due and still not ready (the local fallback covers the resolve) or cannot be
   prepared, it is skipped once and counts as played: the pool's counter starts again, the cuepoint is
   fired. The same holds when ffmpeg cannot be started for it, and (since M105) when it starts but its
@@ -1118,7 +1233,12 @@ It asks for the new password twice without showing it (at least 10 characters), 
 piping). Two-factor settings stay as
 they are. Without Compose (a Portainer stack), run the same in the worker container:
 `docker exec -it <worker container> node apps/worker/dist/reset-owner-password.js`. There is no e-mail
-reset. Sessions already signed in stay valid until they expire.
+reset.
+
+Since M117 every session is bound to the password it signed in with. The reset therefore signs every
+owner session out, including one opened with a leaked password; a change under Security signs out every
+other session and keeps the one that made it. Twitch sign-ins of the team are not touched. Updating to
+M117 signs everyone out once, because older session cookies carry no password stamp.
 
 ### Secrets in the audit trail and incidents
 
@@ -1165,6 +1285,11 @@ queue or fallback tier still references is never touched.
 - if HLS warnings mention corrupt packets, discontinuities, or non-monotonic DTS but `uplink.unplannedRestartCount` stays unchanged and the feed remains fresh, investigate the local asset/input that caused the playout exit instead of reconnecting Twitch manually
 - single-output and multi-output RTMP uplinks both run through tee/fifo buffering now; a short Twitch-side write failure should recover inside the same FFmpeg process when FFmpeg can re-open the output, and a real `uplink.process.exit` still means the Twitch-facing publisher actually restarted
 - verify at least one enabled primary or backup destination has a valid RTMP URL and stream key
+- a destination on your own RTMP server (Studio → Output, *Another RTMP service*): since M115 every tee
+  output that encodes sends a complete H.264 sequence header (`-flags:v +global_header`); before that a
+  stock server such as MediaMTX refused the first connection (`unable to parse H264 config: invalid size
+  1` in its log) and the output never published again, while Twitch accepted it. If that line still shows
+  on your server, the uplink runs an image older than M115
 - use `STREAM247_RELAY_ENABLED=0` only as a rollback because it returns external publishing to the playout process
 - since the relay checks credentials (M57 stage 2), the rtmp rollback paths (`STREAM247_RELAY_ENABLED=1`, `STREAM247_UPLINK_INPUT_MODE=rtmp`) additionally require the internal relay key embedded in `STREAM247_RELAY_OUTPUT_URL` / `STREAM247_RELAY_INPUT_URL`; get both lines ready to paste from Settings → Operations → **Relay access** (owner/admin, one click, audited as `relay.internal_key.revealed`), copy them into the deployment environment, then restart — see the push ingest section in `docs/deployment.md`
 - the key never appears in a listing, a log, a scene payload or an error message, so a lost copy is re-fetched from that same group rather than recovered from anywhere else; if the group answers that the lines are unavailable, the workspace database is unreachable and that is the incident to fix first

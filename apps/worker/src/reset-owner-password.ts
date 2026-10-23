@@ -5,6 +5,7 @@
 //
 // It asks for the new password without echoing it; piped input is read as one line, so the password
 // never has to appear on a command line or in the shell history. Two-factor settings stay as they are.
+// Every owner session signed in with the old password ends (M117: sessions carry a stamp of it).
 import { appendAuditEvent, hashPassword, MIN_OWNER_PASSWORD_LENGTH, setOwnerPasswordHash } from "@stream247/db";
 
 async function readPipedLine(): Promise<string> {
@@ -73,7 +74,7 @@ async function main(): Promise<number> {
     return 1;
   }
   await appendAuditEvent("auth.password.reset", `Owner password for ${email} reset with the host command.`);
-  console.log(`The owner password for ${email} is reset. Sign in with the new one.`);
+  console.log(`The owner password for ${email} is reset, and its sessions are signed out. Sign in with the new one.`);
   return 0;
 }
 

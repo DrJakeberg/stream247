@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import { resolveVodDownloadTimeoutMs } from "./vod-download-timeout.js";
 import path from "node:path";
-import { isTwitchVodPlaybackAsset, normalizeVodCacheLimitRate, resolveVodCacheTuning, type ManagedVodCacheInput } from "@stream247/core";
+import { getTwitchVodCacheCooldownEndMs, isTwitchVodPlaybackAsset, normalizeVodCacheLimitRate, resolveVodCacheTuning, type ManagedVodCacheInput } from "@stream247/core";
 import type { AssetRecord } from "@stream247/db";
 import { clampToCycleAwaitCeiling } from "./cycle-budget.js";
 import { DEFAULT_LOCK_STALE_MS, acquireFileLock, type FileLock } from "./file-lock.js";
@@ -181,16 +181,8 @@ export function isTwitchVodCacheCoolingDown(
   cooldownMs: number,
   nowMs = Date.now()
 ): boolean {
-  if (cooldownMs <= 0 || asset.cacheStatus !== "failed" || !asset.cacheUpdatedAt || !isTwitchVodAsset(asset)) {
-    return false;
-  }
-
-  const updatedAtMs = new Date(asset.cacheUpdatedAt).getTime();
-  if (!Number.isFinite(updatedAtMs)) {
-    return false;
-  }
-
-  return nowMs - updatedAtMs < cooldownMs;
+  // The rule lives in core since M118, so the week view leaves out exactly the items this skips.
+  return getTwitchVodCacheCooldownEndMs(asset, cooldownMs, nowMs) !== null;
 }
 
 export function buildTwitchVodCachePath(asset: Pick<AssetRecord, "sourceId" | "externalId" | "path">, cacheRoot: string): string {

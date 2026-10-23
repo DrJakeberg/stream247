@@ -122,7 +122,8 @@ import {
   type SourceBreakerRecord,
   type SourceBreakerTransition,
   createTwitchTokenScopeCache,
-  describeIncidentOperatorAction
+  describeIncidentOperatorAction,
+  pendingPlayoutActionIncludes
 } from "@stream247/core";
 import {
   buildSourceLiveStateWrite,
@@ -221,6 +222,7 @@ import { getCuepointInsertPlan, getCuepointWarmAsset } from "./cuepoints.js";
 import {
   decideInputOpenRetry,
   decideInputOpenRetryAfterExit,
+  decideInputOpenRetryAtSlate,
   isCurrentItemSlotFree,
   isFailedScheduledInsertRetry,
   isFinalScheduledInsertOpenFailure,
@@ -237,6 +239,11 @@ import {
   type ScheduledInsertTrigger
 } from "./scheduled-insert.js";
 import { planTwitchScheduleSegments } from "./twitch-schedule-plan.js";
+import {
+  deleteStaleTwitchScheduleSegments,
+  describeKeptTwitchSegments,
+  listComparableTwitchSegmentKeys
+} from "./twitch-schedule-cleanup.js";
 import { decideScheduleTakeover, decideTakeoverPrepareFailure, type ScheduleTakeover } from "./schedule-takeover.js";
 import {
   buildFfmpegOutputTarget,
@@ -253,6 +260,14 @@ import {
 import { logRuntimeEvent } from "./runtime-log.js";
 import { decideHealthcheck } from "./healthcheck.js";
 import { HealthSelfRestartWatch, HEALTH_SELF_RESTART_AFTER_MS, selfRestartReason } from "./health-self-restart.js";
+import { clearFrozenMarker, frozenMarkerPath, readFrozenMarker, startSupervisorHeartbeat } from "./process-supervisor.js";
+import {
+  RELAY_UNREACHABLE_FINGERPRINT,
+  RelayWatch,
+  isRelayApiReachable,
+  relayInUse,
+  relayUnreachableMessage
+} from "./relay-watch.js";
 import { RestartBackoff, describeCrashLoopHold, type RestartBackoffPlan } from "./restart-backoff.js";
 import { UplinkWatchdog, uplinkDarkRestartLogLine, type UplinkWatchdogFault } from "./uplink-watchdog.js";
 import { planSourceBreakerIncidents } from "./source-breaker-incidents.js";
@@ -1732,6 +1747,38 @@ async function observeSystemVolume(): Promise<void> {
     logRuntimeEvent("system.volume.check_failed", {
       error: error instanceof Error ? error.message : String(error)
     });
+  }
+}
+
+// M114: the relay image cannot run a healthcheck of its own, so the worker asks its API (relay-watch.ts).
+// Created on the first cycle, seeded from the open incident rows like the volume monitors (M95).
+let relayWatch: RelayWatch | null = null;
+
+async function observeRelay(): Promise<void> {
+  if (relayWatch === null) {
+    const state = await readAppState();
+    relayWatch = new RelayWatch(
+      state.incidents.some((incident) => incident.status === "open" && incident.fingerprint === RELAY_UNREACHABLE_FINGERPRINT)
+    );
+  }
+  const managed = await readManagedConfigRecord();
+  const inUse = relayInUse({
+    relayModeEnabled: STREAM247_RELAY_ENABLED,
+    sourceLiveEnabled: resolveSourceLiveEnabled(managed, process.env)
+  });
+  const action = inUse ? relayWatch.observe(await isRelayApiReachable(), Date.now()) : relayWatch.idle();
+  if (action.action === "raise") {
+    logRuntimeEvent("relay.unreachable", { unreachableForMs: action.unreachableForMs });
+    await upsertIncident({
+      scope: "system",
+      severity: "critical",
+      title: "Relay is not answering",
+      message: relayUnreachableMessage(action.unreachableForMs),
+      fingerprint: "relay.unreachable"
+    });
+  } else if (action.action === "resolve") {
+    logRuntimeEvent("relay.reachable", { inUse });
+    await resolveIncident("relay.unreachable", inUse ? "The relay answers again." : "Nothing uses the relay any more.");
   }
 }
 
@@ -8205,7 +8252,11 @@ async function runPlayoutCycle(): Promise<void> {
     pendingAction: state.playout.pendingAction,
     pendingActionRequestedAt: state.playout.pendingActionRequestedAt
   };
-  if (state.playout.pendingAction === "refresh") {
+  // A Refresh and a queue rebuild asked for one after the other are both carried out (M120,
+  // addPendingPlayoutAction); the last write of the two clears the request.
+  const pendingRefresh = pendingPlayoutActionIncludes(state.playout.pendingAction, "refresh");
+  const pendingRebuild = pendingPlayoutActionIncludes(state.playout.pendingAction, "rebuild_queue");
+  if (pendingRefresh) {
     if (playoutProcess && !playoutProcess.killed && state.playout.liveBridgeStatus === "active") {
       if (state.overlay.enabled) {
         await writeOnAirOverlay(state, null, "live", {
@@ -8231,12 +8282,13 @@ async function runPlayoutCycle(): Promise<void> {
 
     await updatePlayoutRuntime((playout) => ({
       ...playout,
-      ...decideCycleEndPendingAction({ consumed: consumedPendingAction, row: playout }),
+      ...(pendingRebuild ? {} : decideCycleEndPendingAction({ consumed: consumedPendingAction, row: playout })),
       heartbeatAt: new Date().toISOString(),
       message: "Broadcast refresh completed."
     }));
     state = await readAppState();
-  } else if (state.playout.pendingAction === "rebuild_queue") {
+  }
+  if (pendingRebuild) {
     await updatePlayoutRuntime((playout) => ({
       ...playout,
       nextAssetId: "",
@@ -8283,6 +8335,13 @@ async function runPlayoutCycle(): Promise<void> {
   // What the selection picked before the reconnect slate took its place: the item a restart request of
   // direct mode was for, which only the as-run row reads (M76).
   let selectedBeforeSlateAssetId = "";
+  // The selection the slate replaced, for a retry it covers (M120, decideInputOpenRetryAtSlate).
+  const selectedBeforeSlate = {
+    assetId: selection.asset?.id ?? "",
+    reasonCode: selection.reasonCode as string,
+    isRetry: Boolean(selection.inputOpenRetry)
+  };
+  let slateTakesCycle: "" | "reconnect" | "standby" = "";
   if (
     shouldShowReconnectSlate({
       relayEnabled: STREAM247_RELAY_ENABLED,
@@ -8293,6 +8352,7 @@ async function runPlayoutCycle(): Promise<void> {
   ) {
     await writeStandbySlate(state, "reconnect");
     selectedBeforeSlateAssetId = selection.asset?.id ?? "";
+    slateTakesCycle = "reconnect";
     selection = {
       asset: null,
       queueKind: "reconnect",
@@ -8316,6 +8376,7 @@ async function runPlayoutCycle(): Promise<void> {
       fingerprint: "playout.no-asset"
     });
     await writeStandbySlate(state, "standby");
+    slateTakesCycle = "standby";
     selection = {
       asset: null,
       queueKind: "standby",
@@ -8330,6 +8391,22 @@ async function runPlayoutCycle(): Promise<void> {
       reasonCode: "standby" as const,
       fallbackTier: "standby" as const
     };
+  }
+
+  // An owed retry that a slate takes the place of is kept for after the slate or dropped, with a log line
+  // either way (M120).
+  const retryAtSlate = decideInputOpenRetryAtSlate({
+    retry: inputOpenRetry,
+    slate: slateTakesCycle,
+    selectedAssetId: selectedBeforeSlate.assetId,
+    selectedReasonCode: selectedBeforeSlate.reasonCode,
+    selectedIsRetry: selectedBeforeSlate.isRetry,
+    selectedLive: selection.queueKind === "live",
+    nowMs: Date.now()
+  });
+  inputOpenRetry = retryAtSlate.next;
+  if (retryAtSlate.event !== "") {
+    logRuntimeEvent(retryAtSlate.event, { assetId: retryAtSlate.assetId, reason: retryAtSlate.reason });
   }
 
   // The retry is used up once a cycle goes on to start it: a further failure of the item is final.
@@ -10050,6 +10127,10 @@ async function sendAlert(subject: string, message: string): Promise<void> {
   }
 }
 
+// Keys of stale Twitch segments whose delete failed and which the stored list keeps for a retry (M113).
+// In memory on purpose: after a restart the first sync simply runs once more.
+let twitchSegmentsKeptAfterFailedDelete = new Set<string>();
+
 async function syncTwitchSchedule(args: {
   state: AppState;
   accessToken: string;
@@ -10075,7 +10156,10 @@ async function syncTwitchSchedule(args: {
   });
 
   const desiredKeys = plan.segments.map((occurrence) => occurrence.key).sort();
-  const currentKeys = args.state.twitchScheduleSegments.map((segment) => segment.key).sort();
+  const currentKeys = listComparableTwitchSegmentKeys(
+    args.state.twitchScheduleSegments.map((segment) => segment.key),
+    twitchSegmentsKeptAfterFailedDelete
+  ).sort();
   const sameKeys =
     desiredKeys.length === currentKeys.length && desiredKeys.every((entry, index) => entry === currentKeys[index]);
   const lastScheduleSyncAt = args.state.twitch.lastScheduleSyncAt ? new Date(args.state.twitch.lastScheduleSyncAt).getTime() : 0;
@@ -10113,21 +10197,31 @@ async function syncTwitchSchedule(args: {
       requestBody.category_id = category.id;
     }
 
-    const endpoint = existingSegment
-      ? `https://api.twitch.tv/helix/schedule/segment?broadcaster_id=${encodeURIComponent(
-          args.broadcasterId
-        )}&id=${encodeURIComponent(existingSegment.segmentId)}`
-      : `https://api.twitch.tv/helix/schedule/segment?broadcaster_id=${encodeURIComponent(args.broadcasterId)}`;
+    const writeSegment = (segmentId: string | undefined) =>
+      fetchWithTimeout(
+        segmentId
+          ? `https://api.twitch.tv/helix/schedule/segment?broadcaster_id=${encodeURIComponent(
+              args.broadcasterId
+            )}&id=${encodeURIComponent(segmentId)}`
+          : `https://api.twitch.tv/helix/schedule/segment?broadcaster_id=${encodeURIComponent(args.broadcasterId)}`,
+        {
+          method: segmentId ? "PATCH" : "POST",
+          headers: {
+            Authorization: `Bearer ${args.accessToken}`,
+            "Client-Id": args.clientId,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(requestBody)
+        }
+      );
 
-    const response = await fetchWithTimeout(endpoint, {
-      method: existingSegment ? "PATCH" : "POST",
-      headers: {
-        Authorization: `Bearer ${args.accessToken}`,
-        "Client-Id": args.clientId,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(requestBody)
-    });
+    let response = await writeSegment(existingSegment?.segmentId);
+    // The stored segment is no longer on Twitch: deleted by hand, or a delete Twitch carried out but did
+    // not confirm, whose record was kept for a retry and is planned again now (M113). Create it anew
+    // instead of failing every sync on the same 404.
+    if (existingSegment && response.status === 404) {
+      response = await writeSegment(undefined);
+    }
 
     if (!response.ok) {
       if (response.status === 403) {
@@ -10161,26 +10255,32 @@ async function syncTwitchSchedule(args: {
     await upsertTwitchScheduleSegment(syncedSegment);
   }
 
-  for (const staleSegment of args.state.twitchScheduleSegments) {
-    if (desiredKeys.includes(staleSegment.key)) {
-      continue;
-    }
-
-    await fetchWithTimeout(
-      `https://api.twitch.tv/helix/schedule/segment?broadcaster_id=${encodeURIComponent(
-        args.broadcasterId
-      )}&id=${encodeURIComponent(staleSegment.segmentId)}`,
-      {
-        method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${args.accessToken}`,
-          "Client-Id": args.clientId
+  const staleCleanup = await deleteStaleTwitchScheduleSegments({
+    stale: args.state.twitchScheduleSegments.filter((segment) => !desiredKeys.includes(segment.key)),
+    now: new Date(),
+    deleteSegment: async (staleSegment) => {
+      const response = await fetchWithTimeout(
+        `https://api.twitch.tv/helix/schedule/segment?broadcaster_id=${encodeURIComponent(
+          args.broadcasterId
+        )}&id=${encodeURIComponent(staleSegment.segmentId)}`,
+        {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${args.accessToken}`,
+            "Client-Id": args.clientId
+          }
         }
-      }
-    );
+      );
+      return { status: response.status };
+    }
+  });
+  for (const failure of staleCleanup.failures) {
+    logRuntimeEvent("twitch.schedule.segment.delete_failed", { ...failure });
   }
 
-  await replaceTwitchScheduleSegments(nextSegments);
+  // A segment Twitch did not delete stays in the stored list, so a later sync tries again (M113).
+  await replaceTwitchScheduleSegments([...nextSegments, ...staleCleanup.kept]);
+  twitchSegmentsKeptAfterFailedDelete = new Set(staleCleanup.kept.map((segment) => segment.key));
   await updateTwitchConnectionRecord({
     ...args.state.twitch,
     lastScheduleSyncAt: new Date().toISOString(),
@@ -10197,6 +10297,18 @@ async function syncTwitchSchedule(args: {
     });
   } else {
     await resolveIncident("twitch.schedule.duration.skipped", "All schedule blocks fit Twitch schedule duration limits.");
+  }
+
+  if (staleCleanup.kept.length > 0) {
+    await upsertIncident({
+      scope: "twitch",
+      severity: "warning",
+      title: "Old Twitch schedule segments were not deleted",
+      message: describeKeptTwitchSegments(staleCleanup.failures),
+      fingerprint: "twitch.schedule.delete.failed"
+    });
+  } else {
+    await resolveIncident("twitch.schedule.delete.failed", "Twitch deleted every old schedule segment.");
   }
 }
 
@@ -11319,6 +11431,7 @@ function buildWorkerCycleSteps(): CycleStep[] {
     // The observation-only sibling: OS/database volume pressure cannot be evicted away, only
     // reported, and the report must not wait behind a wedged sync either.
     { name: "system-volume", run: observeSystemVolume },
+    { name: "relay", run: observeRelay },
     { name: "asset-retention", run: sweepAssetRetention },
     { name: "destinations", run: syncDestinations },
     { name: "local-library", run: syncLocalMediaLibrary },
@@ -11497,6 +11610,29 @@ async function enforceHealthSelfRestart(mode: RuntimeMode, watch: HealthSelfRest
   process.exit(1);
 }
 
+/** M114: the supervisor killed the previous process for not answering; say so once. */
+async function reportFrozenRestart(mode: RuntimeMode): Promise<void> {
+  const markerPath = frozenMarkerPath(mode);
+  const marker = readFrozenMarker(markerPath);
+  if (marker === null) {
+    clearFrozenMarker(markerPath);
+    return;
+  }
+  logRuntimeEvent("worker.health.frozen_restart", { mode, silentForMs: marker.silentForMs, killedAt: marker.killedAt });
+  try {
+    await upsertIncident({
+      scope: mode === "worker" ? "worker" : "playout",
+      severity: "warning",
+      title: `${mode} was restarted because it stopped responding`,
+      message: `The ${mode} process sent no sign of life for ${Math.round(marker.silentForMs / 1000)}s (a blocked or stopped process), so its supervisor ended it at ${marker.killedAt} and Docker started it again.`,
+      fingerprint: `${mode}.health.frozen-restart`
+    });
+    clearFrozenMarker(markerPath);
+  } catch {
+    // The database is not there yet: the marker stays, and the next start of this process reports it.
+  }
+}
+
 function requestImmediatePlayoutCycle(reason: string): void {
   // Never drops the request: with no waiter armed (i.e. called from inside a running cycle) the
   // latch remembers it and waitForNextLoop skips the delay below.
@@ -11661,6 +11797,9 @@ if (command === "healthcheck") {
   });
 } else {
   const mode: RuntimeMode = command === "playout" ? "playout" : command === "uplink" ? "uplink" : "worker";
+  // M114: under the supervisor (supervisor.ts) this timer is the proof that the event loop still runs.
+  startSupervisorHeartbeat();
+  void reportFrozenRestart(mode);
   runLoop(mode).catch((error) => {
     logRuntimeEvent("worker.process.failed", {
       mode,

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { hashPassword, setSessionCookie } from "@/lib/server/auth";
+import { MIN_OWNER_PASSWORD_LENGTH } from "@stream247/db";
+import { hashPassword, sessionPasswordHash, setSessionCookie } from "@/lib/server/auth";
 import {
   appendAuditEvent,
   readAppState,
@@ -20,9 +21,9 @@ export async function POST(request: NextRequest) {
   const twitchClientId = (body.twitchClientId ?? "").trim();
   const twitchClientSecret = body.twitchClientSecret ?? "";
 
-  if (!email || password.length < 10) {
+  if (!email || password.length < MIN_OWNER_PASSWORD_LENGTH) {
     return NextResponse.json(
-      { message: "Provide a valid email and a password with at least 10 characters." },
+      { message: `Provide a valid email and a password with at least ${MIN_OWNER_PASSWORD_LENGTH} characters.` },
       { status: 400 }
     );
   }
@@ -70,7 +71,7 @@ export async function POST(request: NextRequest) {
   const persistedOwnerUser = state.users.find((user) => user.email === email);
   await appendAuditEvent("setup.completed", `Workspace initialized by ${email}.`);
   if (persistedOwnerUser) {
-    await setSessionCookie(persistedOwnerUser.id);
+    await setSessionCookie(persistedOwnerUser.id, sessionPasswordHash(persistedOwnerUser, state));
   }
 
   return NextResponse.json({ ok: true });

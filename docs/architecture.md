@@ -230,8 +230,10 @@ cursor was looked up in the filtered list, and every Skip (which holds exactly t
 pool back to its oldest item. An item that vanished from the catalog restarts its source at the oldest
 item. The worker's selection and runtime queue, the overlay lookahead, the schedule preview and the
 materialized week all use this one rotation. Since M97 the materialized week (week view, Day lens fill
-preview) carries each pool's rotation from one block to the next in time order, as the worker does; the
-Day lens's video timeline still starts every block from the stored position. The runtime queue walks on from the running
+preview) carries each pool's rotation from one block to the next in time order, as the worker does, and
+since M118 from one air window to the next (a dated block between the two parts of the weekly block it
+cuts takes its items between theirs), starting the block on air when the item on air ends; since M119 the
+Day lens's video bars are drawn from it too (until then they started every block from the stored position). The runtime queue walks on from the running
 item only in the cycle that starts and stores it; an item the pool never stored (one another pool on the
 same source started, or a manual next) leaves the queue on the stored position, where the next pick comes
 from. A started pool item stores the cursor and
@@ -360,7 +362,9 @@ Current operator controls include:
 Those controls are persisted in the playout runtime state and picked up by the worker/playout reconciliation loop.
 Play now and Insert only queue the insert (`insertStatus: pending`); the next cycle's insert branch
 selects it and switches to it. Restart, Hard reload and Skip (also by chat vote), and without the relay
-also Pin, Fallback, Resume, Force reconnect and Recover outputs, set `restartRequestedAt`; the
+also Pin, Fallback, Resume (only when it ends a Pin, Fallback or insert, since M120), Force reconnect
+and Recover outputs, set `restartRequestedAt`; no action clears another's pending Refresh or queue
+rebuild (`addPendingPlayoutAction`, M120); the
 reconnect standby slate follows that flag only in direct RTMP mode, because under the relay the uplink
 owns the destination connection (`shouldShowReconnectSlate` in `apps/worker/src/playout-boundary.ts`).
 Under the relay Pin, Fallback and Resume change the item through the ordinary switch at the next cycle,

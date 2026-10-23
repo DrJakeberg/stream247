@@ -262,7 +262,7 @@ describe("as-run wiring", () => {
     );
     // Taken from the selection the reconnect slate replaces, right before it does.
     expect(flat(workerSource)).toContain(
-      'await writeStandbySlate(state, "reconnect"); selectedBeforeSlateAssetId = selection.asset?.id ?? ""; selection = { asset: null, queueKind: "reconnect",'
+      'await writeStandbySlate(state, "reconnect"); selectedBeforeSlateAssetId = selection.asset?.id ?? ""; slateTakesCycle = "reconnect"; selection = { asset: null, queueKind: "reconnect",'
     );
     expect(flat(bodyOf(workerSource, "async function stopPlayoutProcess("))).toContain('plannedStopReason = ""; asRunStopIntent = ""; return;');
   });

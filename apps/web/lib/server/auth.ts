@@ -4,7 +4,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { NextResponse } from "next/server";
 import { buildWorkspaceHref } from "../workspace-navigation";
-import { findUserById, readAppState, type UserRecord, type UserRole } from "./state";
+import { findUserById, readAppState, type AppState, type UserRecord, type UserRole } from "./state";
 
 const sessionCookieName = "stream247_session";
 const twoFactorChallengeMaxAgeSeconds = 60 * 5;
@@ -31,18 +31,33 @@ function signValue(value: string): string {
   return createHmac("sha256", getAuthSecret()).update(value).digest("hex");
 }
 
-export function buildSessionValue(userId: string): string {
-  const payload = `${userId}:${Date.now()}`;
+/**
+ * The password a session is bound to (M117): the local owner's stored hash, as the sign-in reads it, and
+ * nothing for a Twitch sign-in. A session carries a stamp of it, so changing or resetting the password
+ * ends every session signed in with the old one.
+ */
+export function sessionPasswordHash(user: Pick<UserRecord, "authProvider" | "passwordHash">, state: Pick<AppState, "owner">): string {
+  return user.authProvider === "local" ? user.passwordHash || state.owner?.passwordHash || "" : "";
+}
+
+function passwordStamp(passwordHash: string): string {
+  return signValue(`password:${passwordHash}`).slice(0, 16);
+}
+
+export function buildSessionValue(userId: string, passwordHash: string): string {
+  const payload = `${userId}:${Date.now()}:${passwordStamp(passwordHash)}`;
   return `${payload}:${signValue(payload)}`;
 }
 
-export function parseSessionValue(value: string | undefined): string | null {
+export function parseSessionValue(value: string | undefined): { userId: string; passwordStamp: string } | null {
   if (!value) {
     return null;
   }
 
+  // userId:issuedAt:passwordStamp:signature. A cookie from before M117 has no stamp and is refused,
+  // so an update signs everyone out once.
   const parts = value.split(":");
-  if (parts.length < 3) {
+  if (parts.length !== 4) {
     return null;
   }
 
@@ -55,12 +70,26 @@ export function parseSessionValue(value: string | undefined): string | null {
 
   // The issue timestamp was always part of the signed payload but was never checked, so a session
   // cookie stayed valid indefinitely and could not be aged out.
-  const issuedAt = Number(parts[parts.length - 1]);
-  if (!Number.isFinite(issuedAt) || Date.now() - issuedAt > sessionMaxAgeSeconds * 1000) {
+  const [userId, issuedAtText, stamp] = parts;
+  const issuedAt = Number(issuedAtText);
+  if (!userId || !stamp || !Number.isFinite(issuedAt) || Date.now() - issuedAt > sessionMaxAgeSeconds * 1000) {
     return null;
   }
 
-  return parts[0] ?? null;
+  return { userId, passwordStamp: stamp };
+}
+
+/** The user a session cookie names, or null when it is invalid, expired or signed in with an older password. */
+export function resolveSessionUser(value: string | undefined, state: AppState): UserRecord | null {
+  const session = parseSessionValue(value);
+  if (!session) {
+    return null;
+  }
+  const user = findUserById(state, session.userId);
+  if (!user || passwordStamp(sessionPasswordHash(user, state)) !== session.passwordStamp) {
+    return null;
+  }
+  return user;
 }
 
 export function buildTwoFactorChallengeValue(userId: string): string {
@@ -102,15 +131,19 @@ export function parseTwoFactorChallengeValue(value: string | undefined): { userI
   };
 }
 
+/** The user id of a well-signed, unexpired session cookie, without a database read; the password stamp is checked by getAuthenticatedUser. */
 export async function getAuthenticatedUserId(): Promise<string | null> {
   const cookieStore = await cookies();
-  return parseSessionValue(cookieStore.get(sessionCookieName)?.value);
+  return parseSessionValue(cookieStore.get(sessionCookieName)?.value)?.userId ?? null;
 }
 
 export async function getAuthenticatedUser(): Promise<UserRecord | null> {
-  const userId = await getAuthenticatedUserId();
-  const state = await readAppState();
-  return findUserById(state, userId);
+  const cookieStore = await cookies();
+  const value = cookieStore.get(sessionCookieName)?.value;
+  if (!parseSessionValue(value)) {
+    return null;
+  }
+  return resolveSessionUser(value, await readAppState());
 }
 
 export async function requireAuthenticatedUser(): Promise<UserRecord> {
@@ -130,9 +163,10 @@ export async function requireRoles(roles: UserRole[]): Promise<UserRecord> {
   return user;
 }
 
-export async function setSessionCookie(userId: string): Promise<void> {
+/** passwordHash is sessionPasswordHash(user, state), with the new hash right after a password change. */
+export async function setSessionCookie(userId: string, passwordHash: string): Promise<void> {
   const cookieStore = await cookies();
-  cookieStore.set(sessionCookieName, buildSessionValue(userId), {
+  cookieStore.set(sessionCookieName, buildSessionValue(userId, passwordHash), {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",

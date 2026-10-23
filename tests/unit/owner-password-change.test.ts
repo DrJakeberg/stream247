@@ -11,7 +11,8 @@ const NEW_PASSWORD = "new-owner-password-2026";
 const mocks = vi.hoisted(() => ({
   user: null as Record<string, unknown> | null,
   setOwnerPasswordHash: vi.fn(),
-  appendAuditEvent: vi.fn()
+  appendAuditEvent: vi.fn(),
+  setSessionCookie: vi.fn()
 }));
 
 vi.mock("@/lib/server/auth", async () => {
@@ -19,6 +20,7 @@ vi.mock("@/lib/server/auth", async () => {
   return {
     getAuthenticatedUser: async () => mocks.user,
     hashPassword: db.hashPassword,
+    setSessionCookie: mocks.setSessionCookie,
     verifyPassword: db.verifyPassword
   };
 });
@@ -47,6 +49,7 @@ describe("POST /api/auth/password (M91, I7)", () => {
     clearAllRateLimits();
     mocks.setOwnerPasswordHash.mockReset().mockResolvedValue("owner@example.com");
     mocks.appendAuditEvent.mockReset();
+    mocks.setSessionCookie.mockReset();
     mocks.user = {
       id: "user_owner",
       email: "owner@example.com",
@@ -70,13 +73,24 @@ describe("POST /api/auth/password (M91, I7)", () => {
     const stored = String(mocks.setOwnerPasswordHash.mock.calls[0]?.[0]);
     expect(verifyPassword(NEW_PASSWORD, stored)).toBe(true);
     expect(verifyPassword(OLD_PASSWORD, stored)).toBe(false);
-    expect(mocks.appendAuditEvent).toHaveBeenCalledWith("auth.password.changed", "Owner password changed by owner@example.com.");
+    expect(mocks.appendAuditEvent).toHaveBeenCalledWith(
+      "auth.password.changed",
+      "Owner password changed by owner@example.com; other sessions were signed out."
+    );
+  });
+
+  it("keeps the changing session signed in with a cookie for the new password (M117)", async () => {
+    const response = await POST(requestWith({ currentPassword: OLD_PASSWORD, newPassword: NEW_PASSWORD }));
+    expect(await response.json()).toMatchObject({ message: "Password changed. Every other signed-in session is signed out." });
+    expect(mocks.setSessionCookie).toHaveBeenCalledTimes(1);
+    expect(mocks.setSessionCookie).toHaveBeenCalledWith("user_owner", String(mocks.setOwnerPasswordHash.mock.calls[0]?.[0]));
   });
 
   it("refuses a new password under 10 characters", async () => {
     const response = await POST(requestWith({ currentPassword: OLD_PASSWORD, newPassword: "short" }));
     expect(response.status).toBe(400);
     expect(mocks.setOwnerPasswordHash).not.toHaveBeenCalled();
+    expect(mocks.setSessionCookie).not.toHaveBeenCalled();
   });
 
   it("refuses without a session and for accounts that sign in with Twitch", async () => {

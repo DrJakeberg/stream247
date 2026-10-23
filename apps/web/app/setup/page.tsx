@@ -4,7 +4,7 @@ import Link from "next/link";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { isScheduleBlockDated } from "@stream247/core";
-import { DEV_FALLBACK_APP_SECRET, resolveAppBaseUrl, resolveAppSecret } from "@stream247/db";
+import { DEV_FALLBACK_APP_SECRET, isUsableTimeZone, MIN_OWNER_PASSWORD_LENGTH, resolveAppBaseUrl, resolveAppSecret } from "@stream247/db";
 import { GoLiveChecklist } from "@/components/go-live-checklist";
 import { InsecureHttpNotice } from "@/components/insecure-http-notice";
 import { LibraryUploadForm } from "@/components/library-upload-form";
@@ -73,6 +73,9 @@ export default async function SetupPage(props: { searchParams?: Promise<{ step?:
     redirect("/login");
   }
 
+  // A zone this install does not know is skipped by resolveChannelTimeZone (M85), so the form must not say
+  // it overrides the saved value; it names it as ignored instead.
+  const envTimezone = (process.env.CHANNEL_TIMEZONE || "").trim();
   const checklist = getGoLiveChecklist(state);
   const checklistReady = (id: string) => checklist.some((item) => item.id === id && item.status === "ready");
   const steps = deriveSetupWizardSteps(state, process.env, {
@@ -140,7 +143,7 @@ export default async function SetupPage(props: { searchParams?: Promise<{ step?:
         </Panel>
         {active === "owner" ? (
           <Panel title="Owner account" eyebrow={`Step ${activeIndex + 1}`}>
-            <SetupForm />
+            <SetupForm minPasswordLength={MIN_OWNER_PASSWORD_LENGTH} />
           </Panel>
         ) : null}
         {active === "instance" ? (
@@ -153,7 +156,8 @@ export default async function SetupPage(props: { searchParams?: Promise<{ step?:
               detectedAppUrl={requestOrigin}
               envAppUrl={(process.env.APP_URL || "").trim()}
               envLanguage={(process.env.CHANNEL_LANGUAGE || "").trim()}
-              envTimezone={(process.env.CHANNEL_TIMEZONE || "").trim()}
+              envTimezone={envTimezone && isUsableTimeZone(envTimezone) ? envTimezone : ""}
+              envTimezoneRejected={envTimezone && !isUsableTimeZone(envTimezone) ? envTimezone : ""}
               initialAppUrl={state.managedConfig.appUrl}
               initialLanguage={state.managedConfig.channelLanguage ?? ""}
               initialTimezone={state.managedConfig.channelTimezone}

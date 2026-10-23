@@ -14,8 +14,12 @@ describe("broadcast control room", () => {
   // live for those too, not only while a Pin or Fallback runs.
   it("enables Resume schedule while an insert is pending or active", () => {
     expect(broadcastControlRoomSource).toContain("insertStatus={snapshot.playout.insertStatus}");
-    expect(playoutActionFormSource).toContain(
-      'disabled={isPending || (props.overrideMode === "schedule" && props.insertStatus !== "pending" && props.insertStatus !== "active")}'
+    // M120: and while a skip hold, a Remove next or a Move next is in effect (operator-holds.ts).
+    expect(broadcastControlRoomSource).toContain(
+      "resumeEnabled={Number.isFinite(incidentNowMs) && resumeHasSomethingToClear(snapshot.playout, incidentNowMs)}"
+    );
+    expect(playoutActionFormSource.replace(/\s+/g, " ")).toContain(
+      'disabled={ isPending || (props.overrideMode === "schedule" && props.insertStatus !== "pending" && props.insertStatus !== "active" && !props.resumeEnabled) }'
     );
   });
 

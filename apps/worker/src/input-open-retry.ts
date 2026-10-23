@@ -28,6 +28,10 @@ export interface InputOpenRetryState {
   // The local item bridged onto air while the retry's remote input is resolved (shouldBridgeToFallback-
   // BeforeResolve): the retry is still owed while it runs.
   bridgeAssetId?: string;
+  // The reconnect slate of direct mode took the cycle that was to start the retry (a Restart, a Force
+  // reconnect, the planned reconnect): the retry is still owed and starts once the slate's window ends
+  // (M120, decideInputOpenRetryAtSlate). Before, the slate's running process ended it without a log line.
+  coveredBySlate?: boolean;
 }
 
 // A retry is owed for this long after the failure; after that a new failure of the item is a new one.
@@ -59,7 +63,9 @@ export function decideInputOpenRetryAfterExit(input: InputOpenRetryExitInput): I
   const previous = isCurrent(input.previous, input.nowMs) ? input.previous : null;
   if (!input.immediateOpenFailure || !input.exitedAssetId) {
     const ownExit = previous !== null && input.exitedAssetId !== "" && previous.assetId === input.exitedAssetId;
-    return { next: ownExit ? null : previous, countsTowardCrashLoop: true };
+    // An item that aired after the slate (a Pin, say) ends a retry the slate had kept owed.
+    const otherItemAfterSlate = previous?.coveredBySlate === true && input.exitedAssetId !== "" && !ownExit;
+    return { next: ownExit || otherItemAfterSlate ? null : previous, countsTowardCrashLoop: true };
   }
   if (previous?.assetId === input.exitedAssetId && previous.retried) {
     // Only the retry's own failure goes uncounted. An item that the rotation picks again and that keeps
@@ -80,6 +86,8 @@ export function decideInputOpenRetryAfterExit(input: InputOpenRetryExitInput): I
 // with the next format candidate (the exit handler recorded the failed one) and uses nothing up again:
 // it carries no trigger, and the worker holds it on air like any scheduled insert (scheduled-insert.ts).
 const RETRIED_REASON_CODES = new Set(["scheduled_match", "graceful_handoff", "manual_next", "scheduled_insert"]);
+
+const RETRY_STATUSES = new Set(["failed", "recovering", "reconnecting"]);
 
 export interface InputOpenRetrySelectionInput {
   retry: InputOpenRetryState | null;
@@ -108,7 +116,14 @@ export function decideInputOpenRetry(input: InputOpenRetrySelectionInput): Input
   if (retry.bridgeAssetId && input.processRunning && input.runtimeCurrentAssetId === retry.bridgeAssetId && retry.reasonCode) {
     return { assetId: retry.assetId, reasonCode: retry.reasonCode };
   }
-  if (input.processRunning || input.runtimeStatus !== "failed" || retry.assetId !== input.runtimeCurrentAssetId) {
+  // The reconnect slate (no item on air) covers the retry; the slate step takes the cycle again while its
+  // window runs, the first cycle after it starts the item.
+  if (retry.coveredBySlate && retry.reasonCode && input.runtimeCurrentAssetId === "") {
+    return { assetId: retry.assetId, reasonCode: retry.reasonCode };
+  }
+  // A Restart, Skip or Force reconnect pressed after the failure writes `recovering` or `reconnecting` over
+  // `failed` while nothing has started since (M120): the item still failed and is still owed its retry.
+  if (input.processRunning || !RETRY_STATUSES.has(input.runtimeStatus) || retry.assetId !== input.runtimeCurrentAssetId) {
     return null;
   }
   if (!RETRIED_REASON_CODES.has(input.runtimeReasonCode)) {
@@ -147,4 +162,64 @@ export function isFinalScheduledInsertOpenFailure(input: { exit: InputOpenRetryE
  */
 export function isFailedScheduledInsertRetry(input: { selectionIsOpenRetry: boolean; reasonCode: string; insertTrigger: string }): boolean {
   return input.selectionIsOpenRetry && input.reasonCode === "scheduled_insert" && input.insertTrigger === "";
+}
+
+export interface InputOpenRetrySlateInput {
+  retry: InputOpenRetryState | null;
+  // The slate that takes this cycle: "" for none.
+  slate: "" | "reconnect" | "standby";
+  // What the selection picked, before a slate took its place ("" for nothing).
+  selectedAssetId: string;
+  selectedReasonCode: string;
+  selectedIsRetry: boolean;
+  // A Live Bridge takes the air this cycle (the live arm selects no item).
+  selectedLive?: boolean;
+  nowMs: number;
+}
+
+export interface InputOpenRetrySlateDecision {
+  next: InputOpenRetryState | null;
+  // The runtime event to log for the owed retry, "" for none.
+  event: "" | "playout.input.retry.deferred" | "playout.input.retry.dropped";
+  assetId: string;
+  reason: "" | "reconnect-slate" | "standby" | "other-item" | "live-bridge";
+}
+
+/**
+ * What a cycle does with a retry that is owed (M120; M94 review "Left as is"). The reconnect slate that
+ * replaces the retry keeps it owed (`playout.input.retry.deferred`), and the item starts after the slate
+ * as the restart pressed for it intends. A reconnect slate or standby that takes a cycle whose selection
+ * was not the retry (the item is held out by a Skip, or no longer playable), or another item or a Live
+ * Bridge that takes the air while the slate kept the retry, ends it with `playout.input.retry.dropped`. Before, both went without a
+ * log line: the slate's running process failed decideInputOpenRetry's "nothing running" condition and the
+ * retry ran out silently after ten minutes.
+ */
+export function decideInputOpenRetryAtSlate(input: InputOpenRetrySlateInput): InputOpenRetrySlateDecision {
+  const unchanged: InputOpenRetrySlateDecision = { next: input.retry, event: "", assetId: "", reason: "" };
+  const retry = input.retry;
+  if (!isCurrent(retry, input.nowMs) || retry.retried) {
+    return unchanged;
+  }
+  const selectedRetry = input.selectedIsRetry && input.selectedAssetId === retry.assetId;
+  if (input.slate === "reconnect" && selectedRetry) {
+    if (retry.coveredBySlate) {
+      return unchanged;
+    }
+    return {
+      next: { ...retry, coveredBySlate: true, bridgeAssetId: "", reasonCode: input.selectedReasonCode },
+      event: "playout.input.retry.deferred",
+      assetId: retry.assetId,
+      reason: "reconnect-slate"
+    };
+  }
+  if (input.slate !== "") {
+    return { next: null, event: "playout.input.retry.dropped", assetId: retry.assetId, reason: input.slate === "reconnect" ? "reconnect-slate" : "standby" };
+  }
+  if (retry.coveredBySlate && input.selectedLive === true) {
+    return { next: null, event: "playout.input.retry.dropped", assetId: retry.assetId, reason: "live-bridge" };
+  }
+  if (retry.coveredBySlate && input.selectedAssetId !== "" && !selectedRetry) {
+    return { next: null, event: "playout.input.retry.dropped", assetId: retry.assetId, reason: "other-item" };
+  }
+  return unchanged;
 }

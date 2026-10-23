@@ -187,3 +187,21 @@ export function formatChatSkipPausedReply(hold: Exclude<OperatorHold, "">, local
   }
   return viewerText(locale, hold === "fallback" ? "chat.skip.pausedFallback" : "chat.skip.pausedPin");
 }
+
+/**
+ * The Refresh and queue rebuild a playout cycle still owes (M120). One field holds them, and every admin
+ * action wrote it: a Skip cleared a queue rebuild asked for just before, a Restart an open Refresh, and a
+ * Move next turned a waiting Refresh into a rebuild. Neither is done by the other actions (a Restart starts
+ * the encoder, it does not rebuild the scenes the Refresh was asked for), so a request now stays until the
+ * cycle that carries it out clears it (decideCycleEndPendingAction), and the two add up.
+ */
+export type PendingPlayoutAction = "" | "refresh" | "rebuild_queue" | "refresh_and_rebuild_queue";
+
+export function pendingPlayoutActionIncludes(value: string, part: "refresh" | "rebuild_queue"): boolean {
+  return value === part || value === "refresh_and_rebuild_queue";
+}
+
+export function addPendingPlayoutAction(current: string, requested: "refresh" | "rebuild_queue"): PendingPlayoutAction {
+  const other = requested === "refresh" ? "rebuild_queue" : "refresh";
+  return pendingPlayoutActionIncludes(current, other) ? "refresh_and_rebuild_queue" : requested;
+}

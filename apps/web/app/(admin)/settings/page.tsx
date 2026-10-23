@@ -18,6 +18,7 @@ import {
   resolveUplinkWatchdogMs,
   resolveVodCacheTuning
 } from "@stream247/core";
+import { MIN_OWNER_PASSWORD_LENGTH } from "@stream247/db";
 import { AdminPageHeader } from "@/components/admin-page-header";
 import { Panel } from "@/components/panel";
 import { ChannelBlueprintForm } from "@/components/channel-blueprint-form";
@@ -282,7 +283,7 @@ export default async function SettingsPage() {
                 }
               : null}
           />
-          {user?.authProvider === "local" && user.role === "owner" ? <ChangePasswordForm /> : null}
+          {user?.authProvider === "local" && user.role === "owner" ? <ChangePasswordForm minPasswordLength={MIN_OWNER_PASSWORD_LENGTH} /> : null}
         </Panel>
 
         <Panel title="Admin defaults" eyebrow="Settings">

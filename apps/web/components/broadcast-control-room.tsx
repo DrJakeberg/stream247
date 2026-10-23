@@ -19,6 +19,7 @@ import {
 import { describePlayoutReason } from "@/lib/playout-reason";
 import { describeScenePreset } from "@/lib/scene-preset-names";
 import { describeOverlayHeadlines } from "@/lib/overlay-headline-wording";
+import { describePendingPlayoutRequests, listOperatorHolds, resumeHasSomethingToClear } from "@/lib/operator-holds";
 import { localizeViewerBuiltInText, resolveOverlayHeadlineForQueueKind } from "@stream247/core";
 
 /** The next item's preparation in words: "ready" is what an operator wants to know at a glance. */
@@ -52,6 +53,14 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
   // server render and the hydrated render agree, every age on the panel shares one "now", and the
   // render stays pure. An unusable timestamp produces no age line rather than a wrong one.
   const incidentNowMs = new Date(snapshot.generatedAt).getTime();
+  // What the operator's actions still hold (M120). Measured against the snapshot's time like the ages.
+  const titleOf = (assetId: string) =>
+    props.assets.find((asset) => asset.id === assetId)?.title ||
+    snapshot.queueItems.find((item) => item.asset?.id === assetId)?.title ||
+    (snapshot.playout.currentAssetId === assetId ? snapshot.playout.currentTitle : "") ||
+    "an item no longer in the library";
+  const operatorHolds = Number.isFinite(incidentNowMs) ? listOperatorHolds(snapshot.playout, titleOf, incidentNowMs) : [];
+  const pendingRequests = describePendingPlayoutRequests(snapshot.playout.pendingAction);
 
   return (
     <div className="stack-form">
@@ -144,6 +153,18 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
               {nextQueueItem?.subtitle ? <div className="subtle">{nextQueueItem.subtitle}</div> : null}
               {snapshot.playout.prefetchError ? <div className="danger">{snapshot.playout.prefetchError}</div> : null}
             </div>
+            {operatorHolds.length > 0 || pendingRequests ? (
+              <div className="item" data-testid="operator-holds">
+                <strong>Operator holds</strong>
+                {operatorHolds.map((hold) => (
+                  <div className="subtle" key={hold.kind}>
+                    {hold.text}
+                  </div>
+                ))}
+                {operatorHolds.length > 0 ? <div className="subtle">Resume schedule clears all of these.</div> : null}
+                {pendingRequests ? <div className="subtle">{pendingRequests}</div> : null}
+              </div>
+            ) : null}
             {/*
               The engine's own words ("Transition idle · queue reason none · version 0", "ready not
               ready") answered nobody's question in the first line of the page (M90, U10). They stay
@@ -196,6 +217,7 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
             nextAssetTitle={nextQueueItem?.title || snapshot.nextAsset?.title}
             overrideMode={(snapshot.playout.overrideMode as "schedule" | "asset" | "fallback") || "schedule"}
             insertStatus={snapshot.playout.insertStatus}
+            resumeEnabled={Number.isFinite(incidentNowMs) && resumeHasSomethingToClear(snapshot.playout, incidentNowMs)}
             liveBridgeStatus={snapshot.liveBridge.status}
             liveBridgeLabel={snapshot.liveBridge.label}
             liveBridgeInputType={snapshot.liveBridge.inputType}

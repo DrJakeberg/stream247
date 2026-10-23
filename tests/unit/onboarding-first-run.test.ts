@@ -284,9 +284,65 @@ describe("I6: the instance step is prefilled (M91)", () => {
   });
 });
 
+describe("M116: the setup text about CHANNEL_TIMEZONE (suggestion 8)", () => {
+  // resolveChannelTimeZone skips a zone it does not know (M85), so "overrides whatever is saved here" was
+  // not true for CHANNEL_TIMEZONE=Europe/Berln: the saved zone, or UTC, is what the channel runs on.
+  async function renderInstanceStep(): Promise<string> {
+    page.state = freshState({
+      initialized: true,
+      owner: { email: "owner@example.com", passwordHash: "salt:hash", createdAt: "2026-10-01T00:00:00.000Z" },
+      managedConfig: { ...createInitialSeedState().managedConfig, channelTimezone: "America/New_York" }
+    });
+    page.user = { id: "owner", role: "owner" };
+    requestFrom("localhost:3000", "http");
+    return renderToStaticMarkup((await SetupPage({ searchParams: Promise.resolve({ step: "instance" }) })) as never);
+  }
+
+  it("says an unknown zone in the environment is ignored and the saved zone is used", async () => {
+    vi.stubEnv("CHANNEL_TIMEZONE", "Europe/Berln");
+    const html = await renderInstanceStep();
+    expect(html).toContain("CHANNEL_TIMEZONE is set to Europe/Berln in the environment, which is not a time zone name");
+    expect(html).toContain("so it is ignored and the zone saved here is used (empty means UTC)");
+    expect(html).not.toContain("CHANNEL_TIMEZONE is set to Europe/Berln in the environment and overrides");
+    expect(html).toMatch(/id="channel-timezone"[^>]*value="America\/New_York"|value="America\/New_York"[^>]*id="channel-timezone"/);
+  });
+
+  it("says the field holds the browser's zone when nothing is saved and the environment's zone is ignored", () => {
+    vi.spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions").mockReturnValue({
+      ...new Intl.DateTimeFormat("en-US", { timeZone: "UTC" }).resolvedOptions(),
+      timeZone: "Europe/Berlin"
+    });
+    const html = mountWithEffects(SetupInstanceForm, {
+      initialAppUrl: "",
+      initialTimezone: "",
+      initialLanguage: "",
+      envAppUrl: "",
+      envTimezone: "",
+      envTimezoneRejected: "Europe/Berln",
+      envLanguage: ""
+    });
+    expect(html).toMatch(/id="channel-timezone"[^>]*value="Europe\/Berlin"|value="Europe\/Berlin"[^>]*id="channel-timezone"/);
+    expect(html).toContain("so it is ignored and the zone saved here is used (empty means UTC). Prefilled with your browser&#x27;s time zone; check it.");
+  });
+
+  it("still says a known zone in the environment overrides the saved one", async () => {
+    vi.stubEnv("CHANNEL_TIMEZONE", " Europe/Vienna ");
+    const html = await renderInstanceStep();
+    expect(html).toContain("CHANNEL_TIMEZONE is set to Europe/Vienna in the environment and overrides whatever is saved here.");
+    expect(html).not.toContain("is ignored");
+  });
+
+  it("says nothing about the environment when CHANNEL_TIMEZONE is not set", async () => {
+    vi.stubEnv("CHANNEL_TIMEZONE", "");
+    const html = await renderInstanceStep();
+    expect(html).not.toContain("CHANNEL_TIMEZONE is set");
+    expect(html).toContain("IANA name like Europe/Berlin. The schedule grid and every on-air clock use it. Empty means UTC.");
+  });
+});
+
 describe("I7: the password warning sits under the field (M91)", () => {
   it("says to store the password and where it can be changed, right under the field", () => {
-    const html = renderToStaticMarkup(React.createElement(SetupForm));
+    const html = renderToStaticMarkup(React.createElement(SetupForm, { minPasswordLength: 10 }));
     const field = html.indexOf('name="password"');
     const warning = html.indexOf("Store this password now.");
     expect(field).toBeGreaterThan(-1);
@@ -294,6 +350,17 @@ describe("I7: the password warning sits under the field (M91)", () => {
     // In the same label as the field, not behind the (i) and not in the paragraph below the form.
     expect(html.slice(field, warning)).not.toContain("</label>");
     expect(html).toContain("There is no e-mail reset: you can change it under Admin → Settings → Security");
+  });
+
+  it("takes the minimum length from the one constant the server checks (M117)", () => {
+    const html = renderToStaticMarkup(React.createElement(SetupForm, { minPasswordLength: 12 }));
+    expect(html).toContain('minLength="12"');
+    expect(html).toContain("At least 12 characters");
+    expect(html).not.toContain("At least 10 characters");
+    const sources = ["apps/web/app/api/setup/bootstrap/route.ts", "apps/web/components/setup-form.tsx", "apps/web/components/change-password-form.tsx"]
+      .map((file) => readFileSync(path.join(process.cwd(), file), "utf8"))
+      .join("\n");
+    expect(sources).not.toMatch(/length < 10\b|minLength=\{10\}|least 10 characters/);
   });
 });
 

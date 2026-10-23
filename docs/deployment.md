@@ -888,7 +888,7 @@ PORTAINER_STACK_NAME=stream247 \
 
 The script does not update, redeploy, or restart anything. It only reports whether the currently running DT stack matches the pinned release env file.
 
-Production `traefik`, `web`, `worker`, `relay`, `playout`, `uplink`, and `postgres` services now use `restart: unless-stopped` in `docker-compose.yml`, so the documented always-on Compose paths, including `docker compose --profile proxy up -d`, recover their stack processes after daemon and host restarts.
+Production `traefik`, `web`, `worker`, `relay`, `relay-watchdog`, `playout`, `uplink`, and `postgres` services now use `restart: unless-stopped` in `docker-compose.yml`, so the documented always-on Compose paths, including `docker compose --profile proxy up -d`, recover their stack processes after daemon and host restarts.
 
 The worker-family image runs Node under `tini` so long-running playout containers reap short-lived FFmpeg and yt-dlp children. Worker, playout, and uplink Docker healthchecks use 45-second intervals/timeouts and a 60-second start period because FFmpeg and the in-process scene renderer (satori → resvg) can briefly saturate the playout container during normal broadcast operation. Compose itself never restarts an unhealthy container; since M103 the worker and uplink exit by themselves after five minutes of failing that same healthcheck, and the playout only while its programme feed does not advance, so `restart: unless-stopped` brings up a fresh process (`docs/operations.md`, "A process stops proving it is alive").
 
