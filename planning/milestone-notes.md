@@ -67,6 +67,12 @@ under `planning/archive/`, text unchanged.
   "onTaskUpdate"` (CI job 118956625641, and twice in the cloud). The root-env lock's poll and hand-over pause
   used `Atomics.wait`, so release-readiness kept its worker's event loop blocked for its whole synchronous
   run (about 160 s alone); both release test files now wait on timers. 51 tests unchanged, no error line.
+- Follow-up (#36, 2026-10-21): the timers kept the 60-ms pause after a release, which does not stop
+  release-readiness from taking the lock again before release-preflight's next poll; release-preflight then
+  waits out the other file (about 30-40 s under the full suite, a failure once that file passes the 120-s
+  deadline). Both files now use one lock, `tests/unit/root-env-lock.ts`: it waits on timers, a waiter
+  announces itself, and a release lets an announced live waiter take the lock first. Both files together
+  pass normally and on one CPU with release-preflight under 1 s.
 
 ### M112 A Broken Source Neither Crashes Nor Stalls The Loop
 

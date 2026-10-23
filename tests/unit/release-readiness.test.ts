@@ -11,12 +11,11 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { setTimeout as wait } from "node:timers/promises";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { acquireRootEnvLock, releaseRootEnvLock, ROOT_ENV_LOCK_HANDOVER_MS, ROOT_ENV_LOCK_WAIT_MS } from "./root-env-lock";
 
 const rootDir = path.resolve(__dirname, "../..");
 const rootEnvPath = path.join(rootDir, ".env");
-const rootEnvLockPath = path.join(os.tmpdir(), "stream247-release-root-env.lock");
 const ciWorkflowPath = path.join(rootDir, ".github", "workflows", "ci.yml");
 const releaseWorkflowPath = path.join(rootDir, ".github", "workflows", "release.yml");
 const composePath = path.join(rootDir, "docker-compose.yml");
@@ -27,7 +26,6 @@ const soakScriptPath = path.join(rootDir, "scripts", "soak-monitor.sh");
 // and SOAK_OUTAGE_TOLERANCE_SECONDS=0 must keep reproducing them.
 const STRICT_SOAK = { env: { SOAK_OUTAGE_TOLERANCE_SECONDS: "0" } };
 const tempDirs: string[] = [];
-let rootEnvLockHeld = false;
 
 type RootEnvTestState = {
   backupPath: string | null;
@@ -62,45 +60,6 @@ const realSleep = ["/bin/sleep", "/usr/bin/sleep"].find((candidate) => existsSyn
 // A connection refused at that host from the given curl call on, up to untilCall if given (1-based, every
 // call counts), as curl answers when nothing listens at the address.
 type CurlRefusal = { host: string; fromCall: number; untilCall?: number };
-
-// The two release test files share this lock, one test at a time, and each releases and takes it again
-// between its own tests. Without a pause after the release the file that holds it can take it again
-// before the other file's next 25-ms poll, and the other file waits out the whole run of the first:
-// since M111 release-readiness runs about 30 s under the full suite, as long as the old 30-s deadline.
-// The waits are timers, not Atomics.wait: a test file whose tests run synchronously back to back must give
-// its event loop a turn between them, or vitest's worker RPC times out after 60 s although every test passed.
-const ROOT_ENV_LOCK_WAIT_MS = 120_000;
-
-async function acquireRootEnvLock() {
-  const deadline = Date.now() + ROOT_ENV_LOCK_WAIT_MS;
-
-  while (Date.now() < deadline) {
-    try {
-      mkdirSync(rootEnvLockPath);
-      rootEnvLockHeld = true;
-      return;
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code !== "EEXIST") {
-        throw error;
-      }
-      await wait(25);
-    }
-  }
-
-  throw new Error(`Timed out waiting for ${rootEnvLockPath}`);
-}
-
-async function releaseRootEnvLock() {
-  if (!rootEnvLockHeld) {
-    return;
-  }
-
-  rmSync(rootEnvLockPath, { force: true, recursive: true });
-  rootEnvLockHeld = false;
-  // Hand the lock over: the other file polls every 25 ms.
-  await wait(60);
-}
 
 function rememberTempDir(prefix: string) {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -445,7 +404,7 @@ afterEach(async () => {
   }
 
   await releaseRootEnvLock();
-});
+}, ROOT_ENV_LOCK_HANDOVER_MS + 10_000);
 
 describe("release readiness files", () => {
   it("publishes and verifies the full main snapshot artifact set for rehearsal", () => {
@@ -1155,7 +1114,7 @@ describe("release readiness scripts", () => {
   // A socket-activated dockerd that is stopped or starting leaves docker calls hanging. The off-air time must
   // still reach the outage window: the failure path asks docker nothing but the bounded lookup.
   // A fraction of a second (GNU timeout takes one): each blocked call costs the test that much, and these tests
-  // hold the root-env lock that tests/unit/release-preflight.test.ts waits at most ROOT_ENV_LOCK_WAIT_MS for.
+  // hold the root-env lock that tests/unit/release-preflight.test.ts waits at most 30 s for.
   const DOCKER_HANGS = { SOAK_DOCKER_TIMEOUT_SECONDS: "0.2" };
   const blockedCalls = (dockerLog: string) => dockerLog.split("\n").filter((line) => line.startsWith("blocked: "));
 
