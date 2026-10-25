@@ -442,3 +442,27 @@ under `planning/archive/`, text unchanged.
 - Not measured: the direct-mode slate path on a playing channel; the DUT runs the relay, where no slate
   takes a cycle.
 - `CHANGELOG.md` is not touched: per `AGENTS.md` the release commit writes its section.
+
+### M122 The Wizard Keeps Regional Twitch And Finds The Zone
+
+- **Checked against `main` first (a0c1f65).** None of the three was done: M105 (R16, R17) and M116 changed the
+  instance and programme steps' hints and writes, not these. The search label of the zone field and the
+  programme step's preselection were as M91 and M99 left them.
+- **10a, regional Twitch ingest.** `isTwitchIngestUrl` (`apps/web/lib/destination-wording.ts`) knows
+  `live.twitch.tv`, `live-<region>.twitch.tv` and `<server>.contribute.live-video.net`, over rtmp or rtmps, on
+  `/app`. Such an address preselects *Twitch*, the hint names it, and saving as *Twitch* keeps it; before, saving
+  would have moved the channel to the global ingest. Switching from another service to *Twitch* still writes
+  `rtmp://live.twitch.tv/app`. Studio → Output was not changed: its form shows the address as it is.
+- **10b, preselection.** The step keeps the sources the owner unticked instead of the ticked ones, so a source
+  that becomes playable under a mounted form (the step's own "check again" link, a refresh after a failed press)
+  arrives ticked. The visible case: with no ready video the form was mounted rendering nothing, and its ticked
+  list stayed empty, so after "check again" every source showed unticked.
+- **11, zone list.** A native `<datalist>` from `Intl.supportedValuesOf("timeZone")` (UTC first; zones with an
+  underscore get a spaced label so "New York" matches), read on the client only like the browser zone, since
+  the server's ICU may list other zones. No new dependency; the field stays a text field, so a saved or typed
+  zone outside the list still works and the route still checks it (`isUsableTimeZone`). A browser without
+  `Intl.supportedValuesOf` gets the plain field. The hint adds "Type a city or region to pick from the list."
+  except while `CHANNEL_TIMEZONE` pins the zone.
+- **Baselines.** `/setup` past the owner step is in neither the design nor the wording baseline
+  (`tests/e2e/design-baseline.spec.ts` only creates the owner there), so none was re-recorded.
+- `CHANGELOG.md` is not touched: per `AGENTS.md` the release commit writes its section.

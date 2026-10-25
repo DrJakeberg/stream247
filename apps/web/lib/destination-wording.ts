@@ -61,3 +61,26 @@ export const DESTINATION_RECOVERY_LABELS = {
  * destination (`packages/db`) writes the same address as its own literal.
  */
 export const TWITCH_INGEST_URL = "rtmp://live.twitch.tv/app";
+
+/**
+ * Whether an RTMP address is one of Twitch's own ingests: the global one, an older regional
+ * `live-<region>.twitch.tv`, or a regional `<pop>.contribute.live-video.net` server, over rtmp or rtmps,
+ * on the `/app` path. The wizard shows such an address as Twitch and keeps it on saving (M122); before,
+ * a regional ingest read as "Another RTMP service".
+ */
+export function isTwitchIngestUrl(value: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(value.trim());
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "rtmp:" && parsed.protocol !== "rtmps:") {
+    return false;
+  }
+  if (parsed.pathname !== "/app" && parsed.pathname !== "/app/") {
+    return false;
+  }
+  const host = parsed.hostname.toLowerCase();
+  return host === "live.twitch.tv" || /^live-[a-z0-9-]+\.twitch\.tv$/.test(host) || /^[a-z0-9-]+\.contribute\.live-video\.net$/.test(host);
+}
