@@ -18,6 +18,36 @@ export function detectBrowserTimeZone(): string {
 // The browser's zone does not change under a mounted form, so there is nothing to subscribe to.
 const subscribeToNothing = () => () => undefined;
 
+const NO_TIME_ZONES: readonly string[] = [];
+let cachedTimeZones: readonly string[] | null = null;
+
+/**
+ * The zone names this browser knows, for the field's suggestion list (M122), with UTC first; empty where
+ * the browser cannot list them, and then the field stays a plain text field. Read once and kept, so the
+ * snapshot is the same array on every render.
+ */
+export function listBrowserTimeZones(): readonly string[] {
+  if (cachedTimeZones) {
+    return cachedTimeZones;
+  }
+  let zones: string[] = [];
+  try {
+    const supportedValuesOf = (Intl as { supportedValuesOf?: (key: string) => string[] }).supportedValuesOf;
+    zones = supportedValuesOf ? supportedValuesOf("timeZone") : [];
+  } catch {
+    zones = [];
+  }
+  cachedTimeZones = zones.length > 0 ? ["UTC", ...zones.filter((zone) => zone !== "UTC")] : NO_TIME_ZONES;
+  return cachedTimeZones;
+}
+
+/** A spaced label for "America/New_York", for browsers that match a typed "New York" on the label too. */
+function timeZoneSearchLabel(zone: string): string | undefined {
+  return zone.includes("_") ? zone.replace(/_/g, " ") : undefined;
+}
+
+const TIME_ZONE_LIST_ID = "channel-timezone-options";
+
 export function SetupInstanceForm(props: {
   initialAppUrl: string;
   /** The origin this page was requested under, offered while nothing is saved and APP_URL is unset. */
@@ -49,6 +79,11 @@ export function SetupInstanceForm(props: {
   const zoneDetected =
     typedTimezone === null && !props.initialTimezone && !props.envTimezone && !props.zoneInUse && browserTimeZone !== "";
   const timezone = typedTimezone ?? (zoneDetected ? browserTimeZone : props.initialTimezone);
+  // Client only like the browser zone: the server's ICU may list other zones than the browser's.
+  const timeZones = useSyncExternalStore(subscribeToNothing, listBrowserTimeZones, () => NO_TIME_ZONES);
+  // While CHANNEL_TIMEZONE pins the zone, a pick here does not decide anything, so there is no list.
+  const offerZoneList = timeZones.length > 0 && !props.envTimezone;
+  const searchHint = offerZoneList ? " Type a city or region to pick from the list." : "";
   // New installs speak English to viewers; an empty stored value is English too.
   const [language, setLanguage] = useState(props.initialLanguage || "en");
   const [error, setError] = useState("");
@@ -99,7 +134,7 @@ export function SetupInstanceForm(props: {
         value={appUrl}
       />
       <Input
-        hint={
+        hint={`${
           props.envTimezone
             ? `CHANNEL_TIMEZONE is set to ${props.envTimezone} in the environment and overrides whatever is saved here.`
             : props.envTimezoneRejected
@@ -109,12 +144,20 @@ export function SetupInstanceForm(props: {
                 : props.zoneInUse && !props.initialTimezone && typedTimezone === null
                   ? "Empty means UTC, and the channel runs on UTC now. IANA name like Europe/Berlin; another zone keeps each block's clock times, so every block moves."
                   : "IANA name like Europe/Berlin. The schedule grid and every on-air clock use it. Empty means UTC."
-        }
+        }${searchHint}`}
         label="Channel timezone"
+        list={offerZoneList ? TIME_ZONE_LIST_ID : undefined}
         onChange={setTypedTimezone}
         placeholder="UTC"
         value={timezone}
       />
+      {offerZoneList ? (
+        <datalist id={TIME_ZONE_LIST_ID}>
+          {timeZones.map((zone) => (
+            <option key={zone} label={timeZoneSearchLabel(zone)} value={zone} />
+          ))}
+        </datalist>
+      ) : null}
       <Select
         hint={
           props.envLanguage

@@ -159,7 +159,8 @@ address and a password of at least 10 characters, and store the password: the e-
 changed later, the password only under `Admin → Settings → Security` (with the current one). There is no
 e-mail reset; a lost password is reset on the host with the command in `docs/operations.md`, *Owner
 password lost*. The instance step comes prefilled with the address the wizard is open under and your
-browser's time zone; check both before saving. The zone is only prefilled on a first run: once the
+browser's time zone; check both before saving. Typing in the zone field suggests the zone names
+your browser knows; any other IANA name can still be typed. The zone is only prefilled on a first run: once the
 public URL was saved or the schedule has a block, an empty zone shows as empty and the hint says the
 channel runs on UTC, because a new zone moves every block to that zone's clock.
 
@@ -222,7 +223,8 @@ account:
 2. Copy the *Primary Stream key*. It is a password for your channel: never paste it into chat, a
    screenshot or an issue.
 3. In Stream247 paste it into the wizard's *Where the stream goes* step (`/setup`), with *Twitch* as the
-   service, and save. Later, or for another service, open `Studio → Output → Output destinations`, open
+   service, and save. A regional Twitch ingest the destination already has
+   (`live-<region>.twitch.tv`, `<server>.contribute.live-video.net`) shows as *Twitch* and is kept. Later, or for another service, open `Studio → Output → Output destinations`, open
    *Change this destination* under **Primary Twitch Output**, paste the key into *Managed stream key* and
    save; the RTMP URL is already `rtmp://live.twitch.tv/app`. Either way the key is stored encrypted and
    never shown again; the forms only say whether one is present.

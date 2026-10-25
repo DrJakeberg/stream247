@@ -27,7 +27,10 @@ export function SetupProgrammeForm(props: {
   const playable = props.sources.filter((source) => source.readyCount > 0);
   const weeklyBlockCount = props.weeklyBlockCount ?? props.scheduleBlockCount;
   const [name, setName] = useState("Programme");
-  const [selected, setSelected] = useState<string[]>(playable.map((source) => source.id));
+  // The sources the owner unticked, not the ticked ones: a source that becomes playable while the step is
+  // open (after the page refreshes) arrives ticked like the others (M122).
+  const [unticked, setUnticked] = useState<string[]>([]);
+  const selected = playable.map((source) => source.id).filter((id) => !unticked.includes(id));
   const [replaceWeek, setReplaceWeek] = useState(false);
   // A pool an earlier press created, used again by the next press (lib/setup-first-programme.ts).
   const [createdPool, setCreatedPool] = useState<FirstProgrammePool | null>(null);
@@ -95,8 +98,8 @@ export function SetupProgrammeForm(props: {
                 <input
                   checked={checked}
                   onChange={(event) =>
-                    setSelected((current) =>
-                      event.target.checked ? [...current, source.id] : current.filter((id) => id !== source.id)
+                    setUnticked((current) =>
+                      event.target.checked ? current.filter((id) => id !== source.id) : [...current, source.id]
                     )
                   }
                   type="checkbox"

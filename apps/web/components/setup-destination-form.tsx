@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Input } from "@/components/ui/Input";
-import { TWITCH_INGEST_URL } from "@/lib/destination-wording";
+import { isTwitchIngestUrl, TWITCH_INGEST_URL } from "@/lib/destination-wording";
 
 type Service = "twitch" | "custom-rtmp";
 
@@ -19,7 +19,11 @@ export function SetupDestinationForm(props: {
   streamKeyPresent: boolean;
   streamKeySource: "env" | "managed" | "missing";
 }) {
-  const initialService: Service = !props.rtmpUrl || props.rtmpUrl === TWITCH_INGEST_URL ? "twitch" : "custom-rtmp";
+  // A regional Twitch ingest is Twitch too, and choosing Twitch keeps it rather than moving the channel
+  // to the global ingest (M122).
+  const storedTwitchIngest = props.rtmpUrl && isTwitchIngestUrl(props.rtmpUrl) ? props.rtmpUrl : "";
+  const twitchIngestUrl = storedTwitchIngest || TWITCH_INGEST_URL;
+  const initialService: Service = !props.rtmpUrl || storedTwitchIngest ? "twitch" : "custom-rtmp";
   const [service, setService] = useState<Service>(initialService);
   const [rtmpUrl, setRtmpUrl] = useState(initialService === "custom-rtmp" ? props.rtmpUrl : "");
   const [streamKey, setStreamKey] = useState("");
@@ -36,7 +40,7 @@ export function SetupDestinationForm(props: {
         setError("");
         setMessage("");
 
-        const targetUrl = service === "twitch" ? TWITCH_INGEST_URL : rtmpUrl.trim();
+        const targetUrl = service === "twitch" ? twitchIngestUrl : rtmpUrl.trim();
         if (!targetUrl) {
           setError("Enter the RTMP URL of the service.");
           return;
@@ -78,7 +82,7 @@ export function SetupDestinationForm(props: {
           <option value="custom-rtmp">Another RTMP service</option>
         </select>
         {service === "twitch" ? (
-          <span className="field-hint">Streams to {TWITCH_INGEST_URL}; the key decides the channel.</span>
+          <span className="field-hint">Streams to {twitchIngestUrl}; the key decides the channel.</span>
         ) : null}
       </label>
       {service === "custom-rtmp" ? (
