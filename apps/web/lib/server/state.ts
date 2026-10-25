@@ -356,7 +356,9 @@ export function getMaterializedProgrammingWeekPreview(state: AppState, now: Date
     sourceGate: getPoolSourceGate(state, now.getTime()),
     nowMinuteOfDay: clock.nowMinute,
     onAirItemEndMinute: clock.onAirItemEndMinute,
-    itemHolds: clock.itemHolds
+    itemHolds: clock.itemHolds,
+    timeZone: getWorkspaceTimeZone(state),
+    now
   });
 }
 
@@ -426,7 +428,9 @@ function buildPublicProgrammeNow(state: AppState, now: Date): PublicProgramme {
     nowMinuteOfDay: clock.nowMinute,
     onAirItemEndMinute: clock.onAirItemEndMinute,
     itemHolds: clock.itemHolds,
-    maxListedItemsPerBlock: 5000
+    maxListedItemsPerBlock: 5000,
+    timeZone,
+    now
   });
   return buildPublicProgramme({ days, timeZone, now, current: getPublicProgrammeCurrentItem(state, now) });
 }
