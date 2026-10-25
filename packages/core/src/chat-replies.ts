@@ -142,6 +142,11 @@ export type ChatProgrammeInfo = {
   nextExpectedAt: string;
   /** The public programme page, `<app url>/channel`; empty when no app URL is configured. */
   channelUrl: string;
+  /**
+   * The playout is between two items for a moment (M123): `recovering` after a Skip, a Pin or a Play now
+   * that replaces the item on air. !now then names what comes instead of saying nothing plays.
+   */
+  nowSwitching?: boolean;
 };
 
 function withProgrammeLink(text: string, info: ChatProgrammeInfo, locale?: string): string {
@@ -152,7 +157,11 @@ function withProgrammeLink(text: string, info: ChatProgrammeInfo, locale?: strin
 export function formatChatNowReply(actor: string, info: ChatProgrammeInfo, locale?: string): string {
   const text = info.nowTitle
     ? viewerText(locale, "chat.now.onAir", { actor, title: info.nowTitle })
-    : viewerText(locale, "chat.now.nothing", { actor });
+    : info.nowSwitching
+      ? info.nextTitle
+        ? viewerText(locale, "chat.now.switching", { actor, title: info.nextTitle })
+        : viewerText(locale, "chat.now.switchingUnknown", { actor })
+      : viewerText(locale, "chat.now.nothing", { actor });
   return withProgrammeLink(text, info, locale);
 }
 

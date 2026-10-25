@@ -92,7 +92,6 @@ function snapshot(locale: ViewerLocale, overrides: Partial<PublicChannelSnapshot
     queueItems: [],
     currentScheduleItem: null,
     nextScheduleItem: null,
-    laterScheduleItems: [],
     programme: { now: null, next: [], week: [] },
     ...overrides
   };

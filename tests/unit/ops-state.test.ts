@@ -924,11 +924,12 @@ describe("ops state helpers", () => {
 
     const snapshot = getPublicChannelSnapshot(state);
     expect(snapshot.nextScheduleItem?.title).toBe("Morning Show");
-    expect(snapshot.laterScheduleItems.map((item) => [item.title, item.startTime])).toEqual([
-      ["Noon Show", "12:00"],
-      ["Wednesday Show", "08:00"],
-      ["Wednesday Noon", "12:00"]
-    ]);
+    // M123: the block-level `laterScheduleItems` the page stopped reading with M100 is gone from the snapshot;
+    // what follows up next is the programme's Up next list, across midnight.
+    expect(snapshot).not.toHaveProperty("laterScheduleItems");
+    expect(snapshot.programme.next.map((group) => [group.title, group.startsAt])).toEqual(
+      expect.arrayContaining([["Noon Show", "2026-04-07T12:00:00.000Z"]])
+    );
   });
 
   it("M100: gives the public page the item on air with its start and length, and the block when the start is stale", () => {
@@ -1010,8 +1011,10 @@ describe("ops state helpers", () => {
 
     const snapshot = getPublicChannelSnapshot(state);
     expect(snapshot.nextScheduleItem?.title).toBe("Weekly Show");
-    // Shown as "08:00 Weekly Show" without a day, next week's run read as the same show twice.
-    expect(snapshot.laterScheduleItems).toEqual([]);
+    // Shown as "08:00 Weekly Show" without a day, next week's run read as the same show twice; the Up next
+    // list that replaced the line (M100, its field removed in M123) has the next 24 hours only.
+    expect(snapshot).not.toHaveProperty("laterScheduleItems");
+    expect(snapshot.programme.next.map((group) => group.title)).toEqual(["Weekly Show"]);
   });
 
   it("returns no current block during a mid-day gap and keeps the next teaser on the first future block", () => {

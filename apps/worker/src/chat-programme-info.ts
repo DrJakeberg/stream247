@@ -15,16 +15,37 @@ const ON_AIR_STATUSES = new Set(["running", "switching", "degraded"]);
 // The states in which an item is on air for the prediction: the public page's, and "recovering", which the
 // worker writes for every cycle of a Pin, a Fallback, the automatic global or generic fallback, and the cycle
 // that starts a Move next or a scheduled insert (decideCycleEndStatus keeps the selection's status). The
-// card is drawn over that item and predicts from it; !now still says "on a short break" there, as the public
-// page says "starting up", but !next read it as nothing playing and named the next block where the card
-// named the next video (review of M107).
+// card is drawn over that item and predicts from it; !next read it as nothing playing and named the next
+// block where the card named the next video (review of M107). Since M123 !now names that item there too, or
+// what replaces it (isLeavingTheAir); until then it said nothing plays.
 const PREDICTION_ON_AIR_STATUSES = new Set([...ON_AIR_STATUSES, "recovering"]);
 
 // The worker's own titles for "nothing plays": the standby and the reconnect slate are not a programme.
 const SLATE_TITLE_KEYS = new Set(["overlay.title.standby", "overlay.title.reconnect"]);
 
 /** The playout row's fields an answer reads (packages/db readPlayoutProgrammeTitles). */
-export type ChatPlayoutRow = Omit<NextOnAirPlayout, "playing"> & { status: string; currentTitle: string };
+export type ChatPlayoutRow = Omit<NextOnAirPlayout, "playing"> & {
+  status: string;
+  currentTitle: string;
+  /** The operator's Skip (M123); missing reads as none. */
+  skipAssetId?: string;
+  skipUntil?: string;
+};
+
+/**
+ * Whether the item named on the row is about to leave the air during a short `recovering` (M123): a Skip took
+ * it off, or a Pin, a Fallback or a Play now waits to replace it. Under every other `recovering` (a Restart,
+ * the cycles of a running Pin, Fallback or insert, the automatic fallback) it stays on air.
+ */
+export function isLeavingTheAir(playout: ChatPlayoutRow, now: Date): boolean {
+  const current = playout.currentAssetId;
+  const nowMs = now.getTime();
+  const skipped = Boolean(current) && playout.skipAssetId === current && Date.parse(playout.skipUntil ?? "") > nowMs;
+  const overrideWaits =
+    Boolean(playout.overrideAssetId) && playout.overrideAssetId !== current && !(Date.parse(playout.overrideUntil) <= nowMs);
+  const insertWaits = playout.insertStatus === "pending" && Boolean(playout.insertAssetId) && playout.insertAssetId !== current;
+  return skipped || overrideWaits || insertWaits;
+}
 
 /**
  * Whether the row has an item on air for the prediction: a programme title that is not a slate, under a
@@ -55,11 +76,16 @@ export function buildChatProgrammeInfo(args: {
   /** APP_URL or the wizard's value, without a trailing slash; empty when none is configured. */
   appUrl: string;
   locale: string;
+  now?: Date;
 }): ChatProgrammeInfo {
   const { playout } = args;
-  const onAir = ON_AIR_STATUSES.has(playout.status);
   const currentTitle = playout.currentTitle.trim();
   const isSlate = SLATE_TITLE_KEYS.has(builtInViewerTextKey(currentTitle) ?? "");
+  // A short `recovering` (M123; M104 left it as a break): the item on air stays named, as on the on-air card,
+  // unless it is about to leave the air, when !now names what comes instead.
+  const recovering = playout.status === "recovering" && currentTitle !== "" && !isSlate;
+  const switching = recovering && isLeavingTheAir(playout, args.now ?? new Date());
+  const onAir = ON_AIR_STATUSES.has(playout.status) || (recovering && !switching);
   const nowTitle = onAir && currentTitle && !isSlate ? localizeViewerBuiltInText(args.locale, currentTitle) : "";
 
   const prediction = args.predictNext({
@@ -92,7 +118,8 @@ export function buildChatProgrammeInfo(args: {
     nextTitle: next.title.trim() ? localizeViewerBuiltInText(args.locale, next.title.trim()) : "",
     nextStartsAt: next.startsAt,
     nextExpectedAt: next.expectedAt,
-    channelUrl: args.appUrl ? `${args.appUrl.replace(/\/+$/, "")}/channel` : ""
+    channelUrl: args.appUrl ? `${args.appUrl.replace(/\/+$/, "")}/channel` : "",
+    ...(switching ? { nowSwitching: true } : {})
   };
 }
 
