@@ -39,12 +39,14 @@ function currentOccurrenceAt(blocks: ScheduleBlock[], iso: string, timeZone = BE
 }
 
 describe("a local time maps to the instant the wall clock shows it", () => {
-  it("maps a time that does not exist forward by the gap (P4)", () => {
-    expect(toUtcIsoForLocalDateTime({ date: "2026-03-29", minuteOfDay: 150, timeZone: BERLIN })).toBe("2026-03-29T01:30:00.000Z");
+  it("maps a time that does not exist to the switch, where the wall clock passes it (P4, M123)", () => {
+    // Until M123 02:30 mapped forward by the gap, to 03:30 CEST (01:30Z), half an hour after a block starting
+    // there began to air.
+    expect(toUtcIsoForLocalDateTime({ date: "2026-03-29", minuteOfDay: 150, timeZone: BERLIN })).toBe("2026-03-29T01:00:00.000Z");
     expect(toUtcIsoForLocalDateTime({ date: "2026-03-29", minuteOfDay: 120, timeZone: BERLIN })).toBe("2026-03-29T01:00:00.000Z");
-    // New York springs forward at 02:00 on 2026-03-08: 02:30 is 03:30 EDT.
+    // New York springs forward at 02:00 on 2026-03-08: 02:30 is the switch, 03:00 EDT.
     expect(toUtcIsoForLocalDateTime({ date: "2026-03-08", minuteOfDay: 150, timeZone: "America/New_York" })).toBe(
-      "2026-03-08T07:30:00.000Z"
+      "2026-03-08T07:00:00.000Z"
     );
   });
 
@@ -297,7 +299,7 @@ describe("the Twitch segment end follows real minutes", () => {
     expect(getScheduleEndInstant({ date: "2026-07-05", seconds: 120 * 60, timeZone: BERLIN }).toISOString()).toBe("2026-07-05T00:00:00.000Z");
   });
 
-  it("starts a block that begins in the skipped hour after the switch, not before it", () => {
+  it("starts a block that begins in the skipped hour at the switch, where it starts airing (M123)", () => {
     const gap = block({ id: "gap", dayOfWeek: 0, startMinuteOfDay: 150, durationMinutes: 120 });
     const spring = planTwitchScheduleSegments({
       blocks: [gap],
@@ -305,7 +307,8 @@ describe("the Twitch segment end follows real minutes", () => {
       timeZone: BERLIN,
       now: new Date("2026-03-23T10:00:00.000Z")
     });
-    // Start 02:30 maps forward to 03:30 CEST (01:30Z); the end 04:30 CEST is 02:30Z.
-    expect(spring.segments).toEqual([expect.objectContaining({ startTime: "2026-03-29T01:30:00.000Z", durationMinutes: 60 })]);
+    // Start 02:30 is the switch, 03:00 CEST (01:00Z), where the wall clock passes it and the block starts
+    // airing; the end 04:30 CEST is 02:30Z. Until M123 the segment started at 03:30 CEST and lasted 60 minutes.
+    expect(spring.segments).toEqual([expect.objectContaining({ startTime: "2026-03-29T01:00:00.000Z", durationMinutes: 90 })]);
   });
 });

@@ -295,5 +295,16 @@ entries under its *DUT checks of 2.3.1 (run)*; the M107 entry below did not run 
   next* shows *Operator holds* with "Skipped: <the item> stays out for 60 more min.", *Resume schedule* is
   enabled, and pressing it removes the line without a cut in the picture (the item on air keeps playing).
 
+- M123, on the deployed candidate in the week before Sunday 2027-03-28 (after `jimpanse247` writes the
+  schedule): save two test blocks "Once" on that Sunday, 01:00-02:30 and 02:30-04:30, let one Twitch sync
+  run. Passes when the Twitch dashboard shows the first 01:00-02:00 (one hour) and the second 03:00-04:30
+  (90 minutes); `Program → Schedule → Week` lists the second's first video at 03:00, and the day reads 23 h
+  scheduled for a channel planned around the clock. Delete both blocks afterwards.
+
+- M123, after the repin, without the relay (the playout restarts after a Skip): press Live → *Skip
+  current* and type `!now` in the chat within the next seconds. Passes when the bot answers "gleich geht’s
+  weiter mit: <title>" (English: "switching to the next video: <title>") or, once the next video runs, its
+  title, and never "gerade läuft nichts".
+
 - The checks of 2.2.0-rc.1 are in the archive, sections M75-M82. That candidate never reached the DUT, so
   the 2.3.0 candidate runs them too.

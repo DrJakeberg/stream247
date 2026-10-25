@@ -113,6 +113,8 @@ export const DE_VIEWER_MESSAGES: ViewerMessageCatalogue = {
   "chat.commands.vote": "!1–{last} während einer Abstimmung",
   "chat.now.onAir": "@{actor} gerade läuft: {title}.",
   "chat.now.nothing": "@{actor} gerade läuft nichts – kurze Pause, gleich geht’s weiter.",
+  "chat.now.switching": "@{actor} gleich geht’s weiter mit: {title}.",
+  "chat.now.switchingUnknown": "@{actor} das nächste Video startet gerade.",
   "chat.next.at": "@{actor} als Nächstes um {time}: {title}.",
   "chat.next.item": "@{actor} als Nächstes: {title}.",
   "chat.next.around": "@{actor} als Nächstes um ca. {time}: {title}.",

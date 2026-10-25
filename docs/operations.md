@@ -767,7 +767,9 @@ The public page shows, in the channel language:
   down it is headed *Scheduled now* instead of *On air now*
 - *Up next*: the next 24 hours video by video, from the same projection as `Program → Schedule → Week`
   (each pool carries on with the worker's rotation). Consecutive videos of one block are one card showing
-  the next video, with *4 more videos* to unfold; the list runs across midnight without a break. A block
+  the next video, with *4 more videos* to unfold; the list runs across midnight without a break, and a
+  programme that goes on the next day under the same title and pool (a daily 24-hour block) stays one card
+  (since M123; before, one card per day). A block
   with nothing to play is listed with its own times. The block on air continues after the video on air,
   and a block the video on air runs into starts when it ends unless it is a dated block (since M118)
 - a video on air whose length is not known yet is still *Now*, with only its start (*since 20:00*), no
@@ -819,7 +821,8 @@ video, so during a long archive the picture announced the programme at 16:00 and
   back to today's next block with its window, and `!next` names the same title with the block's start. A
   block card is never titled with the video on air; the block's name stands in for it.
 - `!next` counts an item as playing in every state the card is drawn over it, `recovering` included (a Pin,
-  a fallback, the first cycle of a *Move next*), where `!now` says the channel is on a short break.
+  a fallback, the first cycle of a *Move next*), where `!now` names that item too (since M123; before, it
+  said the channel is on a short break).
 
 Not yet the same: the admin's scene preview (the overlay studio, `/api/scenes`) still names the queue's next
 item under the next block's window, as before M107. The prediction needs the worker's picks, and the preview
@@ -891,11 +894,16 @@ What counts time counts real time:
 - the Twitch schedule posts each segment for the real minutes it airs: Sunday 01:00-04:00 is 2 hours in
   March and 4 hours in October; a block in 02:00-03:00 gets no segment in March (it does not air) and
   2 hours from the first 02:00 in October. `/channel` and `/channel.ics` show the same times
-- a time the clock skips (02:30 in March) is read as the moment that far past the switch: 03:30 summer
-  time. A time the clock shows twice (02:30 in October) is read as its first occurrence when something
+- a time the clock skips (02:30 in March) is read as the switch, 03:00 summer time, the moment the clock
+  passes it (since M123; before, 03:30): a block from 02:30 starts airing then, and its Twitch segment and
+  its cuepoint count start there too. A block that ends in the skipped hour stops at the switch, so
+  01:00-02:30 is posted for one hour, the hour it airs. A time the clock shows twice (02:30 in October) is read as its first occurrence when something
   starts there, and its second when something ends there; a block ending at 02:00 that night ends at the
   first 02:00 (Saturday 22:00 for four hours is four hours long)
-- the week view and the day lens show wall-clock times and lengths, as the schedule is written
+- the week view, the day lens and `/channel` plan the night in real time (since M123): Sunday 01:00-04:00
+  holds two hours of videos in March and four in October, the items show the times the clock shows when
+  they air (in October the repeated hour twice), the day counts 23 or 25 scheduled hours, and the block's
+  length reads `2 h` or `4 h`. The block itself keeps its written times (`01:00-04:00`)
 
 ### Channel timezone is not valid (since M85)
 
@@ -1193,7 +1201,9 @@ bot answers none of them):
 - `!commands` lists the commands that work right now, under the names configured on that page (`!now`,
   `!next`, `!request title`, `!skip`, `!1–!N during a poll`, `!game`); a switched-off command is left out.
 - `!now` names what is on air, or says the channel is on a short break while the standby or reconnect
-  slate runs, playout is (re)starting, or nothing plays.
+  slate runs or nothing plays. In the moment playout reads `recovering` (since M123) it names the item on
+  air (a Restart, a running Pin or fallback), or, when that item is about to leave the air (a Skip, a Pin
+  or *Play now* waiting to replace it), `switching to the next video: <title>` with the next video.
 - `!next` names what the on-air Next card names (since M107, see *What the on-air Next card and `!next`
   name*): the next video, with `about 17:30` when the item on air has a known length; while nothing plays,
   the next schedule block of today with its start time.

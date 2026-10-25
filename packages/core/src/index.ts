@@ -1015,7 +1015,8 @@ export type MaterializedProgrammingItem = {
   /**
    * M100: when it starts and ends on air, in seconds from 00:00 of the block's date (past 86 400 for an item
    * after midnight). The end is where the item stops airing: cut at a dated block, past the block's end when
-   * it overruns.
+   * it overruns. Since M123, with the week's zone, the block's wall-clock start plus the real seconds since it
+   * started airing, so on a night the clocks change the gap between two items is their real distance.
    */
   startSecond?: number;
   endSecond?: number;
@@ -1053,8 +1054,13 @@ export type MaterializedProgrammingBlock = {
   airWindows?: ScheduleAirWindow[];
   /** M97: the date the block starts on (a block past midnight is listed on that day only). */
   date?: string;
-  /** Its air time in hours: "24 h". */
+  /** Its air time in hours: "24 h", real time ("2 h" for 01:00-04:00 on the spring-forward night, M123). */
   durationLabel?: string;
+  /**
+   * Real minutes from its start to its end (M123): `durationMinutes` except on a night the clocks change,
+   * where 01:00-04:00 lasts 120 minutes in spring and 240 in autumn.
+   */
+  lengthMinutes?: number;
   /** Its air times from its own day: "20:00 → 22:00", "23:00 → 01:00 Sun". */
   timeLabel?: string;
   /** Why it repeats, with numbers ("6 min of video for a 24 h block: plays ≈ 240 times. …"); empty when it does not. */
@@ -3225,6 +3231,19 @@ function createBlockProjection(args: {
   cutAtEnd?: boolean;
   /** Minutes from 00:00 of the week's first day to 00:00 of the block's date; holds are counted from there. */
   dayOffsetMinutes?: number;
+  /**
+   * The block in real time (M123), where the week knows the channel zone: the minute of the week its start
+   * airs and its air windows in real seconds from there, and the wall clock of a second of the block. On a
+   * night the clocks change a block holds an hour less or more than its wall-clock length. Missing means
+   * wall-clock time, as every other night.
+   */
+  realTime?: {
+    startMinute: number;
+    windowsSeconds: ScheduleAirWindow[];
+    lengthMinutes: number;
+    /** Minutes from 00:00 of the block's date the wall clock shows `second` seconds into the block. */
+    wallMinuteAt: (second: number) => number;
+  };
   itemHolds?: readonly ProjectedItemHold[];
   /**
    * Seconds from the block's start up to which it has aired (the block on air now): a cuepoint before this
@@ -3271,10 +3290,12 @@ function createBlockProjection(args: {
   const blockStart = args.block.effectiveStartMinuteOfDay;
   const airWindows = getScheduleOccurrenceAirWindows(args.block);
   // The windows in seconds from the block's start.
-  const windowsSeconds = airWindows.map((window) => ({
-    start: (window.start - blockStart) * 60,
-    end: (window.end - blockStart) * 60
-  }));
+  const windowsSeconds =
+    args.realTime?.windowsSeconds ??
+    airWindows.map((window) => ({
+      start: (window.start - blockStart) * 60,
+      end: (window.end - blockStart) * 60
+    }));
   const fullAirSeconds = windowsSeconds.reduce((sum, window) => sum + (window.end - window.start), 0);
   // The worker's rule: only cuepoints inside an air window fire (getCuepointProgress). One before the
   // point the projection starts from has fired already or never will.
@@ -3290,8 +3311,12 @@ function createBlockProjection(args: {
   // The worker skips an item in its hold at the moment it picks (M118, the Twitch cache cooldown), so the
   // projection asks at each item's start. Only the pool's own items and its inserts matter here.
   const dayOffset = args.dayOffsetMinutes ?? 0;
-  const minuteAt = (second: number) => dayOffset + blockStart + second / 60;
-  const secondAt = (minute: number) => (minute - dayOffset - blockStart) * 60;
+  const startMinute = args.realTime?.startMinute ?? dayOffset + blockStart;
+  const minuteAt = (second: number) => startMinute + second / 60;
+  const secondAt = (minute: number) => (minute - startMinute) * 60;
+  // The wall clock of a second of the block, in minutes from 00:00 of its date, for the items' times.
+  const wallMinuteAt = args.realTime?.wallMinuteAt ?? ((second: number) => blockStart + second / 60);
+  const startClockShift = args.block.startMinuteOfDay - blockStart;
   const holdUntil = new Map<string, number>();
   for (const hold of args.itemHolds ?? []) {
     holdUntil.set(hold.assetId, Math.max(holdUntil.get(hold.assetId) ?? Number.NEGATIVE_INFINITY, hold.untilMinute));
@@ -3443,8 +3468,8 @@ function createBlockProjection(args: {
           assetId: nextAsset.id,
           title: nextAsset.title,
           durationMinutes: Math.max(1, Math.ceil(durationSeconds / 60)),
-          startTime: formatMinuteOfDay(args.block.startMinuteOfDay + Math.floor(itemStartSeconds / 60)),
-          endTime: formatMinuteOfDay(args.block.startMinuteOfDay + Math.ceil(shownEndSeconds / 60)),
+          startTime: formatMinuteOfDay(startClockShift + Math.floor(wallMinuteAt(itemStartSeconds))),
+          endTime: formatMinuteOfDay(startClockShift + Math.ceil(wallMinuteAt(shownEndSeconds))),
           overflow: lastWindow && itemEndSeconds > window.end,
           repeated,
           estimatedDuration: estimated,
@@ -3575,8 +3600,8 @@ function createBlockProjection(args: {
       .join(" · ");
     const spans = windowsSeconds
       .map((window, index) => ({
-        start: blockStart + (windowFillStarts[index] ?? window.start) / 60,
-        end: blockStart + (windowFillEnds[index] ?? window.start) / 60
+        start: minuteAt(windowFillStarts[index] ?? window.start) - dayOffset,
+        end: minuteAt(windowFillEnds[index] ?? window.start) - dayOffset
       }))
       .filter((span) => span.end > span.start);
 
@@ -3612,6 +3637,7 @@ function createBlockProjection(args: {
         airWindows,
         date: args.block.date,
         durationLabel: formatScheduleHours(fullAirSeconds / 60),
+        lengthMinutes: args.realTime?.lengthMinutes ?? args.block.durationMinutes,
         timeLabel,
         repeatReason,
         aired: false,
@@ -3623,11 +3649,83 @@ function createBlockProjection(args: {
 
   return {
     windowCount: windowsSeconds.length,
-    /** Where window `index`'s fill started, in minutes relative to the block's date. */
-    fillStartMinute: (index: number) => blockStart + (windowFillStarts[index] ?? 0) / 60,
+    /** Where window `index`'s fill started, in minutes of the week. */
+    fillStartMinute: (index: number) => minuteAt(windowFillStarts[index] ?? 0),
     secondAt,
     fill,
     finish
+  };
+}
+
+/**
+ * Minutes of a week in real time (M123): counted from 00:00 of `startDate` in the channel zone as they air, so
+ * the night the clocks go forward has 60 minutes less and the night they go back 60 more. `real` turns a
+ * wall-clock minute of the week (a day's index × 1440 plus its minute) into one, with M101's rules (a time in
+ * the skipped hour is the switch, a repeated one its first occurrence, an end its last); `wall` the other way.
+ * Without a zone both leave the minute as it is, wall clock as before M123.
+ */
+function createWeekClock(startDate: string, timeZone?: string) {
+  if (!timeZone) {
+    return { real: (minute: number) => minute, realEnd: (minute: number) => minute, wall: (minute: number) => minute, startMs: null };
+  }
+  const startMs = getScheduleInstant({ date: startDate, seconds: 0, timeZone }).getTime();
+  const offsetAt = (ms: number) => {
+    const zoned = extractFormatterParts({ instant: new Date(ms), timeZone });
+    return Date.UTC(zoned.year, zoned.month - 1, zoned.day, zoned.hour, zoned.minute, zoned.second) - (ms - (((ms % 1000) + 1000) % 1000));
+  };
+  // The switches within the week and a day around it, found per day (a zone switches at most once a day), so
+  // `wall` needs no zone lookup per item: a week of short clips lists thousands.
+  // Wall minute 0 is 00:00 of `startDate`; on a day whose midnight the clock skips (America/Santiago) the
+  // week's first real minute is already 01:00 there.
+  const [startYear, startMonth, startDay] = startDate.split("-").map(Number);
+  const startWallMs = Date.UTC(startYear as number, (startMonth as number) - 1, startDay as number);
+  const shifts: { fromMinute: number; offsetMinutes: number }[] = [];
+  let previousOffset = offsetAt(startMs - 86_400_000);
+  for (let day = -1; day <= 8; day += 1) {
+    const dayEndMs = startMs + (day + 1) * 86_400_000;
+    const offset = offsetAt(dayEndMs);
+    if (offset !== previousOffset) {
+      let low = (dayEndMs - 86_400_000) / 60_000;
+      let high = dayEndMs / 60_000;
+      while (high - low > 1) {
+        const middle = Math.floor((low + high) / 2);
+        if (offsetAt(middle * 60_000) === previousOffset) {
+          low = middle;
+        } else {
+          high = middle;
+        }
+      }
+      shifts.push({ fromMinute: high - startMs / 60_000, offsetMinutes: offset / 60_000 });
+    }
+    previousOffset = offset;
+  }
+  const initialOffset = offsetAt(startMs - 86_400_000) / 60_000;
+  const startWallMinute = (startMs - startWallMs) / 60_000;
+  const realCache = new Map<number, number>();
+  const realEndCache = new Map<number, number>();
+  const cached = (cache: Map<number, number>, minute: number, compute: () => number) => {
+    let value = cache.get(minute);
+    if (value === undefined) {
+      value = compute();
+      cache.set(minute, value);
+    }
+    return value;
+  };
+  return {
+    real: (minute: number) =>
+      cached(realCache, minute, () => (getScheduleInstant({ date: startDate, seconds: Math.round(minute * 60), timeZone }).getTime() - startMs) / 60_000),
+    realEnd: (minute: number) =>
+      cached(realEndCache, minute, () => (getScheduleEndInstant({ date: startDate, seconds: Math.round(minute * 60), timeZone }).getTime() - startMs) / 60_000),
+    wall: (realMinute: number) => {
+      let offset = initialOffset;
+      for (const entry of shifts) {
+        if (realMinute >= entry.fromMinute) {
+          offset = entry.offsetMinutes;
+        }
+      }
+      return startWallMinute + realMinute + offset;
+    },
+    startMs
   };
 }
 
@@ -3662,8 +3760,29 @@ export function buildMaterializedProgrammingWeek(args: {
    * 24 hours, so it raises this; every block is projected to its end either way.
    */
   maxListedItemsPerBlock?: number;
+  /**
+   * The channel zone (M123): the week is then projected in real time, so a block on a night the clocks change
+   * holds as many items as its real length, its items carry real times, and the day counts real minutes.
+   * Missing means wall-clock time.
+   */
+  timeZone?: string;
+  /**
+   * Now as an instant, with `timeZone` and `nowMinuteOfDay`: in the repeated autumn hour the wall-clock minute
+   * names two moments, the instant one. `onAirItemEndMinute` and `itemHolds` are read relative to it.
+   */
+  now?: Date;
 }): MaterializedProgrammingDay[] {
   const dates = Array.from({ length: 7 }, (_, offset) => addDaysToDateString(args.startDate, offset));
+  const clock = createWeekClock(args.startDate, args.timeZone);
+  // Every minute below is a minute of the week in real time where the zone is known (M123); `now` and the
+  // minutes given relative to it move with it.
+  const nowShift =
+    args.nowMinuteOfDay === undefined
+      ? 0
+      : clock.startMs !== null && args.now
+        ? (args.now.getTime() - clock.startMs) / 60_000 - args.nowMinuteOfDay
+        : clock.real(Math.floor(args.nowMinuteOfDay)) - Math.floor(args.nowMinuteOfDay);
+  const itemHolds = args.itemHolds?.map((hold) => ({ ...hold, untilMinute: hold.untilMinute + nowShift }));
   const occurrencesByDay = dates.map((date) => buildScheduleOccurrences({ date, blocks: args.blocks }));
   type Entry = { dayIndex: number; occurrence: ScheduleOccurrence; absoluteStart: number; absoluteEnd: number };
   const entries: Entry[] = [];
@@ -3678,8 +3797,8 @@ export function buildMaterializedProgrammingWeek(args: {
       entries.push({
         dayIndex,
         occurrence,
-        absoluteStart: dayIndex * MINUTES_PER_DAY + Math.min(...windows.map((window) => window.start)),
-        absoluteEnd: dayIndex * MINUTES_PER_DAY + Math.max(...windows.map((window) => window.end))
+        absoluteStart: clock.real(dayIndex * MINUTES_PER_DAY + Math.min(...windows.map((window) => window.start))),
+        absoluteEnd: clock.realEnd(dayIndex * MINUTES_PER_DAY + Math.max(...windows.map((window) => window.end)))
       });
     }
   });
@@ -3691,9 +3810,10 @@ export function buildMaterializedProgrammingWeek(args: {
   // findCurrentScheduleOccurrence would pick: dated first, then the latest start.
   const absoluteWindows = (entry: Entry) =>
     getScheduleOccurrenceAirWindows(entry.occurrence).map((window) => ({
-      start: entry.dayIndex * MINUTES_PER_DAY + window.start,
-      end: entry.dayIndex * MINUTES_PER_DAY + window.end
+      start: clock.real(entry.dayIndex * MINUTES_PER_DAY + window.start),
+      end: clock.realEnd(entry.dayIndex * MINUTES_PER_DAY + window.end)
     }));
+  const startMinuteOf = (entry: Entry) => clock.real(entry.dayIndex * MINUTES_PER_DAY + entry.occurrence.effectiveStartMinuteOfDay);
   const isCutAtEnd = (entry: Entry): boolean => {
     const end = entry.absoluteEnd;
     const next = entries
@@ -3705,19 +3825,29 @@ export function buildMaterializedProgrammingWeek(args: {
         if (Boolean(other.occurrence.dated) !== Boolean(best.occurrence.dated)) {
           return other.occurrence.dated ? other : best;
         }
-        const start = (candidate: Entry) => candidate.dayIndex * MINUTES_PER_DAY + candidate.occurrence.effectiveStartMinuteOfDay;
-        return start(other) > start(best) ? other : best;
+        return startMinuteOf(other) > startMinuteOf(best) ? other : best;
       }, null);
     return Boolean(next && (entry.occurrence.dated || next.occurrence.dated));
   };
 
-  const now = args.nowMinuteOfDay;
+  const now = args.nowMinuteOfDay === undefined ? undefined : args.nowMinuteOfDay + nowShift;
   const isAired = (entry: Entry) => now !== undefined && entry.absoluteEnd <= now;
   const isOnAir = (entry: Entry) => now !== undefined && !isAired(entry) && entry.absoluteStart < now;
   const projections = new Map<Entry, ReturnType<typeof createBlockProjection>>();
   for (const entry of entries) {
     const pool = args.pools.find((candidate) => candidate.id === entry.occurrence.poolId) ?? null;
     const dayOffsetMinutes = entry.dayIndex * MINUTES_PER_DAY;
+    const startMinute = startMinuteOf(entry);
+    const realTime =
+      clock.startMs === null
+        ? undefined
+        : {
+            startMinute,
+            windowsSeconds: absoluteWindows(entry).map((window) => ({ start: (window.start - startMinute) * 60, end: (window.end - startMinute) * 60 })),
+            lengthMinutes:
+              clock.realEnd(dayOffsetMinutes + entry.occurrence.effectiveStartMinuteOfDay + entry.occurrence.durationMinutes) - startMinute,
+            wallMinuteAt: (second: number) => clock.wall(startMinute + second / 60) - dayOffsetMinutes
+          };
     projections.set(
       entry,
       createBlockProjection({
@@ -3729,10 +3859,9 @@ export function buildMaterializedProgrammingWeek(args: {
         maxListedItems: args.maxListedItemsPerBlock,
         cutAtEnd: isCutAtEnd(entry),
         dayOffsetMinutes,
-        itemHolds: args.itemHolds,
-        airedUntilSecond: isOnAir(entry)
-          ? ((now as number) - dayOffsetMinutes - entry.occurrence.effectiveStartMinuteOfDay) * 60
-          : undefined
+        realTime,
+        itemHolds,
+        airedUntilSecond: isOnAir(entry) ? ((now as number) - startMinute) * 60 : undefined
       })
     );
   }
@@ -3754,13 +3883,12 @@ export function buildMaterializedProgrammingWeek(args: {
   });
   // Until when the channel is taken by an item that is already running or that runs over its block: the
   // item on air now first. The next window waits for it unless it takes the air with a cut.
-  let busyUntil = now !== undefined && args.onAirItemEndMinute !== undefined ? args.onAirItemEndMinute : Number.NEGATIVE_INFINITY;
+  let busyUntil = now !== undefined && args.onAirItemEndMinute !== undefined ? args.onAirItemEndMinute + nowShift : Number.NEGATIVE_INFINITY;
   let previous: WindowTask | null = null;
   for (const task of tasks) {
     const { entry } = task;
     const projection = projections.get(entry) as ReturnType<typeof createBlockProjection>;
     const pool = args.pools.find((candidate) => candidate.id === entry.occurrence.poolId) ?? null;
-    const dayOffset = entry.dayIndex * MINUTES_PER_DAY;
     const lastWindow = task.index === projection.windowCount - 1;
     if (isAired(entry)) {
       const state = airedStates.get(entry) ?? (pool ? poolStates.get(pool.id) : undefined) ?? storedStateOf(pool);
@@ -3784,7 +3912,7 @@ export function buildMaterializedProgrammingWeek(args: {
     if (pool) {
       poolStates.set(pool.id, result.state);
     }
-    const freeAt = dayOffset + entry.occurrence.effectiveStartMinuteOfDay + result.freeAtSecond / 60;
+    const freeAt = startMinuteOf(entry) + result.freeAtSecond / 60;
     busyUntil = startsWithCut && !onAirWindow ? freeAt : Math.max(busyUntil, freeAt);
     if (!lastWindow || isCutAtEnd(entry)) {
       busyUntil = Math.min(busyUntil, task.end);
@@ -3801,16 +3929,16 @@ export function buildMaterializedProgrammingWeek(args: {
     // unless the block has nothing to play.
     const airedSpans =
       isOnAir(entry) && result.block.fillStatus !== "empty"
-        ? getScheduleOccurrenceAirWindows(entry.occurrence)
+        ? absoluteWindows(entry)
             .map((window, index) => ({
               start: window.start,
-              end: window.start < (now as number) - dayOffset ? Math.min(window.end, projection.fillStartMinute(index)) : window.start
+              end: window.start < (now as number) ? Math.min(window.end, projection.fillStartMinute(index)) : window.start
             }))
             .filter((span) => span.end > span.start)
         : [];
     results.set(entry, {
       block: { ...result.block, aired: isAired(entry) },
-      spans: [...airedSpans, ...result.spans].map((span) => ({ start: span.start + dayOffset, end: span.end + dayOffset }))
+      spans: [...airedSpans, ...result.spans.map((span) => ({ start: span.start + dayOffset, end: span.end + dayOffset }))]
     });
   }
 
@@ -3820,8 +3948,10 @@ export function buildMaterializedProgrammingWeek(args: {
       .filter((entry) => entry.dayIndex === dayIndex)
       .map((entry) => results.get(entry)?.block)
       .filter((block): block is MaterializedProgrammingBlock => Boolean(block));
-    const dayStart = dayIndex * MINUTES_PER_DAY;
-    const dayEnd = dayStart + MINUTES_PER_DAY;
+    const dayStartWall = dayIndex * MINUTES_PER_DAY;
+    // The day's edges in real time (M123): the spring-forward day has 1380 minutes, the fall-back day 1500.
+    const dayStart = clock.real(dayIndex * MINUTES_PER_DAY);
+    const dayEnd = clock.real((dayIndex + 1) * MINUTES_PER_DAY);
 
     return {
       date,
@@ -3833,10 +3963,11 @@ export function buildMaterializedProgrammingWeek(args: {
       totalScheduledMinutes: occurrences.reduce(
         (total, occurrence) =>
           total +
-          getScheduleOccurrenceAirWindows(occurrence).reduce(
-            (sum, window) => sum + Math.max(0, Math.min(window.end, MINUTES_PER_DAY) - Math.max(window.start, 0)),
-            0
-          ),
+          getScheduleOccurrenceAirWindows(occurrence).reduce((sum, window) => {
+            const start = Math.max(window.start, 0);
+            const end = Math.min(window.end, MINUTES_PER_DAY);
+            return end > start ? sum + Math.max(0, clock.realEnd(dayStartWall + end) - clock.real(dayStartWall + start)) : sum;
+          }, 0),
         0
       ),
       // The projection is cut at the day's edges the same way, so the morning of a block that started the
@@ -4787,7 +4918,14 @@ export function getScheduleInstant(args: {
     timeZone: args.timeZone,
     ambiguous: args.ambiguous
   });
-  return new Date(Date.parse(start) + (secondOfDay - minuteOfDay * 60) * 1000);
+  const seconds = secondOfDay - minuteOfDay * 60;
+  if (seconds === 0) {
+    return new Date(start);
+  }
+  // A minute in the skipped hour is the switch, and so is every second of it (M123): 02:59:30 is not later
+  // than 03:00.
+  const nextMinute = getScheduleInstant({ ...args, seconds: args.seconds - seconds + 60 }).getTime();
+  return new Date(Math.min(Date.parse(start) + seconds * 1000, nextMinute));
 }
 
 /**
@@ -4828,9 +4966,11 @@ export function getScheduleStartsInMinutes(
 /**
  * Which instant a wall-clock time of the channel zone names (M101, R3 C5). Blocks follow the wall clock
  * (owner decision R3 Q4), so the switch nights need two rules:
- * - a time that does not exist (02:30 on the spring-forward night in Europe/Berlin) maps forward by the
- *   length of the gap: 02:30 on 2026-03-29 is 03:30 CEST (`01:30Z`). Before M101 it mapped one hour early,
- *   to 01:30 CET (`00:30Z`), while the block before was still on air
+ * - a time that does not exist (02:30 on the spring-forward night in Europe/Berlin) is the switch itself:
+ *   02:30 on 2026-03-29 is 03:00 CEST (`01:00Z`), the first instant the wall clock is past it, so a block
+ *   starting there airs, posts its Twitch segment and counts its cuepoints from 03:00, and one ending there
+ *   stops at the switch (M123). Before M101 it mapped one hour early, to 01:30 CET (`00:30Z`), while the
+ *   block before was still on air; M101 to 03:30 CEST (`01:30Z`), half an hour after the block began airing
  * - a time that exists twice (02:30 on the fall-back night) is its first occurrence by default (`00:30Z` on
  *   2026-10-25), because a block in the repeated hour starts airing then; `ambiguous: "later"` gives the
  *   second (`01:30Z`). Where a block ending in that hour stops airing is `getScheduleEndInstant`
@@ -4867,9 +5007,21 @@ export function toUtcIsoForLocalDateTime(args: {
     return new Date(args.ambiguous === "later" ? matches[matches.length - 1] : matches[0]).toISOString();
   }
 
-  // In the gap: read the time with the offset that held before it, which lands as far past the switch as
-  // the time lies past its start.
-  return new Date(desiredAsUtc - offsetBefore).toISOString();
+  // In the gap: the switch, the first instant whose wall clock is past the time. Read with the offset that
+  // held before, the time lands as far past the switch as it lies past the gap's start; read with the one
+  // after, as far before it. The switch lies between the two, on a whole minute (zone offsets are whole
+  // minutes).
+  let low = (desiredAsUtc - offsetAfter) / 60_000;
+  let high = (desiredAsUtc - offsetBefore) / 60_000;
+  while (high - low > 1) {
+    const middle = Math.floor((low + high) / 2);
+    if (offsetAt(middle * 60_000) === offsetBefore) {
+      low = middle;
+    } else {
+      high = middle;
+    }
+  }
+  return new Date(high * 60_000).toISOString();
 }
 
 export type DestinationRoutingRecord = {

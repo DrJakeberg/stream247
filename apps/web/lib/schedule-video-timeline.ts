@@ -19,7 +19,8 @@ export type ScheduleVideoTimelineSegment = {
  */
 export function buildScheduleVideoTimelineSegments(block: MaterializedProgrammingBlock): ScheduleVideoTimelineSegment[] {
   const blockStartSecond = block.startMinuteOfDay * 60;
-  const blockSeconds = Math.max(1, block.durationMinutes) * 60;
+  // Real length (M123): on the night the clocks go forward 01:00-04:00 holds two hours of videos, not three.
+  const blockSeconds = Math.max(1, block.lengthMinutes ?? block.durationMinutes) * 60;
   const blockEndSecond = blockStartSecond + blockSeconds;
 
   let drawnUntil = blockStartSecond;

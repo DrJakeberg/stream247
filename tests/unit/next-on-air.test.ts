@@ -395,8 +395,9 @@ describe("the card and !next agree", () => {
     const { card, info } = cardAndBot(row({ status: "recovering" }));
     expect(card).toEqual({ nextTitle: "Evening Opener", nextTimeLabel: "about 17:30" });
     expect(info).toMatchObject({ nextTitle: card.nextTitle, nextExpectedAt: "17:30" });
-    // !now keeps the public page's word for that state: on a short break.
-    expect(info.nowTitle).toBe("");
+    // Since M123 !now names the item the card is drawn over (until then it said nothing plays, M104 "Left").
+    expect(info.nowTitle).toBe("Long Archive");
+    expect(info.nowSwitching).toBeUndefined();
   });
 
   it("agree on today's next block while a Pin holds the air", () => {

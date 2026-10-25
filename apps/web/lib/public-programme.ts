@@ -78,6 +78,8 @@ export const PUBLIC_PROGRAMME_GROUP_ITEMS = 25;
 
 type BlockEntry = {
   key: string;
+  /** The pool it plays from: a block that runs on into the same title from the same pool is one card. */
+  poolId: string;
   title: string;
   categoryName: string;
   dated: boolean;
@@ -130,6 +132,7 @@ function collectBlocks(days: MaterializedProgrammingDay[], timeZone: string): Bl
         .filter((item) => item.start < lastEnd);
       blocks.push({
         key: `${block.blockId}:${date}`,
+        poolId: block.poolId ?? "",
         title: block.title || block.categoryName,
         categoryName: block.categoryName,
         dated: Boolean(block.dated),
@@ -208,10 +211,21 @@ export function buildPublicProgramme(args: {
     .sort((left, right) => left.start - right.start);
   const groups: PublicProgrammeGroup[] = [];
   let lastBlock: BlockEntry | null = null;
+  // The same programme on the next day, starting where the day before's ends: a daily series is one block
+  // per day, each with its own id, so it is told by its title and pool.
+  const continues = (before: BlockEntry, after: BlockEntry) =>
+    before.title === after.title &&
+    before.poolId === after.poolId &&
+    Math.max(...before.windows.map((window) => window.end)) >= Math.min(...after.windows.map((window) => window.start));
   for (const entry of timeline) {
     const group = groups.at(-1);
-    if (entry.item && group && lastBlock === entry.block && group.itemCount > 0) {
+    // A programme runs on in one group across its days when it airs on without a break (M123): a daily
+    // 24 h block gave one card per day, its next video headlining a second card at midnight.
+    const runsOn = lastBlock !== null && (lastBlock === entry.block || continues(lastBlock, entry.block));
+    if (entry.item && group && runsOn && group.itemCount > 0) {
       group.itemCount += 1;
+      // The next day's block is the one a third day goes on from.
+      lastBlock = entry.block;
       if (group.items.length < PUBLIC_PROGRAMME_GROUP_ITEMS) {
         group.items.push({ title: entry.item.title, startsAt: iso(entry.start), endsAt: iso(entry.end) });
       }

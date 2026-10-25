@@ -9742,6 +9742,9 @@ export type PlayoutProgrammeRow = {
   overrideUntil: string;
   /** The schedule run the last cycle recorded, which a dated block's start or end is judged against. */
   cuepointWindowKey: string;
+  /** The operator's Skip: the item it took off air and until when it stays out (M123: !now in a short recovery). */
+  skipAssetId: string;
+  skipUntil: string;
 };
 
 /** The same fields from a playout record the caller already holds (the chat cycle's state). */
@@ -9759,7 +9762,9 @@ export function playoutProgrammeRowOf(playout: PlayoutRuntimeRecord): PlayoutPro
     insertStatus: playout.insertStatus,
     overrideAssetId: playout.overrideAssetId,
     overrideUntil: playout.overrideUntil,
-    cuepointWindowKey: playout.cuepointWindowKey
+    cuepointWindowKey: playout.cuepointWindowKey,
+    skipAssetId: playout.skipAssetId,
+    skipUntil: playout.skipUntil
   };
 }
 
@@ -9788,9 +9793,12 @@ export async function readPlayoutProgrammeTitles(): Promise<PlayoutProgrammeRow>
     override_asset_id: string;
     override_until: string;
     cuepoint_window_key: string;
+    skip_asset_id: string;
+    skip_until: string;
   }>(
     `SELECT status, current_title, current_asset_id, process_started_at, queue_items, next_asset_id, next_title,
-       manual_next_asset_id, insert_asset_id, insert_status, override_asset_id, override_until, cuepoint_window_key
+       manual_next_asset_id, insert_asset_id, insert_status, override_asset_id, override_until, cuepoint_window_key,
+       skip_asset_id, skip_until
      FROM playout_runtime WHERE singleton_id = 1`
   );
   const row = result.rows[0];
@@ -9807,7 +9815,9 @@ export async function readPlayoutProgrammeTitles(): Promise<PlayoutProgrammeRow>
     insertStatus: row?.insert_status ?? "",
     overrideAssetId: row?.override_asset_id ?? "",
     overrideUntil: row?.override_until ?? "",
-    cuepointWindowKey: row?.cuepoint_window_key ?? ""
+    cuepointWindowKey: row?.cuepoint_window_key ?? "",
+    skipAssetId: row?.skip_asset_id ?? "",
+    skipUntil: row?.skip_until ?? ""
   };
 }
 

@@ -131,6 +131,8 @@ export const EN_VIEWER_MESSAGES = {
   "chat.commands.vote": "!1–{last} during a poll",
   "chat.now.onAir": "@{actor} now on air: {title}.",
   "chat.now.nothing": "@{actor} nothing is playing right now — stand by, we’ll be right back.",
+  "chat.now.switching": "@{actor} switching to the next video: {title}.",
+  "chat.now.switchingUnknown": "@{actor} switching to the next video right now.",
   "chat.next.at": "@{actor} next at {time}: {title}.",
   "chat.next.item": "@{actor} up next: {title}.",
   // M107: the next video with the time it is expected to start (overlay.next.expectedAt's estimate).
