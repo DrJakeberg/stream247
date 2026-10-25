@@ -91,6 +91,7 @@ describe("suggestion 10a: a regional Twitch ingest is Twitch", () => {
       TWITCH_INGEST_URL,
       "rtmp://live.twitch.tv/app/",
       "rtmps://live.twitch.tv:443/app",
+      "rtmp://live.twitch.tv:1935/app",
       "rtmp://live-fra.twitch.tv/app",
       "rtmp://fra05.contribute.live-video.net/app",
       "rtmps://ams03.contribute.live-video.net/app"
@@ -105,6 +106,8 @@ describe("suggestion 10a: a regional Twitch ingest is Twitch", () => {
       "rtmp://live.twitch.tv.example/app",
       "rtmp://twitch.tv/app",
       "rtmp://fra05.contribute.live-video.net.example/app",
+      "rtmp://live.twitch.tv:1/app",
+      "rtmp://user@live.twitch.tv/app",
       "not a url"
     ]) {
       expect(isTwitchIngestUrl(url), url).toBe(false);
@@ -140,10 +143,11 @@ describe("suggestion 10b: a source that becomes playable while the step is open 
   const library = { id: "source-local", name: "Local Media Library", readyCount: 2 };
   const channel = { id: "source-channel", name: "Channel VODs", readyCount: 5 };
 
-  it("ticks sources that were not playable when the form was mounted", () => {
-    // No ready video yet: the form renders nothing, but it is mounted and keeps its state.
-    expect(renderMounted(SetupProgrammeForm, { sources: [{ ...library, readyCount: 0 }], scheduleBlockCount: 0 }, true)).toBeNull();
-    // "Check again" or a refresh brings ready videos; the form is the same one.
+  it("ticks a source that becomes playable after the mounted form refreshes", () => {
+    // One source plays already, the other has no ready video yet: only the first is offered.
+    const first = html(renderMounted(SetupProgrammeForm, { sources: [library, { ...channel, readyCount: 0 }], scheduleBlockCount: 0 }, true));
+    expect(first).not.toContain("Channel VODs");
+    // A refresh (after a failed press, or the router keeping the step) brings the second; the form is the same one.
     const markup = html(renderMounted(SetupProgrammeForm, { sources: [library, channel], scheduleBlockCount: 0 }));
     expect(markup.match(/<input type="checkbox" checked=""\/>/g)).toHaveLength(2);
   });
@@ -192,10 +196,11 @@ describe("suggestion 11: the zone field suggests the zone names the browser know
     expect(markup).not.toContain("Type a city or region");
   });
 
-  it("does not invite a search while the environment pins the zone", () => {
+  it("offers no list while the environment pins the zone", () => {
     const markup = html(renderMounted(SetupInstanceForm, { ...instanceProps, envTimezone: "Europe/Vienna" }, true));
     expect(markup).toContain("CHANNEL_TIMEZONE is set to Europe/Vienna in the environment and overrides whatever is saved here.");
     expect(markup).not.toContain("Type a city or region");
+    expect(markup).not.toContain("<datalist");
   });
 });
 

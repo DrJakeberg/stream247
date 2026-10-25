@@ -455,14 +455,17 @@ under `planning/archive/`, text unchanged.
   `rtmp://live.twitch.tv/app`. Studio → Output was not changed: its form shows the address as it is.
 - **10b, preselection.** The step keeps the sources the owner unticked instead of the ticked ones, so a source
   that becomes playable under a mounted form (the step's own "check again" link, a refresh after a failed press)
-  arrives ticked. The visible case: with no ready video the form was mounted rendering nothing, and its ticked
-  list stayed empty, so after "check again" every source showed unticked.
+  arrives ticked. The case: one source plays, a second gets its first ready video, and the form is refreshed
+  rather than mounted again (a refresh after a failed press, the router keeping the step); before, the second
+  stayed unticked. With no ready video at all the page shows the upload box instead of the form, and "check
+  again" mounts a new form, so that case was already right.
 - **11, zone list.** A native `<datalist>` from `Intl.supportedValuesOf("timeZone")` (UTC first; zones with an
-  underscore get a spaced label so "New York" matches), read on the client only like the browser zone, since
+  underscore get a spaced label, for browsers that match a typed "New York" on the label; not tried in a browser), read on the client only like the browser zone, since
   the server's ICU may list other zones. No new dependency; the field stays a text field, so a saved or typed
   zone outside the list still works and the route still checks it (`isUsableTimeZone`). A browser without
   `Intl.supportedValuesOf` gets the plain field. The hint adds "Type a city or region to pick from the list."
-  except while `CHANNEL_TIMEZONE` pins the zone.
+  While `CHANNEL_TIMEZONE` pins the zone there is neither list nor hint. `isTwitchIngestUrl` refuses other
+  ports than 1935 and 443 and a user name in the address.
 - **Baselines.** `/setup` past the owner step is in neither the design nor the wording baseline
   (`tests/e2e/design-baseline.spec.ts` only creates the owner there), so none was re-recorded.
 - `CHANGELOG.md` is not touched: per `AGENTS.md` the release commit writes its section.

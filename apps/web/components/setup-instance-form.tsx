@@ -41,7 +41,7 @@ export function listBrowserTimeZones(): readonly string[] {
   return cachedTimeZones;
 }
 
-/** "America/New_York" also matches a search for "New York"; zones without an underscore need no label. */
+/** A spaced label for "America/New_York", for browsers that match a typed "New York" on the label too. */
 function timeZoneSearchLabel(zone: string): string | undefined {
   return zone.includes("_") ? zone.replace(/_/g, " ") : undefined;
 }
@@ -81,7 +81,9 @@ export function SetupInstanceForm(props: {
   const timezone = typedTimezone ?? (zoneDetected ? browserTimeZone : props.initialTimezone);
   // Client only like the browser zone: the server's ICU may list other zones than the browser's.
   const timeZones = useSyncExternalStore(subscribeToNothing, listBrowserTimeZones, () => NO_TIME_ZONES);
-  const searchHint = timeZones.length > 0 && !props.envTimezone ? " Type a city or region to pick from the list." : "";
+  // While CHANNEL_TIMEZONE pins the zone, a pick here does not decide anything, so there is no list.
+  const offerZoneList = timeZones.length > 0 && !props.envTimezone;
+  const searchHint = offerZoneList ? " Type a city or region to pick from the list." : "";
   // New installs speak English to viewers; an empty stored value is English too.
   const [language, setLanguage] = useState(props.initialLanguage || "en");
   const [error, setError] = useState("");
@@ -144,12 +146,12 @@ export function SetupInstanceForm(props: {
                   : "IANA name like Europe/Berlin. The schedule grid and every on-air clock use it. Empty means UTC."
         }${searchHint}`}
         label="Channel timezone"
-        list={timeZones.length > 0 ? TIME_ZONE_LIST_ID : undefined}
+        list={offerZoneList ? TIME_ZONE_LIST_ID : undefined}
         onChange={setTypedTimezone}
         placeholder="UTC"
         value={timezone}
       />
-      {timeZones.length > 0 ? (
+      {offerZoneList ? (
         <datalist id={TIME_ZONE_LIST_ID}>
           {timeZones.map((zone) => (
             <option key={zone} label={timeZoneSearchLabel(zone)} value={zone} />

@@ -65,7 +65,7 @@ export const TWITCH_INGEST_URL = "rtmp://live.twitch.tv/app";
 /**
  * Whether an RTMP address is one of Twitch's own ingests: the global one, an older regional
  * `live-<region>.twitch.tv`, or a regional `<pop>.contribute.live-video.net` server, over rtmp or rtmps,
- * on the `/app` path. The wizard shows such an address as Twitch and keeps it on saving (M122); before,
+ * on the `/app` path and Twitch's ports. The wizard shows such an address as Twitch and keeps it on saving (M122); before,
  * a regional ingest read as "Another RTMP service".
  */
 export function isTwitchIngestUrl(value: string): boolean {
@@ -79,6 +79,10 @@ export function isTwitchIngestUrl(value: string): boolean {
     return false;
   }
   if (parsed.pathname !== "/app" && parsed.pathname !== "/app/") {
+    return false;
+  }
+  // Twitch's own ports only (rtmp's default 1935, rtmps on 443), and no user name in the address.
+  if ((parsed.port && parsed.port !== "1935" && parsed.port !== "443") || parsed.username || parsed.password) {
     return false;
   }
   const host = parsed.hostname.toLowerCase();
