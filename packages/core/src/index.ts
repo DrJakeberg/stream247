@@ -3675,8 +3675,11 @@ function createWeekClock(startDate: string, timeZone?: string) {
   };
   // The switches within the week and a day around it, found per day (a zone switches at most once a day), so
   // `wall` needs no zone lookup per item: a week of short clips lists thousands.
-  const startOffset = offsetAt(startMs);
-  const shifts: { fromMinute: number; shiftMinutes: number }[] = [];
+  // Wall minute 0 is 00:00 of `startDate`; on a day whose midnight the clock skips (America/Santiago) the
+  // week's first real minute is already 01:00 there.
+  const [startYear, startMonth, startDay] = startDate.split("-").map(Number);
+  const startWallMs = Date.UTC(startYear as number, (startMonth as number) - 1, startDay as number);
+  const shifts: { fromMinute: number; offsetMinutes: number }[] = [];
   let previousOffset = offsetAt(startMs - 86_400_000);
   for (let day = -1; day <= 8; day += 1) {
     const dayEndMs = startMs + (day + 1) * 86_400_000;
@@ -3692,11 +3695,12 @@ function createWeekClock(startDate: string, timeZone?: string) {
           high = middle;
         }
       }
-      shifts.push({ fromMinute: high - startMs / 60_000, shiftMinutes: (offset - startOffset) / 60_000 });
+      shifts.push({ fromMinute: high - startMs / 60_000, offsetMinutes: offset / 60_000 });
     }
     previousOffset = offset;
   }
-  const initialShift = (offsetAt(startMs - 86_400_000) - startOffset) / 60_000;
+  const initialOffset = offsetAt(startMs - 86_400_000) / 60_000;
+  const startWallMinute = (startMs - startWallMs) / 60_000;
   const realCache = new Map<number, number>();
   const realEndCache = new Map<number, number>();
   const cached = (cache: Map<number, number>, minute: number, compute: () => number) => {
@@ -3713,13 +3717,13 @@ function createWeekClock(startDate: string, timeZone?: string) {
     realEnd: (minute: number) =>
       cached(realEndCache, minute, () => (getScheduleEndInstant({ date: startDate, seconds: Math.round(minute * 60), timeZone }).getTime() - startMs) / 60_000),
     wall: (realMinute: number) => {
-      let shift = initialShift;
+      let offset = initialOffset;
       for (const entry of shifts) {
         if (realMinute >= entry.fromMinute) {
-          shift = entry.shiftMinutes;
+          offset = entry.offsetMinutes;
         }
       }
-      return realMinute + shift;
+      return startWallMinute + realMinute + offset;
     },
     startMs
   };
@@ -4914,7 +4918,14 @@ export function getScheduleInstant(args: {
     timeZone: args.timeZone,
     ambiguous: args.ambiguous
   });
-  return new Date(Date.parse(start) + (secondOfDay - minuteOfDay * 60) * 1000);
+  const seconds = secondOfDay - minuteOfDay * 60;
+  if (seconds === 0) {
+    return new Date(start);
+  }
+  // A minute in the skipped hour is the switch, and so is every second of it (M123): 02:59:30 is not later
+  // than 03:00.
+  const nextMinute = getScheduleInstant({ ...args, seconds: args.seconds - seconds + 60 }).getTime();
+  return new Date(Math.min(Date.parse(start) + seconds * 1000, nextMinute));
 }
 
 /**

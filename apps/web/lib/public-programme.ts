@@ -224,6 +224,8 @@ export function buildPublicProgramme(args: {
     const runsOn = lastBlock !== null && (lastBlock === entry.block || continues(lastBlock, entry.block));
     if (entry.item && group && runsOn && group.itemCount > 0) {
       group.itemCount += 1;
+      // The next day's block is the one a third day goes on from.
+      lastBlock = entry.block;
       if (group.items.length < PUBLIC_PROGRAMME_GROUP_ITEMS) {
         group.items.push({ title: entry.item.title, startsAt: iso(entry.start), endsAt: iso(entry.end) });
       }

@@ -42,7 +42,7 @@ export function isLeavingTheAir(playout: ChatPlayoutRow, now: Date): boolean {
   const nowMs = now.getTime();
   const skipped = Boolean(current) && playout.skipAssetId === current && Date.parse(playout.skipUntil ?? "") > nowMs;
   const overrideWaits =
-    Boolean(playout.overrideAssetId) && playout.overrideAssetId !== current && !(Date.parse(playout.overrideUntil) <= nowMs);
+    Boolean(playout.overrideAssetId) && playout.overrideAssetId !== current && Date.parse(playout.overrideUntil) > nowMs;
   const insertWaits = playout.insertStatus === "pending" && Boolean(playout.insertAssetId) && playout.insertAssetId !== current;
   return skipped || overrideWaits || insertWaits;
 }

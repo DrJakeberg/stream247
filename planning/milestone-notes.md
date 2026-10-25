@@ -511,3 +511,12 @@ under `planning/archive/`, text unchanged.
   <next>", or without a known next video "switching to the next video right now." / "das nächste Video
   startet gerade." The assertion in `tests/unit/next-on-air.test.ts` that `!now` is empty under
   `recovering` (M104's documented "Left") now expects the title.
+- **Review (fresh subagent).** Acceptance confirmed (10 of 13 failing on `main`'s source, the three named
+  passing). Fixed: a week starting on a day whose midnight the clock skips (America/Santiago, Asia/Beirut)
+  showed every item an hour early, as `wall` took real minute 0 for 00:00 (it now reads the zone's offset);
+  *Up next* compared a third block of one programme with the first and opened a second card; a second inside
+  the skipped hour mapped past the switch (02:59:30 after 03:00); an override of another item without a
+  running end made `!now` say "switching". Left: on the autumn night, a block boundary strictly inside the
+  repeated hour (00:00-02:30, then 02:30-06:00) lets both blocks span the hour, as the worker airs the first
+  again from the second 02:00 and M101's Twitch plan posts it; the projection counts that hour for both
+  (480 scheduled minutes for 420), a split of each block's windows by the wall clock would be needed.

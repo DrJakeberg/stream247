@@ -146,6 +146,44 @@ describe("20: the week view and the Day lens use real lengths on the nights the 
   });
 });
 
+describe("20: review of M123", () => {
+  it("keeps item times on a day whose midnight the clock skips (America/Santiago, 2026-09-06)", () => {
+    const evening = (startDate: string) =>
+      buildMaterializedProgrammingWeek({
+        startDate,
+        blocks: daily({ id: "eve", startMinuteOfDay: 20 * 60, durationMinutes: 60 }),
+        pools: [pool],
+        assets: assets(12, 1800),
+        timeZone: "America/Santiago"
+      }).map((day) => day.blocks[0]!.items.map((item) => item.startTime).join(" "));
+    // Before the fix every day of a week starting on the switch day read "19:00 19:30".
+    expect(evening("2026-09-06")).toEqual(Array(7).fill("20:00 20:30"));
+    expect(evening("2026-09-05")).toEqual(Array(7).fill("20:00 20:30"));
+  });
+
+  it("reads every second of the skipped hour as the switch", () => {
+    expect(getScheduleInstant({ date: SPRING, seconds: 2 * 3600 + 59 * 60 + 30, timeZone: BERLIN }).toISOString()).toBe(
+      "2027-03-28T01:00:00.000Z"
+    );
+    expect(getScheduleInstant({ date: SPRING, seconds: 3 * 3600 + 30, timeZone: BERLIN }).toISOString()).toBe("2027-03-28T01:00:30.000Z");
+  });
+
+  it("goes on in one card over three blocks of one programme back to back", () => {
+    const music = (id: string, startMinuteOfDay: number) =>
+      block({ id, title: "Music", dayOfWeek: 1, startMinuteOfDay, durationMinutes: 480 });
+    const days = buildMaterializedProgrammingWeek({
+      startDate: "2026-10-05",
+      blocks: [music("m1", 0), music("m2", 480), music("m3", 960)],
+      pools: [pool],
+      assets: assets(30, 3600),
+      nowMinuteOfDay: 60,
+      maxListedItemsPerBlock: 5000
+    });
+    const programme = buildPublicProgramme({ days, timeZone: "UTC", now: new Date("2026-10-05T01:00:00.000Z") });
+    expect(programme.next.map((group) => [group.title, group.startsAt])).toEqual([["Music", "2026-10-05T01:00:00.000Z"]]);
+  });
+});
+
 describe("21: small things on /channel", () => {
   it("lists a daily 24 h block as one Up next card across midnight", () => {
     const days = buildMaterializedProgrammingWeek({
@@ -225,6 +263,8 @@ describe("23: !now during a short recovery", () => {
     );
     expect(info(row({ overrideAssetId: "a5", overrideUntil: "2026-10-06T15:00:00.000Z" })).nowSwitching).toBe(true);
     expect(info(row({ insertAssetId: "a5", insertStatus: "pending" })).nowSwitching).toBe(true);
+    // An override of another item without a running end does not hold (review of M123).
+    expect(info(row({ overrideAssetId: "a5", overrideUntil: "" })).nowTitle).toBe("Long Archive");
     expect(formatChatNowReply("ada", { ...skipped, nextTitle: "" }, "en")).toBe("@ada switching to the next video right now.");
   });
 
