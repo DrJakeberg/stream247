@@ -469,3 +469,45 @@ under `planning/archive/`, text unchanged.
 - **Baselines.** `/setup` past the owner step is in neither the design nor the wording baseline
   (`tests/e2e/design-baseline.spec.ts` only creates the owner there), so none was re-recorded.
 - `CHANGELOG.md` is not touched: per `AGENTS.md` the release commit writes its section.
+
+### M123 The Clock Change In March, /channel Details And !now In A Short Recovery
+
+- **Checked against `main` first (68bea7b).** None of the three was done. M118 (suggestion 17) had already
+  given the live summary's cuepoint count a dated block's air windows, the last part of M101's "Left"; the
+  rest of it stood: `toUtcIsoForLocalDateTime` mapped 02:30 on the spring night to 03:30 CEST, the week
+  projection had no zone at all, `/channel` grouped by block per day, and `buildChatProgrammeInfo` counted
+  `recovering` as nothing on air.
+- **20a, the skipped hour.** A wall-clock time in the gap is now the switch itself (03:00 CEST, `01:00Z`),
+  the first instant the clock is past it, found by a search between the two offsets (zones with a 30-minute
+  gap work the same). Blocks keep their written times (owner decision R3 Q4); only where they are counted
+  from changed: the Twitch segment and the cuepoint count of a block from 02:30 start at 03:00, where the
+  worker starts airing it, and a block ending at 02:30 ends at the switch (01:00-02:30 is posted for the
+  hour it airs). `getScheduleEndInstant` needed nothing: its minute before an end in the gap is in the gap
+  too. Two assertions of `tests/unit/schedule-dst.test.ts` pinned M101's mapping and were changed to the
+  new one (P4; the Twitch case of a block starting at 02:30, now 01:00Z for 90 minutes), with the old values
+  in a comment.
+- **20b, the week view and the Day lens.** `buildMaterializedProgrammingWeek` takes the channel zone and
+  now (`timeZone`, `now`; `apps/web/lib/server/state.ts` passes both) and projects in real minutes of the
+  week: entries, windows, now, the item on air's end and the cache holds are moved onto a real-time axis
+  (`createWeekClock`: windows through `getScheduleInstant`/`getScheduleEndInstant`, the way back through
+  the week's switches, found once, so an item's clock time costs no zone lookup). A block's fill, overrun,
+  cuepoints and holds run on that axis; items carry the clock time they air at (the October night shows
+  02:00-02:30 twice); `startSecond` is the block's wall start plus real seconds, which is what `/channel`
+  already read; the block gets `lengthMinutes` (real) for the Day lens bar, and its `durationLabel`,
+  `projectedMinutes`, the day's scheduled and projected minutes are real (1380 / 1500 on those Sundays).
+  Without a zone everything is wall clock as before, so every other projection test is unchanged. In the
+  repeated autumn hour the wall-clock minute alone is ambiguous; with `now` the instant decides.
+- **21.** *Up next* keeps one group while the next item belongs to the same title and pool and the block's
+  window starts where the day before's ends (a daily series is one block per weekday, each with its own id
+  and `repeatGroupId`, so the id could not tell it). A daily evening block stays one card per evening.
+  `laterScheduleItems` and `getLaterScheduleItems` are gone (no reader since M100); the two `ops-state`
+  tests that pinned the field now pin its absence and the *Up next* list that replaced it. Covers on
+  `/channel`: the premise is gone, local files have frame-grab thumbnails since 1.x (Library), but `/channel`
+  shows no cover for any item; adding covers is a new public feature, asked in the thread.
+- **23.** `ChatProgrammeInfo` gets `nowSwitching`; `readPlayoutProgrammeTitles` also reads `skip_asset_id`
+  and `skip_until`. Under `recovering` with a programme title, `!now` names it unless it is about to leave
+  the air (`isLeavingTheAir`: a running Skip of that item, a Pin or Fallback of another item, a pending
+  *Play now* of another item); then "switching to the next video: <next>" / "gleich geht’s weiter mit:
+  <next>", or without a known next video "switching to the next video right now." / "das nächste Video
+  startet gerade." The assertion in `tests/unit/next-on-air.test.ts` that `!now` is empty under
+  `recovering` (M104's documented "Left") now expects the title.
