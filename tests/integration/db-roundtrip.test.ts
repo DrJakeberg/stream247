@@ -2618,6 +2618,83 @@ describe.sequential("database roundtrip", () => {
     }, 60_000);
   });
 
+  describe("resuming an interrupted item (M124)", () => {
+    const resumeMigrationId = "20261026_001_resume_interrupted_item";
+
+    it("adds the resume columns to a database that predates them, and keeps the points through every write", async () => {
+      await ensureDatabaseWithRetry();
+      await executeSql(`
+        ALTER TABLE playout_runtime DROP COLUMN IF EXISTS current_start_offset_seconds;
+        ALTER TABLE playout_runtime DROP COLUMN IF EXISTS resume_points;
+        ALTER TABLE as_run_log DROP COLUMN IF EXISTS start_offset_seconds;
+        DELETE FROM schema_migrations WHERE id = '${resumeMigrationId}';
+      `);
+
+      await resetDatabaseConnectionsForTests();
+      await ensureDatabaseWithRetry();
+
+      const columns = await executeSql(
+        "SELECT table_name || '.' || column_name || '=' || column_default FROM information_schema.columns WHERE column_name IN ('current_start_offset_seconds', 'resume_points', 'start_offset_seconds') ORDER BY table_name, column_name;"
+      );
+      expect(columns.split("\n")).toEqual([
+        "as_run_log.start_offset_seconds=0",
+        "playout_runtime.current_start_offset_seconds=0",
+        "playout_runtime.resume_points='[]'::text"
+      ]);
+      expect(await executeSql(`SELECT COUNT(*) FROM schema_migrations WHERE id = '${resumeMigrationId}';`)).toBe("1");
+      expect((await readAppState()).playout).toMatchObject({ currentStartOffsetSeconds: 0, resumePoints: [] });
+
+      const cut = { assetId: "asset_a", poolId: "pool_p", positionSeconds: 14_400, savedAt: "2026-10-26T20:00:00.000Z" };
+      await updatePlayoutRuntime((playout) => ({
+        ...playout,
+        currentAssetId: "asset_b",
+        processStartedAt: "2026-10-26T21:00:00.000Z",
+        currentStartOffsetSeconds: 3_590,
+        resumePoints: [cut]
+      }));
+      // Any other write of the row (here the admin's Skip hold) carries them on.
+      await updatePlayoutRuntime((playout) => ({ ...playout, skipAssetId: "asset_x", skipUntil: "2099-01-01T00:00:00.000Z" }));
+      const after = (await readAppState()).playout;
+      expect(after).toMatchObject({ currentStartOffsetSeconds: 3_590, resumePoints: [cut], skipAssetId: "asset_x" });
+      // The chat bot's row and the state's own place position 0 of the item before the process start.
+      expect((await readPlayoutProgrammeTitles()).processStartedAt).toBe("2026-10-26T20:00:10.000Z");
+      expect(playoutProgrammeRowOf(after).processStartedAt).toBe("2026-10-26T20:00:10.000Z");
+
+      // A broken column reads as no point, never as a failed state read.
+      await executeSql("UPDATE playout_runtime SET resume_points = 'not json';");
+      expect((await readAppState()).playout.resumePoints).toEqual([]);
+      await updatePlayoutRuntime((playout) => ({ ...playout, currentAssetId: "", processStartedAt: "", currentStartOffsetSeconds: 0, resumePoints: [], skipAssetId: "", skipUntil: "" }));
+    }, 60_000);
+
+    it("stores where an as-run row started", async () => {
+      await ensureDatabaseWithRetry();
+      const startedAt = "2026-10-26T21:00:00.000Z";
+      await recordAsRunStart({
+        id: "asrun_m124",
+        startedAt,
+        endedAt: "",
+        targetKind: "asset",
+        assetId: "asset_a",
+        title: "Archive",
+        sourceId: "source_m124",
+        poolId: "pool_p",
+        blockId: "block_m124",
+        reasonCode: "scheduled_match",
+        queueKind: "asset",
+        inputKind: "local",
+        formatId: "",
+        formatCandidate: "",
+        plannedSeconds: 21_600,
+        airedSeconds: 0,
+        endReason: "",
+        exitCode: "",
+        startOffsetSeconds: 14_390
+      });
+      const rows = await listAsRunRecords({ fromIso: "2026-10-26T00:00:00.000Z", toIso: "2026-10-27T00:00:00.000Z", limit: 10 });
+      expect(rows.find((row) => row.id === "asrun_m124")).toMatchObject({ startOffsetSeconds: 14_390, plannedSeconds: 21_600 });
+    }, 60_000);
+  });
+
   describe("local file durations (M96)", () => {
     const durationProbeKeyMigrationId = "20261003_002_asset_duration_probe_key";
     const localSourceId = "source-local-library";

@@ -184,6 +184,11 @@ jobs:
         timeout-minutes: 10
         run: pnpm test:media
       - run: pnpm test:queue-continuity
+      # M124: an item cut by a playout container kill continues 10 s before the last recorded position.
+      # About five minutes (the item must air more than two before the kill).
+      - name: Resume an interrupted item (container kill)
+        timeout-minutes: 12
+        run: pnpm test:resume
       - run: pnpm test:runtime-parity
       # M98: the production path with the relay on (playout -> HLS program feed -> uplink -> RTMP), its
       # mutation run, a broken source on a stub and a 90 s network outage of the playout. About seven
