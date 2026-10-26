@@ -27,6 +27,13 @@ export type ResumePoint = {
   positionSeconds: number;
   /** ISO, UTC: when that position was taken (the cut, or the last cycle that saw the item on air). */
   savedAt: string;
+  /**
+   * How often the item was continued from this point without airing 2 minutes in one go since (a start
+   * that failed to open, a container that died with it). Left out when 0.
+   */
+  shortStarts?: number;
+  /** ISO, UTC: the start of the run that shortStarts last counted, so a run is counted once. */
+  shortStartAt?: string;
 };
 
 /** The item continues this far before where it was cut, so the viewer finds the thread again. */
@@ -39,6 +46,12 @@ export const RESUME_MIN_REMAINING_SECONDS = 120;
 export const RESUME_VALID_MS = 24 * 60 * 60 * 1000;
 /** No more points than this are stored, the newest kept (a schedule with more pools than this is unheard of). */
 export const RESUME_MAX_POINTS = 16;
+/**
+ * A point continued this often without the item airing 2 minutes is given up, and the pool picks the next
+ * item: a file that stopped opening (the M94 retry included) or a spot that takes the container down
+ * cannot come back for 24 hours.
+ */
+export const RESUME_MAX_SHORT_STARTS = 2;
 
 function isPoint(value: unknown): value is ResumePoint {
   const entry = value as Partial<ResumePoint> | null;
@@ -70,12 +83,34 @@ export function parseResumePoints(value: unknown): ResumePoint[] {
   if (!Array.isArray(parsed)) {
     return [];
   }
-  return parsed.filter(isPoint).map((entry) => ({
-    assetId: entry.assetId,
-    poolId: entry.poolId,
-    positionSeconds: Math.floor(entry.positionSeconds),
-    savedAt: entry.savedAt
-  }));
+  return parsed.filter(isPoint).map((entry) => {
+    const shortStarts = Math.floor(Number(entry.shortStarts) || 0);
+    return {
+      assetId: entry.assetId,
+      poolId: entry.poolId,
+      positionSeconds: Math.floor(entry.positionSeconds),
+      savedAt: entry.savedAt,
+      ...(shortStarts > 0 ? { shortStarts, shortStartAt: typeof entry.shortStartAt === "string" ? entry.shortStartAt : "" } : {})
+    };
+  });
+}
+
+/** Has the point been continued too often without the item airing 2 minutes? Then it is not continued again. */
+export function isResumePointExhausted(point: ResumePoint): boolean {
+  return (point.shortStarts ?? 0) >= RESUME_MAX_SHORT_STARTS;
+}
+
+/**
+ * The point with the run that continued it counted as a short start, once per run (`startedAtMs`, the
+ * run's process start). The start, every checkpoint and the exit of the run may each count it; whichever
+ * is written first does.
+ */
+export function countResumeShortStart(point: ResumePoint, startedAtMs: number): ResumePoint {
+  const startedAt = new Date(startedAtMs).toISOString();
+  if (point.shortStartAt === startedAt) {
+    return point;
+  }
+  return { ...point, shortStarts: (point.shortStarts ?? 0) + 1, shortStartAt: startedAt };
 }
 
 /** Is the point still owed: taken within the last 24 hours (a point from the future reads as owed). */

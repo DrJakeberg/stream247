@@ -537,14 +537,28 @@ under `planning/archive/`, text unchanged.
 - **Where the position lives.** `playout_runtime.resume_points` (JSON, one point per pool, newest first,
   at most 16) and `current_start_offset_seconds`; `as_run_log.start_offset_seconds`. Every playout cycle
   writes the position of the pool's item on air as a checkpoint, because a container killed with ffmpeg
-  (repin, host restart, OOM) writes no exit; the exit handler then writes the exact position. So after a
-  kill the point is at most one cycle (15 s) old, which the 10 s rewind does not fully cover: a container
-  kill can skip up to about 5 s.
+  (repin, host restart, OOM) writes no exit; the exit handler then writes the exact position. After a
+  kill the point is as old as the last cycle (15 s plus the cycle's own run, up to a minute), so the
+  continuation repeats the 10 s rewind plus that age; it never skips. The position is wall-clock time
+  since the spawn, exact while ffmpeg reads at 1.0x (`-re`), the same measure as the duration bound.
 - **Seek.** `-ss` before `-i` (input seek): exact to the frame for the tested H.264 file with one
   keyframe, and timestamps start at 0, so the duration bound, chapters, the overlay and the programme row
   measure from the item's position 0 (`onAirItemZeroAt`: the process start minus the offset).
-- **No loops.** A continued item that fails before it aired 2 min drops its point; an input that never
-  opened keeps it for the M94 retry, which keeps the offset.
-- **Left.** The week view and `/channel`'s *Up next* do not plan a pending point; they show the pool's
-  next item until the continued one is on air. One point per pool: an item cut while another pool's point
-  is owed keeps its own, but two cuts in one pool keep only the latest.
+- **No loops.** A continued item that fails before it aired 2 min drops its point. Every continuation
+  counts as a short start of the point (`shortStarts`, once per run: at the start write, a checkpoint or
+  the exit, whichever comes first) until the item has aired 2 min; at two the pick gives the point up and
+  the pool takes the next item. That bounds a file that stopped opening (the continuation and its M94
+  retry, which keeps the offset and takes only its own pool's point) and a spot that takes the container
+  down, where no exit handler runs.
+- **Review (fresh subagent).** No blocker on the main paths. Fixed: a file that stopped opening, or a spot
+  that kills the container, came back for up to 24 h (the short-start count above); a feed watchdog's end
+  dropped the position (now kept like a crash); the M94 retry took any pool's point of the item (now its
+  own pool's); a *Play now* or Pin of the cut item that ran to its end left the point, and the pool
+  played the end again; a continuation whose archive had left the cache started from 0 at every later cut
+  (the point is now given up at that start); the note on the checkpoint age said "skip" where it repeats.
+- **Left, as decided or documented.** In direct mode Hard reload, Force reconnect and Recover outputs reach
+  the playout as the same restart request as Restart and drop the point (the DUT runs the relay, where
+  only Restart restarts the playout). A dated block of the same pool takes the pool's next item, and the
+  cut item is not continued. The week view and `/channel`'s *Up next* do not plan a pending point; they
+  show the pool's next item until the continued one is on air. One point per pool: two cuts in one pool
+  keep only the latest.

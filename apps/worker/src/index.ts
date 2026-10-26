@@ -106,6 +106,8 @@ import {
   overlayOnAirChapterTitle,
   onAirItemZeroAt,
   isResumePointValid,
+  isResumePointExhausted,
+  removeResumePointsOfAsset,
   decideResumeStart,
   formatCuepointOffsetLabel as formatResumeOffsetLabel,
   overlayScale,
@@ -236,6 +238,7 @@ import {
   classifyResumeExit,
   decideResumeCheckpoint,
   decideResumePointsAfterExit,
+  decideResumePointsAtStart,
   isSeekableInput,
   pickResumeItem,
   resumeRunOf,
@@ -6268,7 +6271,11 @@ function choosePlaybackCandidate(
   if (retryAsset && retryDecision) {
     // A continued item that failed to open is started once more at the same position (M124).
     const retryPoint = state.playout.resumePoints.find(
-      (point) => point.assetId === retryAsset.id && isResumePointValid(point, scheduleNow.getTime())
+      (point) =>
+        point.assetId === retryAsset.id &&
+        point.poolId === (currentScheduleItem?.poolId ?? "") &&
+        isResumePointValid(point, scheduleNow.getTime()) &&
+        !isResumePointExhausted(point)
     );
     const retryResume =
       retryPoint && retryDecision.reasonCode === "scheduled_match"
@@ -7168,6 +7175,11 @@ async function startOrSwitchPlayout(args: {
     resumed: Boolean(args.resume?.resumed),
     startedAtMs: playoutProcessStartedAtMs
   });
+  // A start that continues a point counts against it at once (a container that dies with it writes no
+  // checkpoint). One that cannot continue it (not a file on disk any more) gives the point up: the item
+  // starts from 0 this once, and is not started from 0 again at every later cut.
+  const startResumeRun = playoutResumeRun;
+  const startDropsResumeAssetId = args.resume?.resumed && args.asset && !startResumeRun ? args.asset.id : "";
   if (args.resume?.resumed && args.asset) {
     logRuntimeEvent("playout.resume.start", {
       assetId: args.asset.id,
@@ -7502,7 +7514,8 @@ async function startOrSwitchPlayout(args: {
           points: playout.resumePoints,
           run: lastResumeRun,
           kind: resumeExitKind,
-          exitedAtMs
+          exitedAtMs,
+          completedAssetId: resumeExitKind === "ended" && (plannedReason === "" || plannedReason === "duration-bound") ? lastAssetId : ""
         }),
         lastSuccessfulStartAt: nonFailureExit || ranPastCrashWindow ? playout.processStartedAt : playout.lastSuccessfulStartAt,
         lastSuccessfulAssetId: nonFailureExit || ranPastCrashWindow ? playout.currentAssetId : playout.lastSuccessfulAssetId,
@@ -7668,6 +7681,9 @@ async function startOrSwitchPlayout(args: {
     processPid: pid,
     processStartedAt: startedAt,
     currentStartOffsetSeconds: startOffsetSeconds,
+    resumePoints: startDropsResumeAssetId
+      ? removeResumePointsOfAsset(playout.resumePoints, startDropsResumeAssetId)
+      : decideResumePointsAtStart(playout.resumePoints, startResumeRun),
     lastTransitionAt: startedAt,
     selectionReasonCode: args.reasonCode,
     fallbackTier: args.fallbackTier,

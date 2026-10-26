@@ -210,17 +210,22 @@ the pool's next item. Under the relay no operator action shows that slate.
 An item of the pool on air that leaves the air without being asked to keeps its position, and the pool
 continues it there when it is on air again:
 
-- **Kept:** ffmpeg or the container dies (also a repin or a host restart), *Play now* / *Play insert*,
-  a Pin or Fallback of another item, a Live Bridge, a dated block taking over, the planned reconnect of
-  direct mode. **Not kept:** the item's end (also its duration bound and the feed watchdogs), *Skip
-  current* or a chat skip, *Soft restart* / *Hard reload*.
+- **Kept:** ffmpeg or the container dies (also a repin or a host restart), a feed watchdog ends a
+  stalled feed, *Play now* / *Play insert*, a Pin or Fallback of another item, a Live Bridge, a dated
+  block of another pool taking over, the planned reconnect of direct mode. **Not kept:** the item's end
+  (also its duration bound), *Skip current* or a chat skip, *Soft restart* / *Hard reload*; in direct
+  mode also *Force reconnect* and *Recover outputs*, which reach the playout as the same restart request.
+  A dated block of the same pool takes the pool's next item, and the cut one is not continued. A *Play
+  now* or Pin of the cut item itself that runs to its end clears its point.
 - **Where:** 10 s before the cut. An item that aired less than 2 minutes starts from its beginning; one
   with less than 2 minutes left is not continued, the pool takes its next item.
 - **How long:** until the pool is on air again, at most 24 h after the cut. One point per pool; it goes when
   the pool's position names another item (another of its items started).
 - **Which items:** local files and Twitch archives in the replay cache (a cached archive with a point is
   kept on disk, `vod.cache.kept` with `reason: "resume-point"`). A remote archive, a YouTube video, a
-  Pin, an insert and a live source are not continued: the pool goes on after them, as before M124.
+  Pin, an insert and a live source are not continued: the pool goes on after them, as before M124. A
+  cached archive removed from the cache anyway (the size cap, by hand) before it is continued starts
+  from its beginning that once (`playout.resume.not_seekable`), and its point is given up.
 - **What viewers see:** the title, the chat and `/channel` read as for any start; the Next card, the
   overlay's chapter title, the duration bound and `/channel`'s *Now* count from the item's beginning,
   not from the restart. The week view and *Up next* on `/channel` do not plan a pending point: they show
@@ -229,7 +234,9 @@ continues it there when it is on air again:
   `open-failure`, with `positionSeconds`), `playout.resume.start` with `startOffset` when it continues,
   `playout.resume.not_seekable` when the file is no longer a file on disk (it then starts from 0). The
   as-run log reads "resumed at 1:15:10" (`as_run_log.start_offset_seconds`). A continued item that fails
-  again before it aired 2 minutes drops its point, so a broken spot in a file cannot loop.
+  again before it aired 2 minutes drops its point; one continued twice without airing 2 minutes (a file
+  that no longer opens, after the M94 retry; a spot that takes the container down) is given up and the
+  pool takes its next item. So a broken spot in a file cannot loop.
 
 ```sh
 docker compose exec -T postgres psql -U stream247 -d stream247 -At -c \

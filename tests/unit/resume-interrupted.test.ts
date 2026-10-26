@@ -16,6 +16,7 @@ import {
   classifyResumeExit,
   decideResumeCheckpoint,
   decideResumePointsAfterExit,
+  decideResumePointsAtStart,
   isSeekableInput,
   pickResumeItem,
   resumeRunOf,
@@ -76,6 +77,13 @@ describe("the stored points", () => {
       )
     ).toEqual([point(), point({ positionSeconds: 12, poolId: "q" })]);
     expect(parseResumePoints([point({ savedAt: "yesterday" })])).toEqual([]);
+  });
+
+  it("reads the count of short starts, and leaves it out when there is none", () => {
+    expect(parseResumePoints(JSON.stringify([point({ shortStarts: 2, shortStartAt: iso(T) }), point({ poolId: "q", shortStarts: 0 })]))).toEqual([
+      point({ shortStarts: 2, shortStartAt: iso(T) }),
+      point({ poolId: "q" })
+    ]);
   });
 
   it("keeps one point per pool, the newest first, and a bounded list", () => {
@@ -165,8 +173,9 @@ describe("what an exit does to the point", () => {
     ["", { naturalBoundary: true, exitedCleanly: true }, "ended"],
     ["", { exitedCleanly: true }, "ended"],
     ["duration-bound", {}, "ended"],
-    ["feed-stalled", {}, "ended"],
-    ["feed-audio-stalled", {}, "ended"],
+    // A feed watchdog ends a stalled feed, which nobody wanted: kept like a crash (review of M124).
+    ["feed-stalled", {}, "failed"],
+    ["feed-audio-stalled", {}, "failed"],
     // Skip and Restart.
     ["switch", { stopIntent: "skip" }, "ended"],
     ["restart-requested", { stopIntent: "skip" }, "ended"],
@@ -210,9 +219,10 @@ describe("what an exit does to the point", () => {
   it("gives up a continued item that fails again before it aired 2 minutes", () => {
     const resumed: ResumeRun = { ...run, startOffsetSeconds: 7200, resumed: true };
     expect(decideResumePointsAfterExit({ points: [point(), other], run: resumed, kind: "failed", exitedAtMs: T + 119_000 })).toEqual([other]);
-    // Cut by something else, or failing after it aired long enough, it keeps its new position.
+    // Cut by something else, or failing after it aired long enough, it keeps its new position; cut within
+    // 2 minutes it counts as a short start of the point.
     expect(decideResumePointsAfterExit({ points: [], run: resumed, kind: "cut", exitedAtMs: T + 30_000 })).toEqual([
-      point({ positionSeconds: 7230, savedAt: iso(T + 30_000) })
+      point({ positionSeconds: 7230, savedAt: iso(T + 30_000), shortStarts: 1, shortStartAt: iso(T) })
     ]);
     expect(decideResumePointsAfterExit({ points: [], run: resumed, kind: "failed", exitedAtMs: T + 120_000 })).toEqual([
       point({ positionSeconds: 7320, savedAt: iso(T + 120_000) })
@@ -220,6 +230,50 @@ describe("what an exit does to the point", () => {
     // A replay from the beginning (it aired too little before) that fails again is given up too.
     const replay: ResumeRun = { ...run, resumed: true };
     expect(decideResumePointsAfterExit({ points: [point({ positionSeconds: 40 })], run: replay, kind: "failed", exitedAtMs: T + 40_000 })).toEqual([]);
+  });
+
+  it("counts a continued start that never opened, once per run, so the pick gives it up after the retry", () => {
+    const resumed: ResumeRun = { ...run, startOffsetSeconds: 4 * 3600 - 10, resumed: true };
+    const first = decideResumePointsAfterExit({ points: [point(), other], run: resumed, kind: "open-failure", exitedAtMs: T + 2_000 });
+    expect(first).toEqual([point({ shortStarts: 1, shortStartAt: iso(T) }), other]);
+    // The start write already counted this run: not twice.
+    expect(decideResumePointsAtStart([point(), other], resumed)).toEqual(first);
+    expect(decideResumePointsAfterExit({ points: first, run: resumed, kind: "open-failure", exitedAtMs: T + 2_000 })).toEqual(first);
+    // The M94 retry is a run of its own.
+    const retry: ResumeRun = { ...resumed, startedAtMs: T + 20_000 };
+    const second = decideResumePointsAfterExit({ points: first, run: retry, kind: "open-failure", exitedAtMs: T + 22_000 });
+    expect(second[0]).toEqual(point({ shortStarts: 2, shortStartAt: iso(T + 20_000) }));
+    expect(
+      pickResumeItem({ points: second, pool: { id: "pool_p", cursorAssetId: "asset_a" }, assets: [{ id: "asset_a", durationSeconds: 6 * 3600 }], isEligible: () => true, runningAssetId: "", nowMs: T + 60_000 })
+    ).toBeNull();
+    // A start that is not a continuation counts nothing.
+    expect(decideResumePointsAtStart([point()], run)).toEqual([point()]);
+    expect(decideResumePointsAtStart([point()], null)).toEqual([point()]);
+  });
+
+  it("gives up a point whose continuations die with the container: the checkpoints count, airing 2 minutes clears it", () => {
+    const resumed: ResumeRun = { ...run, startOffsetSeconds: 3 * 3600 - 25, resumed: true };
+    const pools = [{ id: "pool_p", cursorAssetId: "asset_a" }];
+    const started = decideResumePointsAtStart([point({ positionSeconds: 3 * 3600 - 15 })], resumed);
+    const checkpoint = decideResumeCheckpoint({ points: started, run: resumed, processRunning: true, pools, nowMs: T + 15_000 });
+    expect(checkpoint).toEqual([point({ positionSeconds: 3 * 3600 - 10, savedAt: iso(T + 15_000), shortStarts: 1, shortStartAt: iso(T) })]);
+    // Killed with the container; the next continuation is counted again, and then no more.
+    const again: ResumeRun = { ...resumed, startedAtMs: T + 60_000 };
+    const twice = decideResumeCheckpoint({ points: decideResumePointsAtStart(checkpoint, again), run: again, processRunning: true, pools, nowMs: T + 75_000 });
+    expect(twice[0]?.shortStarts).toBe(2);
+    expect(
+      pickResumeItem({ points: twice, pool: pools[0] ?? null, assets: [{ id: "asset_a", durationSeconds: 6 * 3600 }], isEligible: () => true, runningAssetId: "", nowMs: T + 120_000 })
+    ).toBeNull();
+    // One that airs 2 minutes is past the spot: the count is cleared.
+    expect(decideResumeCheckpoint({ points: twice, run: again, processRunning: true, pools, nowMs: T + 60_000 + 120_000 })).toEqual([
+      point({ positionSeconds: 3 * 3600 - 25 + 120, savedAt: iso(T + 180_000) })
+    ]);
+  });
+
+  it("clears the point of an item that aired to its end under a Play now or a Pin", () => {
+    const points = [point(), other];
+    expect(decideResumePointsAfterExit({ points, run: null, kind: "ended", exitedAtMs: T, completedAssetId: "asset_a" })).toEqual([other]);
+    expect(decideResumePointsAfterExit({ points, run: null, kind: "ended", exitedAtMs: T, completedAssetId: "" })).toEqual(points);
   });
 });
 

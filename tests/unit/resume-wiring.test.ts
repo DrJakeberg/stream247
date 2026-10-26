@@ -36,7 +36,12 @@ describe("the start of a continued item", () => {
   });
 
   it("records where it started: the runtime row, the as-run row, the log and the run that keeps the point", () => {
-    expect(start).toContain("processStartedAt: startedAt, currentStartOffsetSeconds: startOffsetSeconds,");
+    expect(start).toContain(
+      "processStartedAt: startedAt, currentStartOffsetSeconds: startOffsetSeconds, resumePoints: startDropsResumeAssetId ? removeResumePointsOfAsset(playout.resumePoints, startDropsResumeAssetId) : decideResumePointsAtStart(playout.resumePoints, startResumeRun),"
+    );
+    // A continuation that cannot seek (its archive left the cache) gives the point up, so it is not
+    // started from 0 again at every later cut.
+    expect(start).toContain('const startDropsResumeAssetId = args.resume?.resumed && args.asset && !startResumeRun ? args.asset.id : "";');
     expect(start).toContain("formatCandidate: playoutFormatCandidateId, startOffsetSeconds })");
     expect(start).toContain('logRuntimeEvent("playout.resume.start", {');
     expect(start).toContain("failedPlayoutExitWrite.supersede(); playoutStartOffsetSeconds = startOffsetSeconds;");
@@ -76,7 +81,7 @@ describe("the point through the run's life", () => {
       "const resumeExitKind = classifyResumeExit({ plannedReason, stopIntent: lastStopIntent, naturalBoundary, exitedCleanly, immediateOpenFailure });"
     );
     expect(exit).toContain(
-      'processStartedAt: "", currentStartOffsetSeconds: 0, resumePoints: decideResumePointsAfterExit({ points: playout.resumePoints, run: lastResumeRun, kind: resumeExitKind, exitedAtMs }),'
+      'processStartedAt: "", currentStartOffsetSeconds: 0, resumePoints: decideResumePointsAfterExit({ points: playout.resumePoints, run: lastResumeRun, kind: resumeExitKind, exitedAtMs, completedAssetId: resumeExitKind === "ended" && (plannedReason === "" || plannedReason === "duration-bound") ? lastAssetId : "" }),'
     );
     expect(exit).toContain("playoutStartOffsetSeconds = 0; playoutResumeRun = null;");
   });
@@ -121,8 +126,11 @@ describe("the selection that continues the item", () => {
       "currentPoolAsset ?? resumePick?.asset ?? selectPoolAsset(state, currentScheduleItem.poolId, skippedAssetId, removedNextAssetId)"
     );
     expect(choose).toContain("...(resumeStart ? { resumeStartSeconds: resumeStart.startSeconds } : {})");
-    // The retry of a continued item that failed to open keeps its position.
+    // The retry of a continued item that failed to open keeps its position: its own pool's point, once.
     expect(choose).toContain('...(retryResume?.kind === "resume" ? { resumeStartSeconds: retryResume.startSeconds } : {}),');
+    expect(choose).toContain(
+      'point.assetId === retryAsset.id && point.poolId === (currentScheduleItem?.poolId ?? "") && isResumePointValid(point, scheduleNow.getTime()) && !isResumePointExhausted(point)'
+    );
   });
 
   it("holds the item to the pool's own rules", () => {

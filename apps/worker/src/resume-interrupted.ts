@@ -14,7 +14,9 @@
  */
 
 import {
+  countResumeShortStart,
   decideResumeStart,
+  isResumePointExhausted,
   isResumePointValid,
   pruneResumePoints,
   removeResumePointsOfAsset,
@@ -24,7 +26,6 @@ import {
   type ResumePoint
 } from "@stream247/core";
 import { asRunInputKindOf, type AsRunStopIntent } from "./as-run.js";
-import { ITEM_ENDING_STOP_REASONS } from "./playout-boundary.js";
 
 /** The run on air that keeps a point: a pool's own pick, played from a file on disk. */
 export type ResumeRun = {
@@ -88,11 +89,12 @@ export function resumeRunPositionAt(run: ResumeRun, nowMs: number): number {
 /**
  * What an exit means for the item's point.
  *
- * - `ended`: the item is done with -- its end (EOF, the duration bound, a feed watchdog that ends a
- *   stalled item), a Skip, or a Restart, which means "from the start".
+ * - `ended`: the item is done with -- its end (EOF, the duration bound), a Skip, or a Restart, which
+ *   means "from the start". In direct mode Hard reload, Force reconnect and Recover outputs reach the
+ *   playout as the same restart request and count as a Restart.
  * - `cut`: something else took the air -- a Play now, a Pin or Fallback, a Live Bridge, a dated block, a
  *   planned reconnect, the crash-loop reset, a destination that went missing.
- * - `failed`: ffmpeg died on its own.
+ * - `failed`: ffmpeg died on its own, or a feed watchdog ended a stalled feed (not wanted either).
  * - `open-failure`: the input never opened; M94 starts the item once more and the point stays as it was.
  */
 export type ResumeExitKind = "ended" | "cut" | "failed" | "open-failure";
@@ -111,8 +113,11 @@ export function classifyResumeExit(args: {
     // A clean exit nobody asked for is the end of the input, as the as-run log reads it.
     return args.naturalBoundary || args.exitedCleanly ? "ended" : "failed";
   }
-  if (ITEM_ENDING_STOP_REASONS.has(args.plannedReason)) {
+  if (args.plannedReason === "duration-bound") {
     return "ended";
+  }
+  if (args.plannedReason === "feed-stalled" || args.plannedReason === "feed-audio-stalled") {
+    return "failed";
   }
   if (args.plannedReason === "restart-requested") {
     // Restart and Skip end the item; a restart request that put something else on air (direct mode's Pin,
@@ -128,6 +133,41 @@ export function classifyResumeExit(args: {
 }
 
 /**
+ * The run's point at `nowMs`. The count of short starts (core: shortStarts) carries over from the point
+ * the run continued until the run has aired 2 minutes; then it starts again from none.
+ */
+function pointOfRun(points: readonly ResumePoint[], run: ResumeRun, nowMs: number): ResumePoint {
+  const airedSeconds = Math.max(0, Math.floor((nowMs - run.startedAtMs) / 1000));
+  const point: ResumePoint = {
+    assetId: run.assetId,
+    poolId: run.poolId,
+    positionSeconds: resumeRunPositionAt(run, nowMs),
+    savedAt: new Date(nowMs).toISOString()
+  };
+  if (!run.resumed || airedSeconds >= RESUME_MIN_AIRED_SECONDS) {
+    return point;
+  }
+  const previous = points.find((entry) => entry.poolId === run.poolId && entry.assetId === run.assetId);
+  return countResumeShortStart(
+    previous?.shortStarts ? { ...point, shortStarts: previous.shortStarts, shortStartAt: previous.shortStartAt ?? "" } : point,
+    run.startedAtMs
+  );
+}
+
+/**
+ * The points after the start of a run: a run that continues a point counts as a short start at once, so
+ * a container that dies before the first checkpoint still counts it.
+ */
+export function decideResumePointsAtStart(points: readonly ResumePoint[], run: ResumeRun | null): ResumePoint[] {
+  if (!run?.resumed) {
+    return [...points];
+  }
+  return points.map((point) =>
+    point.poolId === run.poolId && point.assetId === run.assetId ? countResumeShortStart(point, run.startedAtMs) : point
+  );
+}
+
+/**
  * The points after the run's exit. A continued item that fails again before it aired 2 minutes is given
  * up, so an item that kills ffmpeg at the same place cannot come back for ever: the pool picks the next
  * one, as without a point.
@@ -137,24 +177,30 @@ export function decideResumePointsAfterExit(args: {
   run: ResumeRun | null;
   kind: ResumeExitKind;
   exitedAtMs: number;
+  /**
+   * The item that just aired to its end (EOF or its duration bound), whoever played it: a Play now or a
+   * Pin of the cut item itself that ran to its end leaves nothing to continue. "" otherwise.
+   */
+  completedAssetId?: string;
 }): ResumePoint[] {
   const { run } = args;
-  if (!run || args.kind === "open-failure") {
-    return [...args.points];
+  const points = args.completedAssetId ? removeResumePointsOfAsset(args.points, args.completedAssetId) : [...args.points];
+  if (!run) {
+    return points;
+  }
+  if (args.kind === "open-failure") {
+    // The point stays for the M94 retry; the failed start counts, so a file that stopped opening is
+    // given up after its retry.
+    return decideResumePointsAtStart(points, run);
   }
   if (args.kind === "ended") {
-    return removeResumePointsOfAsset(args.points, run.assetId);
+    return removeResumePointsOfAsset(points, run.assetId);
   }
   const airedSeconds = Math.max(0, Math.floor((args.exitedAtMs - run.startedAtMs) / 1000));
   if (args.kind === "failed" && run.resumed && airedSeconds < RESUME_MIN_AIRED_SECONDS) {
-    return removeResumePointsOfAsset(args.points, run.assetId);
+    return removeResumePointsOfAsset(points, run.assetId);
   }
-  return upsertResumePoint(args.points, {
-    assetId: run.assetId,
-    poolId: run.poolId,
-    positionSeconds: resumeRunPositionAt(run, args.exitedAtMs),
-    savedAt: new Date(args.exitedAtMs).toISOString()
-  });
+  return upsertResumePoint(points, pointOfRun(points, run, args.exitedAtMs));
 }
 
 /**
@@ -174,20 +220,16 @@ export function decideResumeCheckpoint(args: {
   if (!args.run || !args.processRunning) {
     return owed;
   }
-  return upsertResumePoint(owed, {
-    assetId: args.run.assetId,
-    poolId: args.run.poolId,
-    positionSeconds: resumeRunPositionAt(args.run, args.nowMs),
-    savedAt: new Date(args.nowMs).toISOString()
-  });
+  return upsertResumePoint(owed, pointOfRun(args.points, args.run, args.nowMs));
 }
 
 export type ResumePick<T> = { asset: T; startSeconds: number; positionSeconds: number };
 
 /**
  * The pool's interrupted item and where it starts, or null when the pool picks as before: no point, a
- * point older than 24 hours, a pool that has moved on, the item on air already, an item the pool may not
- * take now (not ready, held out, quarantined: `isEligible`), or less than 2 minutes left.
+ * point older than 24 hours, a pool that has moved on, the item on air already, a point continued twice
+ * without the item airing 2 minutes, an item the pool may not take now (not ready, held out,
+ * quarantined: `isEligible`), or less than 2 minutes left.
  */
 export function pickResumeItem<T extends { id: string; durationSeconds?: number }>(args: {
   points: readonly ResumePoint[];
@@ -201,7 +243,12 @@ export function pickResumeItem<T extends { id: string; durationSeconds?: number 
     return null;
   }
   const point = resumePointOfPool(args.points, args.pool.id);
-  if (!point || !isResumePointValid(point, args.nowMs) || (args.pool.cursorAssetId ?? "") !== point.assetId) {
+  if (
+    !point ||
+    !isResumePointValid(point, args.nowMs) ||
+    isResumePointExhausted(point) ||
+    (args.pool.cursorAssetId ?? "") !== point.assetId
+  ) {
     return null;
   }
   if (args.runningAssetId === point.assetId) {
