@@ -63,7 +63,10 @@ describe("selection without the restart-plus-desired-asset branch", () => {
     const poolAsset = between(choose, "const currentPoolAsset =", ": null;");
     expect(poolAsset).toContain("asset.id !== skippedAssetId");
     // Since M89 the operator's Remove next hold is held out the same way, beside the skip hold.
-    expect(choose).toContain("currentPoolAsset ?? selectPoolAsset(state, currentScheduleItem.poolId, skippedAssetId, removedNextAssetId)");
+    // Since M124 a cut item of the pool is continued before the pool picks on, under the same holds.
+    expect(choose).toContain(
+      "currentPoolAsset ?? resumePick?.asset ?? selectPoolAsset(state, currentScheduleItem.poolId, skippedAssetId, removedNextAssetId)"
+    );
   });
 
   it("lets a Move next or Replay previous item play to its end, also from outside the pool's sources", () => {
@@ -225,7 +228,11 @@ describe("the cycle's end", () => {
   it("warms the pool's next items while an operator item is on air, without moving the position", () => {
     // Since M94 the condition is named (poolQueueScanned), so the due insert is warmed under the same one.
     const queue = between(flatCycle, "const poolQueueScanned = Boolean(", "manualNextQueueAsset );");
-    expect(queue).toContain("const rawQueueAssets = prioritizeManualNextAsset( currentScheduleItem?.poolId && poolQueueScanned ? getPoolPlaybackQueue(");
+    // Since M124 the pool's cut item goes ahead of its next picks, and a Move next still ahead of it.
+    expect(queue).toContain(
+      "const rawQueueAssets = prioritizeManualNextAsset( prioritizeManualNextAsset( currentScheduleItem?.poolId && poolQueueScanned ? getPoolPlaybackQueue("
+    );
+    expect(queue).toContain(": [], resumeQueueAsset ),");
     for (const reasonCode of ["scheduled_match", "scheduled_insert", "graceful_handoff", "manual_next", "operator_insert", "operator_override"]) {
       expect(queue).toContain(`selection.reasonCode === "${reasonCode}"`);
     }

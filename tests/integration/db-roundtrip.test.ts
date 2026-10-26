@@ -2397,6 +2397,7 @@ describe.sequential("database roundtrip", () => {
       airedSeconds: 0,
       endReason: "",
       exitCode: "",
+      startOffsetSeconds: 0,
       ...overrides
     });
     const all = () => listAsRunRecords({ fromIso: "2000-01-01T00:00:00.000Z", toIso: "2100-01-01T00:00:00.000Z", limit: 1000 });

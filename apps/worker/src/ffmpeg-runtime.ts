@@ -360,6 +360,12 @@ export function buildFfmpegInputArgs(args: {
   input: string;
   realtime?: boolean;
   loop?: boolean;
+  /**
+   * Start this many whole seconds into the input (M124: an interrupted item continued at its position).
+   * As an input option, before `-i`: ffmpeg seeks the file instead of decoding up to the position, and
+   * the output's timestamps still start at 0, so the encode downstream sees an ordinary start.
+   */
+  startSeconds?: number;
 }): string[] {
   const command: string[] = [];
 
@@ -382,6 +388,11 @@ export function buildFfmpegInputArgs(args: {
       "-reconnect_delay_max",
       process.env.FFMPEG_RECONNECT_DELAY_MAX || "10"
     );
+  }
+
+  const startSeconds = Math.floor(Number(args.startSeconds) || 0);
+  if (startSeconds > 0) {
+    command.push("-ss", String(startSeconds));
   }
 
   command.push("-i", args.input);

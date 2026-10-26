@@ -26,6 +26,9 @@ export { MIN_OWNER_PASSWORD_LENGTH, hashPassword, verifyPassword } from "./owner
 import { classifyAssetRetention, selectAssetRetentionDeletions, type AssetRetentionCounters } from "./asset-retention.js";
 import {
   createDefaultModerationConfig,
+  onAirItemZeroAt,
+  parseResumePoints,
+  type ResumePoint,
   normalizeAudioLaneVolumePercent,
   parseAssetChaptersJson,
   normalizeChatGameSettings,
@@ -815,6 +818,14 @@ export type PlayoutRuntimeRecord = {
   // no longer lift it. Held out of every arm like a skip hold until removeNextUntil.
   removeNextAssetId: string;
   removeNextUntil: string;
+  /**
+   * The position the process on air started at, in whole seconds into the item: 0 for a start from the
+   * beginning, more for an item continued after a cut (M124). Position 0 of the item aired this long
+   * before processStartedAt (onAirItemZeroAt in @stream247/core).
+   */
+  currentStartOffsetSeconds: number;
+  /** Where each pool's interrupted item stood (M124, resume-point.ts in @stream247/core); newest first. */
+  resumePoints: ResumePoint[];
   pendingAction: "" | "refresh" | "rebuild_queue" | "refresh_and_rebuild_queue";
   pendingActionRequestedAt: string;
   uplinkStatus: "" | "idle" | "waiting-for-feed" | "running" | "scheduled-reconnect" | "failed";
@@ -2214,6 +2225,8 @@ function defaultState(): AppState {
       skipUntil: "",
       removeNextAssetId: "",
       removeNextUntil: "",
+      currentStartOffsetSeconds: 0,
+      resumePoints: [],
       pendingAction: "",
       pendingActionRequestedAt: "",
       uplinkStatus: "",
@@ -2505,6 +2518,8 @@ function normalizeState(state: AppState): AppState {
     playout: {
       ...defaults.playout,
       ...(state.playout ?? {}),
+      currentStartOffsetSeconds: Math.max(0, Math.floor(Number(state.playout?.currentStartOffsetSeconds) || 0)),
+      resumePoints: parseResumePoints(state.playout?.resumePoints ?? []),
       liveBridgeInputType:
         state.playout?.liveBridgeInputType === "rtmp" || state.playout?.liveBridgeInputType === "hls"
           ? state.playout.liveBridgeInputType
@@ -2969,8 +2984,10 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       planned_seconds INTEGER NOT NULL DEFAULT 0,
       aired_seconds INTEGER NOT NULL DEFAULT 0,
       end_reason TEXT NOT NULL DEFAULT '',
-      exit_code TEXT NOT NULL DEFAULT ''
+      exit_code TEXT NOT NULL DEFAULT '',
+      start_offset_seconds INTEGER NOT NULL DEFAULT 0
     );
+    ALTER TABLE as_run_log ADD COLUMN IF NOT EXISTS start_offset_seconds INTEGER NOT NULL DEFAULT 0;
     CREATE INDEX IF NOT EXISTS as_run_log_started_at_idx ON as_run_log (started_at DESC);
     -- Every start closes the open row; without this it scans the whole 90-day table to find it.
     CREATE INDEX IF NOT EXISTS as_run_log_open_idx ON as_run_log (id) WHERE ended_at = '';
@@ -3128,6 +3145,8 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       skip_until TEXT NOT NULL DEFAULT '',
       remove_next_asset_id TEXT NOT NULL DEFAULT '',
       remove_next_until TEXT NOT NULL DEFAULT '',
+      current_start_offset_seconds INTEGER NOT NULL DEFAULT 0,
+      resume_points TEXT NOT NULL DEFAULT '[]',
       pending_action TEXT NOT NULL DEFAULT '',
       pending_action_requested_at TEXT NOT NULL DEFAULT '',
       message TEXT NOT NULL DEFAULT 'Playout engine has not started yet.',
@@ -3347,6 +3366,8 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS skip_until TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS remove_next_asset_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS remove_next_until TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS current_start_offset_seconds INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS resume_points TEXT NOT NULL DEFAULT '[]';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS pending_action TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS pending_action_requested_at TEXT NOT NULL DEFAULT '';
     ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS uplink_status TEXT NOT NULL DEFAULT '';
@@ -4470,6 +4491,27 @@ if (!schemaMigrations.some((migration) => migration.id === assetChapterProbeRech
   schemaMigrations.push(assetChapterProbeRechecksMigration);
 }
 
+/**
+ * Resuming an interrupted item (M124), for installs that already ran the baseline: the position the
+ * process on air started at, the stored resume points, and the position each as-run row started at.
+ * Word for word the base-schema lines; 0 and an empty list are what every install has after the upgrade.
+ */
+export const resumeInterruptedItemMigration: MigrationDefinition = {
+  id: "20261026_001_resume_interrupted_item",
+  description: "Keep where an interrupted item stood, so the pool continues it there.",
+  apply: async (client) => {
+    await client.query(`
+      ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS current_start_offset_seconds INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE playout_runtime ADD COLUMN IF NOT EXISTS resume_points TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE as_run_log ADD COLUMN IF NOT EXISTS start_offset_seconds INTEGER NOT NULL DEFAULT 0;
+    `);
+  }
+};
+
+if (!schemaMigrations.some((migration) => migration.id === resumeInterruptedItemMigration.id)) {
+  schemaMigrations.push(resumeInterruptedItemMigration);
+}
+
 async function ensureSchemaMigrationsTable(client: PoolClient): Promise<void> {
   await client.query(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -5403,9 +5445,9 @@ async function persistPlayoutRuntime(client: PoolClient, playout: PlayoutRuntime
         pending_action, pending_action_requested_at, message, uplink_status, uplink_input_mode, uplink_started_at, uplink_heartbeat_at, uplink_destination_ids,
         uplink_restart_count, uplink_unplanned_restart_count, uplink_last_exit_code, uplink_last_exit_reason, uplink_last_exit_planned, uplink_reconnect_until,
         program_feed_status, program_feed_updated_at, program_feed_playlist_path, program_feed_target_seconds, program_feed_buffered_seconds,
-        worker_heartbeat_at, remove_next_asset_id, remove_next_until
+        worker_heartbeat_at, remove_next_asset_id, remove_next_until, current_start_offset_seconds, resume_points
       )
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64, $65, $66, $67, $68, $69, $70, $71, $72, $73, $74, $75, $76, $77, $78, $79, $80, $81)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64, $65, $66, $67, $68, $69, $70, $71, $72, $73, $74, $75, $76, $77, $78, $79, $80, $81, $82, $83)
       ON CONFLICT (singleton_id) DO UPDATE SET
         status = EXCLUDED.status,
         transition_state = EXCLUDED.transition_state,
@@ -5468,6 +5510,8 @@ async function persistPlayoutRuntime(client: PoolClient, playout: PlayoutRuntime
         skip_until = EXCLUDED.skip_until,
         remove_next_asset_id = EXCLUDED.remove_next_asset_id,
         remove_next_until = EXCLUDED.remove_next_until,
+        current_start_offset_seconds = EXCLUDED.current_start_offset_seconds,
+        resume_points = EXCLUDED.resume_points,
         pending_action = EXCLUDED.pending_action,
         pending_action_requested_at = EXCLUDED.pending_action_requested_at,
         message = EXCLUDED.message,
@@ -5570,7 +5614,9 @@ async function persistPlayoutRuntime(client: PoolClient, playout: PlayoutRuntime
       playout.programFeedBufferedSeconds,
       playout.workerHeartbeatAt,
       playout.removeNextAssetId ?? "",
-      playout.removeNextUntil ?? ""
+      playout.removeNextUntil ?? "",
+      Math.max(0, Math.floor(Number(playout.currentStartOffsetSeconds) || 0)),
+      JSON.stringify(playout.resumePoints ?? [])
     ]
   );
 }
@@ -5890,6 +5936,8 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     skip_until: string;
     remove_next_asset_id: string;
     remove_next_until: string;
+    current_start_offset_seconds?: number;
+    resume_points?: string;
     pending_action: PlayoutRuntimeRecord["pendingAction"];
     pending_action_requested_at: string;
     uplink_status: PlayoutRuntimeRecord["uplinkStatus"];
@@ -6254,6 +6302,8 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
           skipUntil: playoutRow.skip_until,
           removeNextAssetId: playoutRow.remove_next_asset_id ?? "",
           removeNextUntil: playoutRow.remove_next_until ?? "",
+          currentStartOffsetSeconds: Number(playoutRow.current_start_offset_seconds) || 0,
+          resumePoints: parseResumePoints(playoutRow.resume_points ?? "[]"),
           pendingAction: (playoutRow.pending_action as PlayoutRuntimeRecord["pendingAction"]) || "",
           pendingActionRequestedAt: playoutRow.pending_action_requested_at || "",
           uplinkStatus: playoutRow.uplink_status || "",
@@ -9729,6 +9779,7 @@ export type PlayoutProgrammeRow = {
   status: string;
   currentTitle: string;
   currentAssetId: string;
+  /** When position 0 of the item on air aired: the process start, earlier by its start offset (M124). */
   processStartedAt: string;
   /** The head of the queue's kind ("live", "insert", "asset", …); "" when the queue is empty. */
   queueKind: string;
@@ -9753,7 +9804,8 @@ export function playoutProgrammeRowOf(playout: PlayoutRuntimeRecord): PlayoutPro
     status: playout.status,
     currentTitle: playout.currentTitle,
     currentAssetId: playout.currentAssetId,
-    processStartedAt: playout.processStartedAt,
+    // Position 0 of the item: earlier than the process start for an item continued after a cut (M124).
+    processStartedAt: onAirItemZeroAt(playout),
     queueKind: playout.queueItems[0]?.kind ?? "",
     nextAssetId: playout.nextAssetId,
     nextTitle: playout.nextTitle,
@@ -9795,8 +9847,9 @@ export async function readPlayoutProgrammeTitles(): Promise<PlayoutProgrammeRow>
     cuepoint_window_key: string;
     skip_asset_id: string;
     skip_until: string;
+    current_start_offset_seconds: number | null;
   }>(
-    `SELECT status, current_title, current_asset_id, process_started_at, queue_items, next_asset_id, next_title,
+    `SELECT status, current_title, current_asset_id, process_started_at, current_start_offset_seconds, queue_items, next_asset_id, next_title,
        manual_next_asset_id, insert_asset_id, insert_status, override_asset_id, override_until, cuepoint_window_key,
        skip_asset_id, skip_until
      FROM playout_runtime WHERE singleton_id = 1`
@@ -9806,7 +9859,10 @@ export async function readPlayoutProgrammeTitles(): Promise<PlayoutProgrammeRow>
     status: row?.status ?? "",
     currentTitle: row?.current_title ?? "",
     currentAssetId: row?.current_asset_id ?? "",
-    processStartedAt: row?.process_started_at ?? "",
+    processStartedAt: onAirItemZeroAt({
+      processStartedAt: row?.process_started_at ?? "",
+      currentStartOffsetSeconds: Number(row?.current_start_offset_seconds) || 0
+    }),
     queueKind: queueKindOf(row?.queue_items),
     nextAssetId: row?.next_asset_id ?? "",
     nextTitle: row?.next_title ?? "",
@@ -9997,6 +10053,7 @@ type AsRunRow = {
   aired_seconds: number | null;
   end_reason: string;
   exit_code: string;
+  start_offset_seconds?: number | null;
 };
 
 function mapAsRunRow(row: AsRunRow): AsRunRecord {
@@ -10018,7 +10075,8 @@ function mapAsRunRow(row: AsRunRow): AsRunRecord {
     plannedSeconds: Math.max(0, Math.floor(Number(row.planned_seconds) || 0)),
     airedSeconds: Math.max(0, Math.floor(Number(row.aired_seconds) || 0)),
     endReason: (row.end_reason ?? "") as AsRunRecord["endReason"],
-    exitCode: row.exit_code ?? ""
+    exitCode: row.exit_code ?? "",
+    startOffsetSeconds: Math.max(0, Math.floor(Number(row.start_offset_seconds) || 0))
   };
 }
 
@@ -10089,9 +10147,10 @@ export async function recordAsRunStart(record: AsRunRecord): Promise<void> {
       `
         INSERT INTO as_run_log (
           id, started_at, ended_at, target_kind, asset_id, title, source_id, pool_id, block_id, reason_code,
-          queue_kind, input_kind, format_id, format_candidate, planned_seconds, aired_seconds, end_reason, exit_code
+          queue_kind, input_kind, format_id, format_candidate, planned_seconds, aired_seconds, end_reason, exit_code,
+          start_offset_seconds
         )
-        VALUES ($1, $2, '', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 0, '', '')
+        VALUES ($1, $2, '', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 0, '', '', $15)
       `,
       [
         record.id,
@@ -10107,7 +10166,8 @@ export async function recordAsRunStart(record: AsRunRecord): Promise<void> {
         record.inputKind,
         record.formatId,
         record.formatCandidate,
-        Math.max(0, Math.round(record.plannedSeconds))
+        Math.max(0, Math.round(record.plannedSeconds)),
+        Math.max(0, Math.floor(record.startOffsetSeconds ?? 0))
       ]
     );
     await client.query("DELETE FROM as_run_log WHERE started_at < $1", [cutoffIso]);

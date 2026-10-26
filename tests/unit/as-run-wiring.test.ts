@@ -26,7 +26,8 @@ const row = (id: string): AsRunRecord => ({
   plannedSeconds: 2700,
   airedSeconds: 0,
   endReason: "",
-  exitCode: ""
+  exitCode: "",
+  startOffsetSeconds: 0
 });
 const ended: AsRunEnd = { endedAt: "2026-10-01T17:38:04.000Z", airedSeconds: 4, endReason: "failed", exitCode: "8" };
 
@@ -309,6 +310,7 @@ describe("as-run wiring", () => {
       "queue_kind",
       "reason_code",
       "source_id",
+      "start_offset_seconds",
       "started_at",
       "target_kind",
       "title"

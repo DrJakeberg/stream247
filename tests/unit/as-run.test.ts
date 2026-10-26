@@ -191,7 +191,8 @@ describe("as-run rows", () => {
       plannedSeconds: 2700,
       airedSeconds: 0,
       endReason: "",
-      exitCode: ""
+      exitCode: "",
+      startOffsetSeconds: 0
     });
     // No signed media URL is kept: the row says how, not where from.
     expect(JSON.stringify(start())).not.toContain("googlevideo");
@@ -279,6 +280,7 @@ describe("as-run console rows", () => {
     airedSeconds: 2698,
     endReason: "natural-end",
     exitCode: "0",
+    startOffsetSeconds: 0,
     ...overrides
   });
   const names = {

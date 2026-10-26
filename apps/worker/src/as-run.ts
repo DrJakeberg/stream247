@@ -166,6 +166,8 @@ export function buildAsRunStartRecord(args: {
   audioInput: string;
   formatId: string;
   formatCandidate: string;
+  /** Where in the item the process started (M124); 0 or left out for the beginning. */
+  startOffsetSeconds?: number;
 }): AsRunRecord {
   const duration = Number(args.asset?.durationSeconds ?? 0);
   return {
@@ -186,7 +188,8 @@ export function buildAsRunStartRecord(args: {
     plannedSeconds: args.asset && Number.isFinite(duration) && duration > 0 ? Math.round(duration) : 0,
     airedSeconds: 0,
     endReason: "",
-    exitCode: ""
+    exitCode: "",
+    startOffsetSeconds: Math.max(0, Math.floor(Number(args.startOffsetSeconds) || 0))
   };
 }
 
