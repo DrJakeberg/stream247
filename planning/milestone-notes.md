@@ -520,3 +520,31 @@ under `planning/archive/`, text unchanged.
   repeated hour (00:00-02:30, then 02:30-06:00) lets both blocks span the hour, as the worker airs the first
   again from the second 02:00 and M101's Twitch plan posts it; the projection counts that hour for both
   (480 scheduled minutes for 420), a split of each block's windows by the wall clock would be needed.
+
+### M124 An Interrupted Item Continues Where It Was Cut
+
+- **Checked against `main` first (5f41696).** Nothing resumed: `currentPoolAsset` kept an item only while
+  its process ran, so any cut lost it, and the pool cursor (written at the start) moved on after it.
+- **Owner's rules (2026-10-26 09:55 UTC, "Ja, wie empfohlen").** Every unwanted cut keeps the position;
+  Skip, Restart and the natural end do not. A point holds until the pool is on air again, at most 24 h.
+  Continue 10 s before the cut; under 2 min aired starts from 0, under 2 min left takes the next item.
+  Only local files and cached Twitch archives; chat, titles and `/channel` unchanged, the as-run log says
+  "resumed at h:mm:ss".
+- **Deviation from the question's wording.** The question said remote items "fangen weiter von vorn an".
+  As built, a remote archive or a YouTube video keeps no point at all, as before M124: the pool goes on
+  after it, it does not start the cut item again from 0. Seeking a remote HLS input is not reliable
+  enough to build on without the DUT.
+- **Where the position lives.** `playout_runtime.resume_points` (JSON, one point per pool, newest first,
+  at most 16) and `current_start_offset_seconds`; `as_run_log.start_offset_seconds`. Every playout cycle
+  writes the position of the pool's item on air as a checkpoint, because a container killed with ffmpeg
+  (repin, host restart, OOM) writes no exit; the exit handler then writes the exact position. So after a
+  kill the point is at most one cycle (15 s) old, which the 10 s rewind does not fully cover: a container
+  kill can skip up to about 5 s.
+- **Seek.** `-ss` before `-i` (input seek): exact to the frame for the tested H.264 file with one
+  keyframe, and timestamps start at 0, so the duration bound, chapters, the overlay and the programme row
+  measure from the item's position 0 (`onAirItemZeroAt`: the process start minus the offset).
+- **No loops.** A continued item that fails before it aired 2 min drops its point; an input that never
+  opened keeps it for the M94 retry, which keeps the offset.
+- **Left.** The week view and `/channel`'s *Up next* do not plan a pending point; they show the pool's
+  next item until the continued one is on air. One point per pool: an item cut while another pool's point
+  is owed keeps its own, but two cuts in one pool keep only the latest.

@@ -2406,7 +2406,8 @@ describe.sequential("database roundtrip", () => {
       await ensureDatabaseWithRetry();
       await executeSql(`
         DROP TABLE IF EXISTS as_run_log;
-        DELETE FROM schema_migrations WHERE id = '${asRunLogMigrationId}';
+        -- A database without the as-run log predates M124's column on it too.
+        DELETE FROM schema_migrations WHERE id IN ('${asRunLogMigrationId}', '20261026_001_resume_interrupted_item');
       `);
 
       await resetDatabaseConnectionsForTests();
