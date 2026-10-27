@@ -7,6 +7,7 @@ import SchedulePage from "@/app/(admin)/schedule/page";
 import SourcesPage from "@/app/(admin)/sources/page";
 import { WorkspaceTabs } from "@/components/workspace-tabs";
 import { resolveWorkspaceTabId } from "@/lib/workspace-navigation";
+import { requireAuthenticatedUser } from "@/lib/server/auth";
 
 export default async function ProgramWorkspacePage(props: {
   searchParams: Promise<{
@@ -17,6 +18,8 @@ export default async function ProgramWorkspacePage(props: {
     sourceId?: string | string[];
   }>;
 }) {
+  // Every page checks the sign-in itself (M125): the layout's check is not a guarantee for every render path.
+  await requireAuthenticatedUser();
   const searchParams = await props.searchParams;
   const tab = resolveWorkspaceTabId("program", searchParams.tab);
   // The old /assets/:id and /sources/:id redirects landed here with the id as a query, and the library

@@ -43,10 +43,9 @@ export async function GET(request: Request) {
   try {
     files = await resolveSceneRendererFontFiles(process.env);
   } catch (error) {
-    return NextResponse.json(
-      { message: error instanceof Error ? error.message : "No overlay font is installed." },
-      { status: 503 }
-    );
+    // The cause, which names paths, goes to the log only (M125): this route answers without a sign-in.
+    console.error("[scene-preview-font] no font:", error instanceof Error ? error.message : error);
+    return NextResponse.json({ message: "No overlay font is installed. The web container log has the cause." }, { status: 503 });
   }
 
   const file = files[face];

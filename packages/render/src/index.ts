@@ -15,3 +15,12 @@ export {
   type TickerStripRequest,
   type TickerStripSvg
 } from "./render.js";
+export {
+  clearRemoteImageCache,
+  fetchRemoteImage,
+  inlineRemoteImages,
+  isPublicAddress,
+  resolveRemoteImageSrc,
+  TRANSPARENT_PIXEL_DATA_URI,
+  type ResolveHost
+} from "./safe-image-fetch.js";

@@ -39,8 +39,14 @@ services:
     image: ${STREAM247_WEB_IMAGE:-ghcr.io/drjakeberg/stream247-web:v2.3.1}
     restart: unless-stopped
     logging: *default-logging
+    # A ceiling for the web container (M125, owner's choice 2026-10-27: 2 GiB, changeable by env). It
+    # normally uses a few hundred MB; past the ceiling Docker restarts web alone, the broadcast goes on.
+    mem_limit: ${STREAM247_WEB_MEMORY_LIMIT:-2g}
+    # Published on 127.0.0.1 only (M125, owner's choice 2026-10-27): without a proxy in front, a
+    # client can write its own X-Forwarded-For and so rotate past the sign-in limit. Traefik reaches
+    # web over the compose network. To open the port to the LAN, set STREAM247_WEB_BIND=0.0.0.0.
     ports:
-      - "3000:3000"
+      - "${STREAM247_WEB_BIND:-127.0.0.1}:3000:3000"
     expose:
       - "3000"
     # Optional since M52: a fresh install can start with no hand-written env file at all — the app

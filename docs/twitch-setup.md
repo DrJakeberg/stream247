@@ -123,6 +123,10 @@ from these column names.
 
 - The owner or an admin grants access by Twitch login in the admin UI; team members then sign in with
   Twitch. Roles: `owner`, `admin`, `operator`, `moderator`, `viewer`.
+- A grant is checked on every request (since M125): lowering or removing it (Admin → Team, *Remove
+  access*) takes effect at the member's next click, also in a session that is already open. A
+  member's first Twitch sign-in binds the grant to their Twitch user id, so it follows a rename, and
+  another account that later takes over the old login gets nothing.
 - The **bot account** is also a sign-in: whoever can log in to Twitch as it becomes workspace owner
   here. Treat it like the owner password — Twitch 2FA on, never shared. Every other account, the
   broadcast channel's owner included, needs a grant.

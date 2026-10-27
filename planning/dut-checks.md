@@ -322,3 +322,30 @@ entries under its *DUT checks of 2.3.1 (run)*; the M107 entry below did not run 
 - M124, at the repin of the candidate: the item on air when the containers restart continues 10 s before
   the restart (a cut of a local file or cached archive), not from its beginning or with the next item.
   Passes when the first `playout.resume.start` after the repin names the asset that was on air before it.
+
+- M125, after the repin: the public health answer carries no destination details. Passes when the count
+  is `0` and the second command prints exactly the five status fields.
+
+  ```sh
+  ssh dut 'docker exec stream247-web-1 wget -qO- http://127.0.0.1:3000/api/health' | grep -c -E '"(rtmpUrl|notes|lastError|playlistPath)"'
+  ssh dut 'docker exec stream247-web-1 wget -qO- http://127.0.0.1:3000/api/health' | grep -o '"destination":{[^}]*}'
+  ```
+
+- M125, after the repin: the relay still accepts its own reads and every push source (the relay check now
+  never refuses a correct key). Passes when the channel is on air with `uplink=ok` in readiness and a push
+  source in Studio publishes, and the relay log shows no refused read from the uplink since the repin.
+
+  ```sh
+  ssh dut 'docker logs --since 30m stream247-relay-1 2>&1 | grep -ci "authentication failed"'
+  ```
+
+- M125, after the repin: overlay pictures still draw (the renderer fetches them itself now). Passes when a
+  logo or image layer and a chat emote are visible on the picture, and the worker log has no render error.
+
+- M125, once: the Traefik in front of `web` replaces a client's `X-Forwarded-For`. Passes when its static
+  configuration has no `forwardedHeaders.insecure` and no `forwardedHeaders.trustedIPs` for the entrypoints
+  `web` and `websecure` (no output from the command, run where Traefik's configuration lives).
+
+  ```sh
+  ssh dut 'docker ps --format "{{.Names}}" | grep -i traefik | xargs -r -n1 docker inspect --format "{{.Name}} {{join .Args \" \"}}" | grep -o "forwardedHeaders[^ ]*"'
+  ```

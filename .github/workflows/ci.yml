@@ -29,9 +29,12 @@ jobs:
     timeout-minutes: 60
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    # Read-only for packages (M125). This job also runs for pull requests, and a token that may
+    # write packages there could overwrite the main-<sha> snapshot the Release workflow promotes.
+    # Publishing is the job below, which runs for pushes to main only.
     permissions:
       contents: read
-      packages: write
+      packages: read
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v4
@@ -154,6 +157,14 @@ jobs:
           done
       - run: pnpm test
       - run: pnpm build
+      # public.ecr.aws answers "429 Data limit exceeded" for hours at a time. The test builds take
+      # the same Docker Official Image from mirror.gcr.io and tag it under the name the Dockerfiles
+      # use, so docker build finds it locally. The Dockerfiles and the publish job still pull from
+      # public.ecr.aws; release images do not change (owner's choice 2026-10-27).
+      - name: Base image for the test builds from mirror.gcr.io
+        run: |
+          docker pull mirror.gcr.io/library/node:22-alpine
+          docker tag mirror.gcr.io/library/node:22-alpine public.ecr.aws/docker/library/node:22-alpine
       - run: docker build -f docker/web.Dockerfile -t stream247-web:test .
       - run: docker build -f docker/worker.Dockerfile -t stream247-worker:test .
       - run: pnpm test:fresh-db
@@ -213,62 +224,70 @@ jobs:
       # mid-screenshot. Sharing one bring-up saved a minute and cost 23 tests.
       - run: ./scripts/design-baseline.sh
       - run: chmod +x docker/smoke-test.sh && ./docker/smoke-test.sh stream247-web:test
-      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: docker/login-action@v3
+
+  # The main-<sha> and latest snapshots (M125: a job of its own, so no pull-request run ever holds a
+  # token that can write packages). Built from the same commit after validate passed; the Release
+  # workflow promotes exactly these images.
+  publish:
+    needs: validate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        id: meta-web
+      - id: meta-web
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/drjakeberg/stream247-web
           tags: |
             type=raw,value=latest
             type=sha,prefix=main-
-      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        id: meta-worker
+      - id: meta-worker
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/drjakeberg/stream247-worker
           tags: |
             type=raw,value=latest
             type=sha,prefix=main-
-      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        id: meta-playout
+      - id: meta-playout
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/drjakeberg/stream247-playout
           tags: |
             type=raw,value=latest
             type=sha,prefix=main-
-      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v6
         with:
           context: .
           file: docker/web.Dockerfile
           push: true
           tags: ${{ steps.meta-web.outputs.tags }}
           labels: ${{ steps.meta-web.outputs.labels }}
-      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v6
         with:
           context: .
           file: docker/worker.Dockerfile
           push: true
           tags: ${{ steps.meta-worker.outputs.tags }}
           labels: ${{ steps.meta-worker.outputs.labels }}
-      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v6
         with:
           context: .
           file: docker/worker.Dockerfile
           push: true
           tags: ${{ steps.meta-playout.outputs.tags }}
           labels: ${{ steps.meta-playout.outputs.labels }}
-      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        name: Verify published main snapshot artifacts
+      - name: Verify published main snapshot artifacts
         run: |
           set -euo pipefail
           SOURCE_SHA="${GITHUB_SHA::7}"

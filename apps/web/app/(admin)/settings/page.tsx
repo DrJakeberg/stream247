@@ -35,14 +35,15 @@ import { SourceLiveSoundForm } from "@/components/source-live-sound-form";
 import { TwoFactorSettingsForm } from "@/components/two-factor-settings-form";
 import { ChangePasswordForm } from "@/components/change-password-form";
 import { WatchdogThresholdsForm } from "@/components/watchdog-thresholds-form";
-import { getAuthenticatedUser } from "@/lib/server/auth";
+import { requireAuthenticatedUser } from "@/lib/server/auth";
 import { getSystemReadiness } from "@/lib/server/readiness";
 import { getManagedAlertConfig, getManagedTwitchConfig, readAppState } from "@/lib/server/state";
 import { getUpdateCenterState } from "@/lib/server/update-center";
 
 export default async function SettingsPage() {
+  // Every page checks the sign-in itself (M125): the layout's check is not a guarantee for every render path.
+  const user = await requireAuthenticatedUser();
   const state = await readAppState();
-  const user = await getAuthenticatedUser();
   const twitchConfig = getManagedTwitchConfig(state);
   const alertConfig = getManagedAlertConfig(state);
   const readiness = await getSystemReadiness();

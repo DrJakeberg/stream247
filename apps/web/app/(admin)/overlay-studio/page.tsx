@@ -16,8 +16,11 @@ import {
   readOverlayStudioState
 } from "@/lib/server/state";
 import { describeScenePreset, describeTypographyPreset } from "@/lib/scene-preset-names";
+import { requireAuthenticatedUser } from "@/lib/server/auth";
 
 export default async function OverlayStudioPage() {
+  // Every page checks the sign-in itself (M125): the layout's check is not a guarantee for every render path.
+  await requireAuthenticatedUser();
   const state = await readAppState();
   const studioState = await readOverlayStudioState();
   const scenePresets = await listOverlayScenePresetRecords();

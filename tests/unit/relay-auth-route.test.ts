@@ -29,6 +29,7 @@ vi.mock("next/server", () => ({
 import { POST } from "../../apps/web/app/api/relay/auth/route";
 import { clearAllRateLimits, RELAY_AUTH_RATE_LIMIT } from "../../apps/web/lib/server/rate-limit";
 import { clearRelayAuditThrottleForTests } from "../../apps/web/lib/server/relay-audit-throttle";
+import { clearRelayCredentialsCache } from "../../apps/web/lib/server/relay-credentials";
 
 // The endpoint mediamtx asks about every publish and read. It carries no session — the relay
 // calls it server-side, and the credential under test IS the request body — which is exactly why
@@ -65,6 +66,7 @@ describe("relay auth endpoint", () => {
     vi.clearAllMocks();
     clearAllRateLimits();
     clearRelayAuditThrottleForTests();
+    clearRelayCredentialsCache();
     mockReadCredentials.mockResolvedValue([{ id: "studio-cam", ingestKind: "push", publishKey: PUBLISH_KEY }]);
     mockReadRelayInternalKey.mockResolvedValue(INTERNAL_KEY);
   });
@@ -130,26 +132,48 @@ describe("relay auth endpoint", () => {
     expect(await response.text()).toBe("");
   });
 
-  it("rate limits on the transport peer, not the attacker-controlled body ip", async () => {
+  it("rate limits refusals on the transport peer, not the attacker-controlled body ip", async () => {
     // One real peer (a fixed X-Forwarded-For), rotating the body `ip` on every request exactly
-    // the way an attacker would to dodge a body-keyed limit. Peer keying must still stop them —
-    // even a valid key past the limit is refused.
+    // the way an attacker would to dodge a body-keyed limit. Peer keying still counts them: past
+    // the limit, a refusal from that peer writes no audit line any more.
     for (let attempt = 0; attempt < RELAY_AUTH_RATE_LIMIT.limit; attempt += 1) {
       await POST(
-        relayBody({ path: "src-studio-cam", password: "wrong", ip: `10.0.0.${attempt}` }, { forwardedFor: "198.51.100.5" })
+        relayBody({ path: `src-cam-${attempt}`, password: "wrong", ip: `10.0.0.${attempt}` }, { forwardedFor: "198.51.100.5" })
       );
     }
+    const auditLinesAtLimit = mockAppendAuditEvent.mock.calls.length;
     const overLimit = await POST(
-      relayBody({ path: "src-studio-cam", password: PUBLISH_KEY, ip: "10.0.0.250" }, { forwardedFor: "198.51.100.5" })
+      relayBody({ path: "src-cam-over", password: "wrong", ip: "10.0.0.250" }, { forwardedFor: "198.51.100.5" })
     );
     expect(overLimit.status).toBe(403);
+    expect(mockAppendAuditEvent.mock.calls.length).toBe(auditLinesAtLimit);
 
-    // A genuinely different peer is unaffected, even reusing a body ip the noisy peer sent — so
-    // one attacker can never exhaust a legitimate publisher's bucket by putting its ip in the body.
-    const otherPeer = await POST(
-      relayBody({ path: "src-studio-cam", password: PUBLISH_KEY, ip: "10.0.0.1" }, { forwardedFor: "198.51.100.6" })
-    );
-    expect(otherPeer.status).toBe(200);
+    // A genuinely different peer is unaffected, even reusing a body ip the noisy peer sent. (The audit
+    // throttle has its own overall budget, which the loop above used up; reset it so only the rate
+    // limit can decide here.)
+    clearRelayAuditThrottleForTests();
+    await POST(relayBody({ path: "src-cam-other", password: "wrong", ip: "10.0.0.1" }, { forwardedFor: "198.51.100.6" }));
+    expect(mockAppendAuditEvent.mock.calls.length).toBe(auditLinesAtLimit + 1);
+  });
+
+  it("M125: never refuses a correct credential, however full the caller's bucket is", async () => {
+    // mediamtx asks from one address for every publisher and reader. An anonymous caller that could
+    // send under that address used to fill its bucket and lock out every push source.
+    for (let attempt = 0; attempt < RELAY_AUTH_RATE_LIMIT.limit * 2; attempt += 1) {
+      await POST(relayBody({ path: "src-studio-cam", password: "wrong" }, { forwardedFor: "172.18.0.4" }));
+    }
+    const publish = await POST(relayBody({ path: "src-studio-cam", password: PUBLISH_KEY }, { forwardedFor: "172.18.0.4" }));
+    expect(publish.status).toBe(200);
+    const read = await POST(relayBody({ action: "read", path: "src-studio-cam", password: INTERNAL_KEY }, { forwardedFor: "172.18.0.4" }));
+    expect(read.status).toBe(200);
+  });
+
+  it("M125: reads the stored credentials at most once a second under a flood", async () => {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await POST(relayBody({ path: "src-studio-cam", password: "wrong" }, { forwardedFor: `203.0.113.${attempt}` }));
+    }
+    expect(mockReadCredentials).toHaveBeenCalledTimes(1);
+    expect(mockReadRelayInternalKey).toHaveBeenCalledTimes(1);
   });
 
   it("throttles rejected-publish audit writes so the trail and the write lock cannot be flooded", async () => {

@@ -34,8 +34,11 @@ import {
 } from "@/lib/server/state";
 import { isTwitchAuthorizeConfigured } from "@/lib/server/twitch";
 import { buildWorkspaceHref } from "@/lib/workspace-navigation";
+import { requireAuthenticatedUser } from "@/lib/server/auth";
 
 export default async function DashboardPage() {
+  // Every page checks the sign-in itself (M125): the layout's check is not a guarantee for every render path.
+  await requireAuthenticatedUser();
   const state = await readAppState();
   const twitchAuthorizeUrl = (await isTwitchAuthorizeConfigured()) ? "/api/integrations/twitch/connect" : null;
   const metadataSyncGate = resolveTwitchMetadataSyncGate({

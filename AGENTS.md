@@ -115,8 +115,9 @@ The steps are in `.claude/skills/release/SKILL.md`. The rules:
 
 - CI runs one at a time per ref (`concurrency` in `.github/workflows/ci.yml`); a new push queues.
 - Compose merges lists: `ports`, `env_file` and `volumes` need `!override` in an override file.
-- A CI image build that fails at `public.ecr.aws` with "unexpected status code" is the registry, not the
-  diff: rerun the failed jobs of that run.
+- The Dockerfiles take `node:22-alpine` from `public.ecr.aws`, which fails for hours at a time; the CI test
+  builds pull it from `mirror.gcr.io` instead (M125). A build that still fails at a registry with
+  "unexpected status code" or "429" is the registry, not the diff: rerun the failed jobs of that run.
 
 ## Claude Code
 

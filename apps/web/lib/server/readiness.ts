@@ -25,6 +25,7 @@ function getPlayoutTransientGraceSeconds(): number {
   );
 }
 
+/** Read without a sign-in by /api/health, /api/ready and /api/system/readiness: never put configuration or free text in here. */
 export async function getSystemReadiness() {
   try {
     const state = await readAppState();
@@ -172,23 +173,33 @@ export async function getSystemReadiness() {
       programFeed: {
         status: state.playout.programFeedStatus || (hlsProgramFeedEnabled ? "bootstrapping" : ""),
         updatedAt: state.playout.programFeedUpdatedAt,
-        playlistPath: state.playout.programFeedPlaylistPath,
         targetSeconds: state.playout.programFeedTargetSeconds,
         bufferedSeconds: state.playout.programFeedBufferedSeconds
       },
-      destination:
-        destination ?? {
-          name: "",
-          provider: "twitch",
-          role: "primary",
-          priority: 0,
-          status: "missing-config",
-          streamKeyPresent: false,
-          streamKeySource: "missing"
-        }
+      // Status fields only (M125): /api/health, /api/ready and /api/system/readiness answer without a
+      // sign-in, and the full record carries the ingest URL, the notes and the last error text. The
+      // record itself stays behind the role check of /api/destinations.
+      destination: destination
+        ? {
+            provider: destination.provider,
+            role: destination.role,
+            priority: destination.priority,
+            status: destination.status,
+            streamKeyPresent: destination.streamKeyPresent
+          }
+        : {
+            provider: "twitch",
+            role: "primary",
+            priority: 0,
+            status: "missing-config",
+            streamKeyPresent: false
+          }
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown readiness error.";
+    // The cause goes to the server log only (M125): the answer is public, and a database error text
+    // names hosts, users and SQL.
+    console.error("[readiness] state read failed:", error instanceof Error ? error.message : error);
+    const message = "Readiness could not be read. The web container log has the cause.";
 
     return {
       status: "degraded",
@@ -241,7 +252,6 @@ export async function getSystemReadiness() {
       programFeed: {
         status: "failed",
         updatedAt: "",
-        playlistPath: "",
         targetSeconds: 0,
         bufferedSeconds: 0
       },

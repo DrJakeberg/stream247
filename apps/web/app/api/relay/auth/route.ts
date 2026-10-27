@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { evaluateRelayAuth, stripInvisibleCharacters } from "@stream247/core";
-import { readOverlayVideoSourceIngestCredentials, readRelayInternalKey } from "@stream247/db";
 import { appendAuditEvent } from "@/lib/server/state";
 import { consumeRateLimit, getClientIdentifier, RELAY_AUTH_RATE_LIMIT } from "@/lib/server/rate-limit";
 import { shouldAuditRejectedPublish } from "@/lib/server/relay-audit-throttle";
+import { readRelayCredentials } from "@/lib/server/relay-credentials";
 
 // The relay's credential check (M57 stage 2). mediamtx POSTs
 // {user, password, ip, path, action, protocol, query} for every publish and read, and a 2xx
@@ -17,10 +17,14 @@ import { shouldAuditRejectedPublish } from "@/lib/server/relay-audit-throttle";
 //   * every refusal looks the same from outside: a bare 403, no reason, no body, whatever went
 //     wrong (bad key, unknown path, malformed body, database down, rate limit). Anything more
 //     specific hands an unauthenticated prober a map.
-//   * the rate limit keys on the TRANSPORT PEER (X-Forwarded-For, set by our own Traefik), never
-//     on `body.ip` — that field is attacker-controlled, so keying on it would make the limit both
+//   * the rate limit keys on the TRANSPORT PEER (the last X-Forwarded-For entry, written by our
+//     own proxy, or the socket address Next.js fills in for mediamtx's direct call), never on
+//     `body.ip` — that field is attacker-controlled, so keying on it would make the limit both
 //     trivially evadable (rotate the value) and abusable (put a real publisher's ip there to
 //     exhaust its bucket).
+//   * the limit counts REFUSALS only and never refuses a correct credential (M125). mediamtx asks
+//     from one address for every publisher and reader; when an anonymous caller could fill that
+//     address's bucket, every push source and relay read was refused with it.
 //   * rejected publishes leave an audit line, but a THROTTLED one: without a cap, a flood of bad
 //     publishes would spend the whole per-source/minute audit budget, and each write runs an
 //     INSERT+DELETE against the 100-row audit cap inside the global serialized write lock — so an
@@ -60,26 +64,26 @@ export async function POST(request: Request): Promise<Response> {
     query: field(body.query, 500)
   };
 
-  // Keyed on the real peer, not body.ip. getClientIdentifier reads X-Forwarded-For (our Traefik)
+  // Keyed on the real peer, not body.ip. getClientIdentifier reads the last X-Forwarded-For entry
   // and falls back to X-Real-IP, then "unknown".
   const peer = getClientIdentifier(request.headers);
-  const limit = consumeRateLimit(`relay-auth:${peer}`, RELAY_AUTH_RATE_LIMIT);
-  if (!limit.allowed) {
-    return denied();
-  }
 
   try {
     // Both stores are read on every request, allowed or not, so the response time carries no
     // hint about which check a rejection came from; the policy evaluation itself costs one
-    // constant-time comparison on every branch.
-    const [sources, internalKey] = await Promise.all([
-      readOverlayVideoSourceIngestCredentials(),
-      readRelayInternalKey()
-    ]);
+    // constant-time comparison on every branch. The read is shared for a second, so a flood
+    // costs the database at most one read pair per second.
+    const { sources, internalKey } = await readRelayCredentials();
 
     const decision = evaluateRelayAuth({ request: relayRequest, sources, internalKey });
     if (decision.allow) {
       return NextResponse.json({ ok: true });
+    }
+
+    // Only a refusal counts against the caller, and an exhausted caller gets the same bare 403
+    // without an audit line.
+    if (!consumeRateLimit(`relay-auth:${peer}`, RELAY_AUTH_RATE_LIMIT).allowed) {
+      return denied();
     }
 
     if (relayRequest.action === "publish") {

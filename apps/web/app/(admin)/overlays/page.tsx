@@ -19,8 +19,11 @@ import {
   readChatVoteSessionRecord
 } from "@stream247/db";
 import { getBroadcastSnapshot, readAppState } from "@/lib/server/state";
+import { requireAuthenticatedUser } from "@/lib/server/auth";
 
 export default async function OverlaysPage() {
+  // Every page checks the sign-in itself (M125): the layout's check is not a guarantee for every render path.
+  await requireAuthenticatedUser();
   const state = await readAppState();
   const engagement = getBroadcastSnapshot(state).engagement;
   const [viewerControl, activeVote, chatGame, chatGameRuntime] = await Promise.all([

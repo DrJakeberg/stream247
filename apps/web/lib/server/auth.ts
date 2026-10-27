@@ -3,8 +3,9 @@ import { resolveAppSecret } from "@stream247/db";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { NextResponse } from "next/server";
+import { cache } from "react";
 import { buildWorkspaceHref } from "../workspace-navigation";
-import { findUserById, readAppState, type AppState, type UserRecord, type UserRole } from "./state";
+import { findTeamGrantForTwitchUser, findUserById, readAppState, type AppState, type UserRecord, type UserRole } from "./state";
 
 const sessionCookieName = "stream247_session";
 const twoFactorChallengeMaxAgeSeconds = 60 * 5;
@@ -79,7 +80,20 @@ export function parseSessionValue(value: string | undefined): { userId: string; 
   return { userId, passwordStamp: stamp };
 }
 
-/** The user a session cookie names, or null when it is invalid, expired or signed in with an older password. */
+/**
+ * The role a Twitch sign-in holds now (M125), from the current state and not from the role stored at
+ * sign-in: owner while its Twitch id is the bound broadcaster, otherwise its current team grant, and
+ * null without either. So lowering, removing or rebinding takes effect on the member's next request.
+ */
+export function currentTwitchRole(user: Pick<UserRecord, "twitchUserId" | "twitchLogin">, state: AppState): UserRole | null {
+  const twitchUserId = user.twitchUserId ?? "";
+  if (twitchUserId && state.twitch.broadcasterId !== "" && state.twitch.broadcasterId === twitchUserId) {
+    return "owner";
+  }
+  return findTeamGrantForTwitchUser(state, twitchUserId, user.twitchLogin ?? "")?.role ?? null;
+}
+
+/** The user a session cookie names, or null when it is invalid, expired, signed in with an older password, or a Twitch sign-in that lost its access. */
 export function resolveSessionUser(value: string | undefined, state: AppState): UserRecord | null {
   const session = parseSessionValue(value);
   if (!session) {
@@ -89,7 +103,11 @@ export function resolveSessionUser(value: string | undefined, state: AppState): 
   if (!user || passwordStamp(sessionPasswordHash(user, state)) !== session.passwordStamp) {
     return null;
   }
-  return user;
+  if (user.authProvider !== "twitch") {
+    return user;
+  }
+  const role = currentTwitchRole(user, state);
+  return role ? { ...user, role } : null;
 }
 
 export function buildTwoFactorChallengeValue(userId: string): string {
@@ -131,20 +149,33 @@ export function parseTwoFactorChallengeValue(value: string | undefined): { userI
   };
 }
 
+/** The session cookie's value from a Cookie header, for code that runs after the request scope (an open event stream). */
+export function sessionCookieFromHeader(cookieHeader: string | null): string | undefined {
+  for (const part of (cookieHeader ?? "").split(";")) {
+    const separator = part.indexOf("=");
+    if (separator > 0 && part.slice(0, separator).trim() === sessionCookieName) {
+      return part.slice(separator + 1).trim();
+    }
+  }
+  return undefined;
+}
+
 /** The user id of a well-signed, unexpired session cookie, without a database read; the password stamp is checked by getAuthenticatedUser. */
 export async function getAuthenticatedUserId(): Promise<string | null> {
   const cookieStore = await cookies();
   return parseSessionValue(cookieStore.get(sessionCookieName)?.value)?.userId ?? null;
 }
 
-export async function getAuthenticatedUser(): Promise<UserRecord | null> {
+// One state read per render, shared by the layout and every page that checks the sign-in itself (M125):
+// /program?tab=schedule renders the layout, the program page and the schedule page in one request.
+export const getAuthenticatedUser = cache(async (): Promise<UserRecord | null> => {
   const cookieStore = await cookies();
   const value = cookieStore.get(sessionCookieName)?.value;
   if (!parseSessionValue(value)) {
     return null;
   }
   return resolveSessionUser(value, await readAppState());
-}
+});
 
 export async function requireAuthenticatedUser(): Promise<UserRecord> {
   const user = await getAuthenticatedUser();
