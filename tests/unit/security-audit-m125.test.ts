@@ -195,3 +195,18 @@ describe("CI token (release-tag lead)", () => {
     expect(publish).toMatch(/type=sha,prefix=main-/);
   });
 });
+
+describe("web memory ceiling (upload lead, owner's choice 2026-10-27)", () => {
+  it("gives web a 2 GiB mem_limit that STREAM247_WEB_MEMORY_LIMIT can change", () => {
+    const compose = readFileSync(path.join(rootDir, "docker-compose.yml"), "utf8");
+    const web = compose.slice(compose.indexOf("\n  web:\n"), compose.indexOf("\n  worker:\n"));
+    expect(web).toContain("mem_limit: ${STREAM247_WEB_MEMORY_LIMIT:-2g}");
+  });
+
+  it("publishes web's port on 127.0.0.1 only unless STREAM247_WEB_BIND opens it (owner's choice 2026-10-27)", () => {
+    const compose = readFileSync(path.join(rootDir, "docker-compose.yml"), "utf8");
+    const web = compose.slice(compose.indexOf("\n  web:\n"), compose.indexOf("\n  worker:\n"));
+    expect(web).toContain('- "${STREAM247_WEB_BIND:-127.0.0.1}:3000:3000"');
+    expect(web).not.toMatch(/- "3000:3000"/);
+  });
+});

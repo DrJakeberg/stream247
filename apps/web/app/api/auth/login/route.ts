@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildTwoFactorChallengeValue, sessionPasswordHash, setSessionCookie, verifyPassword } from "@/lib/server/auth";
 import { findUserByEmail, readAppState, upsertUserRecord } from "@/lib/server/state";
-import { LOGIN_ACCOUNT_RATE_LIMIT, LOGIN_RATE_LIMIT, consumeRateLimit, getClientIdentifier, resetRateLimit } from "@/lib/server/rate-limit";
+import { LOGIN_RATE_LIMIT, consumeRateLimit, getClientIdentifier, resetRateLimit } from "@/lib/server/rate-limit";
 
 export async function POST(request: NextRequest) {
   const body = (await request.json()) as { email?: string; password?: string };
@@ -12,13 +12,10 @@ export async function POST(request: NextRequest) {
   // buy an attacker more attempts against one account.
   const limitKey = `login:${email}:${getClientIdentifier(request.headers)}`;
   const limit = consumeRateLimit(limitKey, LOGIN_RATE_LIMIT);
-  // And on the account alone (M125): a client that can write its own X-Forwarded-For (the web port
-  // reached without a proxy) gets no more than this, however often it changes the value.
-  const accountLimit = limit.allowed ? consumeRateLimit(`login-account:${email}`, LOGIN_ACCOUNT_RATE_LIMIT) : limit;
-  if (!limit.allowed || !accountLimit.allowed) {
+  if (!limit.allowed) {
     return NextResponse.json(
       { message: "Too many sign-in attempts. Try again later." },
-      { status: 429, headers: { "retry-after": String(Math.max(limit.retryAfterSeconds, accountLimit.retryAfterSeconds)) } }
+      { status: 429, headers: { "retry-after": String(limit.retryAfterSeconds) } }
     );
   }
 

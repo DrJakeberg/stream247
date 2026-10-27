@@ -592,7 +592,8 @@ under `planning/archive/`, text unchanged.
   section 7, item 2). The http scheme stays allowed for image layers so no existing layer goes dark.
 - **X-Forwarded-For leads.** The client key is the last entry (written by the nearest proxy). Next.js
   fills a missing header with the socket address, so mediamtx's own call is keyed on the relay's
-  address. Owner's choice for direct access without a proxy: *open, see Decisions*.
+  address. Direct access without a proxy: the shipped compose publishes 3000 on `127.0.0.1` only
+  (`STREAM247_WEB_BIND`), see Decisions.
 - **Relay check.** The limit counts refusals only and is consulted after the check, so a correct key always
   passes; stored credentials are read at most once a second (`relay-credentials.ts`).
 - **Upload lead.** One file per request, streamed to disk; `Content-Length` required and enforced; 507 when
@@ -607,12 +608,13 @@ under `planning/archive/`, text unchanged.
   picture blank for 10 min (now 32 MiB and one minute for failures); an open broadcast event stream outlived
   a removed grant (it re-checks the session with every snapshot now); the cold rebuild in the `publish`
   job can take longer than the Release workflow waited for `main-<sha>`, so it waits 60 min instead of 30.
-  Left: the per-account login limit counts every attempt, also successful ones (the decision below); a
-  rotated ingest key works up to one second longer (the credential cache); re-granting a login that a bound
+  Left: a rotated ingest key works up to one second longer (the credential cache); re-granting a login that a bound
   member renamed away from, before their next sign-in, edits their grant.
 - **Decisions.** Upload: free space only, no per-file limit by default (owner's choice 2026-10-27 18:02 UTC,
-  "Nur Platz-Grenze"; `STREAM247_UPLOAD_MAX_BYTES` stays as an opt-in). *Open: web memory limit, direct
-  access without a proxy (cards of 2026-10-27).*
+  "Nur Platz-Grenze"; `STREAM247_UPLOAD_MAX_BYTES` stays as an opt-in). Web memory: 2 GiB, changeable by env
+  (owner's choice 2026-10-27 18:03 UTC; `mem_limit: ${STREAM247_WEB_MEMORY_LIMIT:-2g}` in
+  `docker-compose.yml`). Direct access without a proxy: port 3000 on `127.0.0.1` only, `STREAM247_WEB_BIND=0.0.0.0`
+  opens it (owner's choice 2026-10-27 18:03 UTC, "Port nur auf 127.0.0.1"); no per-account login limit.
 - **Not done (hardening notes, for a later milestone if wanted).** Containers as root and the read-write
   Docker socket of `relay-watchdog`; `--frozen-lockfile=false`, actions and base images not pinned by
   digest, `latest` from main; `.dockerignore` without `.env`; Postgres password fallback; mediamtx API

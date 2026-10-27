@@ -22,7 +22,6 @@ vi.mock("@/lib/server/state", () => ({
 }));
 vi.mock("@/lib/server/rate-limit", () => ({
   LOGIN_RATE_LIMIT: { limit: 5, windowMs: 60_000 },
-  LOGIN_ACCOUNT_RATE_LIMIT: { limit: 50, windowMs: 60_000 },
   consumeRateLimit: () => ({ allowed: true, retryAfterSeconds: 0, remaining: 4 }),
   getClientIdentifier: () => "test",
   resetRateLimit: () => undefined

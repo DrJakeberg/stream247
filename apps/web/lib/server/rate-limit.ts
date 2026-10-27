@@ -106,8 +106,8 @@ export function clearAllRateLimits(): void {
  * whatever the client sent. Traefik in its default mode replaces a client-sent header with the
  * real address, nginx's proxy_add_x_forwarded_for appends it, and a request that reaches the web
  * port directly carries no header at all, which Next.js then fills with the socket address. Only a
- * client talking to the web port directly can still write this value, which is why the login also
- * has a per-account limit that no header changes.
+ * client talking to the web port directly can still write this value, which is why the shipped
+ * compose file publishes that port on 127.0.0.1 only (owner's choice 2026-10-27).
  *
  * These headers are attacker-controlled unless a trusted proxy sets them, so the value is only
  * ever used to *narrow* a limit, never to widen or bypass one.
@@ -121,9 +121,6 @@ export function getClientIdentifier(headers: Headers): string {
 }
 
 export const LOGIN_RATE_LIMIT: RateLimitRule = { limit: 10, windowMs: 15 * 60_000 };
-// Per account, from every client together (M125): rotating the client value buys no more guesses
-// than this. The price is that a flood can lock the account's sign-in until its window ends.
-export const LOGIN_ACCOUNT_RATE_LIMIT: RateLimitRule = { limit: 50, windowMs: 15 * 60_000 };
 export const TWO_FACTOR_RATE_LIMIT: RateLimitRule = { limit: 8, windowMs: 15 * 60_000 };
 // Counts refused relay checks per caller (M125); a correct credential is never refused by it, so
 // nobody can lock the relay's own checks out by filling a bucket. It bounds the audit noise and the

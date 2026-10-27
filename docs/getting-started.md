@@ -141,8 +141,9 @@ built from an empty host name and Traefik has no host to answer for. Set the two
 without the profile.
 
 Create the owner immediately: until it exists, anyone who can reach the host can claim the workspace.
-Port 3000 is published on every interface in both forms — the proxy is added in front of it, it does
-not replace it — so firewall it if you cannot open the browser right away. Over plain HTTP a sign-in only holds on
+Port 3000 is published on `127.0.0.1` only (since M125; `STREAM247_WEB_BIND=0.0.0.0` opens it to the
+LAN), so without the proxy profile the setup is reached on the host itself or through the SSH tunnel
+below. Over plain HTTP a sign-in only holds on
 `localhost`; from any other machine the browser drops the session cookie and every sign-in bounces back to
 `/login`. `/setup` and `/login` say so when they are opened that way, with the two ways out: HTTPS (the
 `proxy` profile, or your own HTTPS in front of port 3000), or an SSH tunnel

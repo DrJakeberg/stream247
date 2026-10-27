@@ -99,14 +99,16 @@ Editing the local `docker-compose.yml` or `.env.production.example` does not cha
   - `APP_URL=https://<TRAEFIK_HOST>`
   - `TRAEFIK_HOST=<same-hostname>`
   - `TRAEFIK_ACME_EMAIL=<your-email>` when the built-in ACME resolver is active
-- The built-in Traefik profile leaves direct port `3000` publishing enabled for easier first-time recovery and debugging. If you want a proxy-only surface, remove the `web.ports` entry locally.
+- Since M125 `web` publishes port `3000` on `127.0.0.1` only, with or without the Traefik profile
+  (Traefik reaches it over the compose network). To open it to the LAN without a proxy, set
+  `STREAM247_WEB_BIND=0.0.0.0`; for a proxy-only surface remove the `web.ports` entry locally.
 - The sign-in limit and the relay check's limit tell clients apart by the **last** `X-Forwarded-For`
   entry (since M125), the one the proxy in front of `web` writes. Traefik's default (no
   `forwardedHeaders.insecure`, no `forwardedHeaders.trustedIPs` with addresses clients come from) and
   nginx with `proxy_add_x_forwarded_for` both fit. A request that reaches port `3000` directly, without
-  a proxy, carries whatever header the client sent, so on top of the per-client limit the sign-in
-  allows 50 attempts per account in 15 minutes from all clients together. Do not put port `3000` on the
-  internet without a proxy.
+  a proxy, carries whatever header the client sent and can rotate past the limit, which is why the port
+  is published on `127.0.0.1` only by default. Do not set `STREAM247_WEB_BIND=0.0.0.0` on a host
+  reachable from the internet.
 
 ## Secrets And Runtime Settings
 
@@ -157,6 +159,9 @@ Important current limitation:
   (since M125); it is refused before the first byte (HTTP 507) when it would leave less free space on
   the media volume than the disk watermark's trigger (Settings → Disk watermark, default 10 %).
   `STREAM247_UPLOAD_MAX_BYTES` sets an additional per-file limit in bytes (unset: none).
+- the `web` container has a memory ceiling of 2 GiB (`STREAM247_WEB_MEMORY_LIMIT`, Docker's size format,
+  for example `3g`; since M125). Past it Docker restarts `web` alone, the broadcast goes on. A Portainer
+  stack that does not use the shipped compose file sets its own `mem_limit` for `web`.
 - PostgreSQL must use a persistent volume
 - deleting your database volume resets workspace state
 - deleting `data/media` removes locally mounted playable files
