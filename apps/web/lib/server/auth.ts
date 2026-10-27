@@ -3,6 +3,7 @@ import { resolveAppSecret } from "@stream247/db";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { NextResponse } from "next/server";
+import { cache } from "react";
 import { buildWorkspaceHref } from "../workspace-navigation";
 import { findTeamGrantForTwitchUser, findUserById, readAppState, type AppState, type UserRecord, type UserRole } from "./state";
 
@@ -165,14 +166,16 @@ export async function getAuthenticatedUserId(): Promise<string | null> {
   return parseSessionValue(cookieStore.get(sessionCookieName)?.value)?.userId ?? null;
 }
 
-export async function getAuthenticatedUser(): Promise<UserRecord | null> {
+// One state read per render, shared by the layout and every page that checks the sign-in itself (M125):
+// /program?tab=schedule renders the layout, the program page and the schedule page in one request.
+export const getAuthenticatedUser = cache(async (): Promise<UserRecord | null> => {
   const cookieStore = await cookies();
   const value = cookieStore.get(sessionCookieName)?.value;
   if (!parseSessionValue(value)) {
     return null;
   }
   return resolveSessionUser(value, await readAppState());
-}
+});
 
 export async function requireAuthenticatedUser(): Promise<UserRecord> {
   const user = await getAuthenticatedUser();
