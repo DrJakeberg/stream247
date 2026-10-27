@@ -48,7 +48,7 @@ the conflict in the report.
   Locally the bar is no failure beyond these three; the pull request's CI run decides.
 - `pnpm validate` does not cover these CI steps (`.github/workflows/ci.yml`): `pnpm test:fresh-db`,
   `test:fresh-compose`, `test:media`, `test:queue-continuity`, `test:resume`, `test:runtime-parity`,
-  `test:broadcast-path`, `test:e2e:smoke` and `scripts/design-baseline.sh`. Run the ones your diff
+  `test:broadcast-path`, `test:e2e:smoke`, `release:preflight` and `scripts/design-baseline.sh`. Run the ones your diff
   touches; `docker/smoke-test.sh` for image changes.
 
 ## Commits, branches, merges
@@ -121,7 +121,7 @@ The steps are in `.claude/skills/release/SKILL.md`. The rules:
 ## Claude Code
 
 - `CLAUDE.md` only imports this file. `.claude/settings.json` allows the usual pnpm, docker, git and
-  `gh api` commands and denies force-pushes, pushes to `main`, tag pushes and reading `.env`. Personal
+  `gh api` commands and denies force-pushes, pushes to `main`, tag pushes and reading `.env` or `stack.env`. Personal
   settings go into `settings.local.json` next to it (not committed).
 
 ## Hard blockers (the only reasons to stop before the milestone is done)

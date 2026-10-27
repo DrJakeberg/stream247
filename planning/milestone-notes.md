@@ -4,14 +4,6 @@ Sections for milestones in **Open** of `PLANS.md` that need more than their row,
 Moved out of `PLANS.md` in M121, text unchanged. When a release ships, its sections move to an archive file
 under `planning/archive/`, text unchanged.
 
-### Suggestions 2026-10-04 to M112-M124
-
-Moved out of `PLANS.md`, text unchanged apart from the archive path.
-
-The findings outside the milestones in `planning/archive/suggestions-2026-10-04.md` are taken in their order, one
-milestone at a time, since the owner's go of 2026-10-20 23:55 UTC (1-3: M112, 4-5: M113, 6: M114, 7: M115, 8, 12 and 13: M116, 9: M117, 14-17: M118, 18 and 19: M119, 22: M120,
-24 and 25: M121; 26 and 27 only the owner can do). On 2026-10-25 the owner took the leave-items too ("ja, alle"): 10 and 11: M122, 20, 21 and 23: M123. After the list M77 (resuming an interrupted item): M124.
-
 ### M111 The Soak Monitor Follows The Web Container
 
 - Evidence: on 2026-10-18 at 22:15:15 UTC an `apt-get dist-upgrade` on the DUT upgraded `containerd.io`;
@@ -570,3 +562,11 @@ milestone at a time, since the owner's go of 2026-10-20 23:55 UTC (1-3: M112, 4-
   cut item is not continued. The week view and `/channel`'s *Up next* do not plan a pending point; they
   show the pool's next item until the continued one is on air. One point per pool: two cuts in one pool
   keep only the latest.
+
+### Suggestions 2026-10-04 to M112-M124
+
+Moved out of `PLANS.md`, text unchanged apart from the archive path.
+
+The findings outside the milestones in `planning/archive/suggestions-2026-10-04.md` are taken in their order, one
+milestone at a time, since the owner's go of 2026-10-20 23:55 UTC (1-3: M112, 4-5: M113, 6: M114, 7: M115, 8, 12 and 13: M116, 9: M117, 14-17: M118, 18 and 19: M119, 22: M120,
+24 and 25: M121; 26 and 27 only the owner can do). On 2026-10-25 the owner took the leave-items too ("ja, alle"): 10 and 11: M122, 20, 21 and 23: M123. After the list M77 (resuming an interrupted item): M124.

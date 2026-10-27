@@ -19,3 +19,4 @@ data/
 apps/web/data
 *.tsbuildinfo
 .dev-stack/
+.claude/settings.local.json

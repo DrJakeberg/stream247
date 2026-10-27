@@ -18,23 +18,25 @@
       "Bash(gh api:*)"
     ],
     "deny": [
-      "Bash(git push --force:*)",
-      "Bash(git push -f:*)",
-      "Bash(git push --force-with-lease:*)",
-      "Bash(git push origin main:*)",
-      "Bash(git push origin HEAD:main:*)",
-      "Bash(git push --tags:*)",
-      "Bash(git push origin --tags:*)",
-      "Bash(git push origin v:*)",
-      "Bash(git push origin refs/tags/:*)",
+      "Bash(git push *--force*)",
+      "Bash(git push * -f*)",
+      "Bash(git push *+*)",
+      "Bash(git push * main)",
+      "Bash(git push * main *)",
+      "Bash(git push *:main*)",
+      "Bash(git push *refs/heads/main*)",
+      "Bash(git push *--tags*)",
+      "Bash(git push *refs/tags/*)",
+      "Bash(git push origin v*)",
       "Read(./.env)",
-      "Read(./.env.local)"
+      "Read(./.env.local)",
+      "Read(./stack.env)"
     ]
   },
   "hooks": {
     "SessionStart": [
       {
-        "matcher": "startup",
+        "matcher": "startup|resume",
         "hooks": [
           {
             "type": "command",

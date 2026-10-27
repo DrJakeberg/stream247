@@ -29,7 +29,9 @@ Exactly one commit titled `release: vX.Y.Z` on its own branch. It changes only:
 5. `CHANGELOG.md`: the section for the version (`scripts/release-notes.mjs` builds the GitHub
    release text from it).
 
-Then `pnpm validate`, `pnpm release:preflight`, push, pull request, green CI, merge on the owner's word.
+Then `pnpm validate` and the preflight the way CI runs it (a plain `pnpm release:preflight` reads `.env`):
+`RELEASE_PREFLIGHT_ENV_FILE="$(./scripts/prepare-release-preflight-env.sh)" RELEASE_PREFLIGHT_SKIP_VALIDATE=1 pnpm release:preflight`.
+Then push, pull request, green CI, merge on the owner's word.
 
 ## The tag
 
