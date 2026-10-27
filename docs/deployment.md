@@ -849,6 +849,8 @@ image can misread rows the new one stored, and since 2.3 a reverse repin needs a
   - pull the CI-published `main-<sha>` snapshot images for the tagged commit
   - smoke-test them before push
   - retag and publish those same tested images as the versioned GHCR artifacts
+- `pnpm release:preflight` runs a full `pnpm validate` on its own; the CI and release workflows set
+  `RELEASE_PREFLIGHT_SKIP_VALIDATE=1` because their job has already run `pnpm validate`.
 
 `./scripts/upgrade-rehearsal.sh <target-version>` follows the same artifact model. If the requested `v*` images already exist, it rehearses against them directly. Before the version tag exists, it falls back to the CI-published `main-<sha>` snapshot for the current commit. Set `UPGRADE_REHEARSAL_IMAGE_TAG=main-<sha>` if you need to force a specific pre-release snapshot explicitly. Empty-stack rehearsals bootstrap a rehearsal owner and seed one tiny local media fixture by default; set `UPGRADE_REHEARSAL_SEED_LOCAL_MEDIA=0` to disable fixture seeding.
 
