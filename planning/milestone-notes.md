@@ -565,8 +565,8 @@ under `planning/archive/`, text unchanged.
 
 ### M125 The Security Audit's Findings Are Closed
 
-- **Source.** The security audit of 2026-10-27 on `main` 9a6df7e (`research/security-audit-2026-10.md` and
-  `research/security-audit-2026-10/` in the project files): 3 confirmed findings and 7 leads that needed
+- **Source.** The security audit of 2026-10-27 on `main` 9a6df7e (research/security-audit-2026-10.md and
+  research/security-audit-2026-10/ in the project files, not in this repository): 3 confirmed findings and 7 leads that needed
   facts outside the repository. The owner asked for all of them ("alle findings schließen", 2026-10-27
   15:10 UTC). The audit's 47 hardening notes are not findings; those closed here are the ones on the same
   code paths (listed below), the rest is the list at the end.
