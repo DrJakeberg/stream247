@@ -610,8 +610,9 @@ under `planning/archive/`, text unchanged.
   Left: the per-account login limit counts every attempt, also successful ones (the decision below); a
   rotated ingest key works up to one second longer (the credential cache); re-granting a login that a bound
   member renamed away from, before their next sign-in, edits their grant.
-- **Decisions.** *open: upload limit, web memory limit, direct access without a proxy (cards of
-  2026-10-27).*
+- **Decisions.** Upload: free space only, no per-file limit by default (owner's choice 2026-10-27 18:02 UTC,
+  "Nur Platz-Grenze"; `STREAM247_UPLOAD_MAX_BYTES` stays as an opt-in). *Open: web memory limit, direct
+  access without a proxy (cards of 2026-10-27).*
 - **Not done (hardening notes, for a later milestone if wanted).** Containers as root and the read-write
   Docker socket of `relay-watchdog`; `--frozen-lockfile=false`, actions and base images not pinned by
   digest, `latest` from main; `.dockerignore` without `.env`; Postgres password fallback; mediamtx API
