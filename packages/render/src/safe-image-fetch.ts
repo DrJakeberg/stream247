@@ -11,8 +11,9 @@
 // private, link-local, carrier-grade NAT, multicast or reserved ranges, IPv4-mapped forms included),
 // the connection goes to exactly the address that was checked (no second lookup a rebinding name
 // could answer differently), redirects are followed by hand and checked the same way, and the body
-// is bounded in time and size. A picture that cannot be fetched under these rules is drawn as a
-// transparent pixel of its declared size, which is what an unreachable emote already looked like.
+// is bounded in time (5 s for the whole fetch, redirects included) and size. A picture that cannot be
+// fetched under these rules is drawn as a transparent pixel of its declared size, which is what an
+// unreachable emote already looked like.
 
 import { lookup as dnsLookup } from "node:dns/promises";
 import http from "node:http";
@@ -23,7 +24,10 @@ export const REMOTE_IMAGE_TIMEOUT_MS = 5_000;
 export const REMOTE_IMAGE_MAX_BYTES = 4 * 1024 * 1024;
 export const REMOTE_IMAGE_MAX_REDIRECTS = 3;
 const REMOTE_IMAGE_CACHE_TTL_MS = 10 * 60_000;
+// A picture that failed is asked again sooner: one network blip must not blank a logo for long.
+const REMOTE_IMAGE_FAILURE_TTL_MS = 60_000;
 const REMOTE_IMAGE_CACHE_MAX_ENTRIES = 256;
+const REMOTE_IMAGE_CACHE_MAX_BYTES = 32 * 1024 * 1024;
 
 /** A 1x1 transparent PNG: what a picture that may not or cannot be fetched is drawn as. */
 export const TRANSPARENT_PIXEL_DATA_URI =
@@ -113,7 +117,7 @@ type FetchedImage = { contentType: string; body: Buffer };
 
 class RemoteImageRefused extends Error {}
 
-async function resolvePublicAddress(hostname: string, resolveHost: ResolveHost): Promise<{ address: string; family: number }> {
+async function resolvePublicAddresses(hostname: string, resolveHost: ResolveHost): Promise<Array<{ address: string; family: number }>> {
   const bare = hostname.replace(/^\[|\]$/g, "");
   const addresses = isIP(bare) ? [{ address: bare, family: isIP(bare) }] : await resolveHost(bare);
   // Every answer must be public: a name that also resolves to an internal address is refused whole,
@@ -121,10 +125,11 @@ async function resolvePublicAddress(hostname: string, resolveHost: ResolveHost):
   if (addresses.length === 0 || addresses.some((entry) => !isPublicAddress(entry.address))) {
     throw new RemoteImageRefused(`${hostname} does not resolve to a public address only.`);
   }
-  return addresses[0]!;
+  return addresses;
 }
 
-function requestOnce(url: URL, pinned: { address: string; family: number }): Promise<
+/** Exported for tests only: one request to an already checked address. */
+export function requestOnce(url: URL, pinned: { address: string; family: number }, deadline: number): Promise<
   { kind: "redirect"; location: string } | { kind: "image"; image: FetchedImage }
 > {
   return new Promise((resolve, reject) => {
@@ -179,6 +184,13 @@ function requestOnce(url: URL, pinned: { address: string; family: number }): Pro
       }
     );
     request.on("timeout", () => request.destroy(new RemoteImageRefused("did not answer in time")));
+    // The socket timeout only fires while nothing arrives; a host that drips one byte a second would
+    // hold the frame for hours. This bounds the whole fetch, redirects included.
+    const overall = setTimeout(
+      () => request.destroy(new RemoteImageRefused("did not finish in time")),
+      Math.max(0, deadline - Date.now())
+    );
+    request.on("close", () => clearTimeout(overall));
     request.on("error", reject);
     request.end();
   });
@@ -195,12 +207,29 @@ export async function fetchRemoteImage(rawUrl: string, resolveHost: ResolveHost 
     if (url.username || url.password) {
       throw new RemoteImageRefused("carries credentials");
     }
-    const pinned = await resolvePublicAddress(url.hostname, resolveHost);
-    const remaining = deadline - Date.now();
-    if (remaining <= 0) {
-      throw new RemoteImageRefused("did not answer in time");
+    const candidates = await resolvePublicAddresses(url.hostname, resolveHost);
+    let answer: Awaited<ReturnType<typeof requestOnce>> | null = null;
+    let lastError: unknown = null;
+    // Each checked address in turn: an IPv6 answer first on a host without an IPv6 route must not
+    // cost the picture. A refusal by the server (status, type, size) is final, only a failed
+    // connection moves on.
+    for (const pinned of candidates) {
+      if (Date.now() >= deadline) {
+        throw new RemoteImageRefused("did not finish in time");
+      }
+      try {
+        answer = await requestOnce(url, pinned, deadline);
+        break;
+      } catch (error) {
+        if (error instanceof RemoteImageRefused) {
+          throw error;
+        }
+        lastError = error;
+      }
     }
-    const answer = await requestOnce(url, pinned);
+    if (!answer) {
+      throw lastError ?? new RemoteImageRefused("could not be reached");
+    }
     if (answer.kind === "image") {
       return answer.image;
     }
@@ -214,22 +243,34 @@ function toDataUri(image: FetchedImage): string {
 }
 
 const cache = new Map<string, { dataUri: string; expiresAt: number }>();
+let cachedBytes = 0;
 
-function remember(url: string, dataUri: string, now: number): void {
-  cache.delete(url);
-  cache.set(url, { dataUri, expiresAt: now + REMOTE_IMAGE_CACHE_TTL_MS });
-  while (cache.size > REMOTE_IMAGE_CACHE_MAX_ENTRIES) {
+function forget(url: string): void {
+  const entry = cache.get(url);
+  if (entry) {
+    cachedBytes -= entry.dataUri.length;
+    cache.delete(url);
+  }
+}
+
+function remember(url: string, dataUri: string, now: number, ttlMs: number): void {
+  forget(url);
+  cache.set(url, { dataUri, expiresAt: now + ttlMs });
+  cachedBytes += dataUri.length;
+  // Bounded by count and by size, oldest first.
+  while (cache.size > REMOTE_IMAGE_CACHE_MAX_ENTRIES || cachedBytes > REMOTE_IMAGE_CACHE_MAX_BYTES) {
     const oldest = cache.keys().next().value;
-    if (oldest === undefined) {
+    if (oldest === undefined || oldest === url) {
       break;
     }
-    cache.delete(oldest);
+    forget(oldest);
   }
 }
 
 /** Test seam only. */
 export function clearRemoteImageCache(): void {
   cache.clear();
+  cachedBytes = 0;
 }
 
 /** A remote src as a data: URI, or the transparent pixel when it may not or cannot be fetched. Never throws. */
@@ -239,15 +280,16 @@ export async function resolveRemoteImageSrc(src: string, resolveHost: ResolveHos
   if (cached && cached.expiresAt > now) {
     return cached.dataUri;
   }
-  let dataUri = TRANSPARENT_PIXEL_DATA_URI;
   try {
-    dataUri = toDataUri(await fetchRemoteImage(src, resolveHost));
+    const dataUri = toDataUri(await fetchRemoteImage(src, resolveHost));
+    remember(src, dataUri, now, REMOTE_IMAGE_CACHE_TTL_MS);
+    return dataUri;
   } catch {
-    // Refused or unreachable: drawn empty, like an emote that did not load. Remembered as well, so a
-    // refused address is not asked again on every frame.
+    // Refused or unreachable: drawn empty, like an emote that did not load. Remembered for a minute,
+    // so a refused address is not asked again on every frame.
+    remember(src, TRANSPARENT_PIXEL_DATA_URI, now, REMOTE_IMAGE_FAILURE_TTL_MS);
+    return TRANSPARENT_PIXEL_DATA_URI;
   }
-  remember(src, dataUri, now);
-  return dataUri;
 }
 
 type LayoutNodeLike = { type: string; props: { src?: string; children?: unknown } };

@@ -148,6 +148,17 @@ export function parseTwoFactorChallengeValue(value: string | undefined): { userI
   };
 }
 
+/** The session cookie's value from a Cookie header, for code that runs after the request scope (an open event stream). */
+export function sessionCookieFromHeader(cookieHeader: string | null): string | undefined {
+  for (const part of (cookieHeader ?? "").split(";")) {
+    const separator = part.indexOf("=");
+    if (separator > 0 && part.slice(0, separator).trim() === sessionCookieName) {
+      return part.slice(separator + 1).trim();
+    }
+  }
+  return undefined;
+}
+
 /** The user id of a well-signed, unexpired session cookie, without a database read; the password stamp is checked by getAuthenticatedUser. */
 export async function getAuthenticatedUserId(): Promise<string | null> {
   const cookieStore = await cookies();

@@ -601,6 +601,15 @@ under `planning/archive/`, text unchanged.
 - **Release tag lead.** `ci.yml`'s `validate` job holds `packages: read`; images are built and pushed by a
   new `publish` job that runs for pushes to `main` only, after `validate`. Pull-request runs can no longer
   write `main-<sha>`.
+- **Review (fresh subagent).** No blocker. Fixed: the picture fetch had only an idle timeout, so a host
+  dripping bytes held a frame for hours (now 5 s for the whole fetch); only the first resolved address was
+  tried (now each checked address in turn); the picture cache could grow to about 1.4 GB and kept a failed
+  picture blank for 10 min (now 32 MiB and one minute for failures); an open broadcast event stream outlived
+  a removed grant (it re-checks the session with every snapshot now); the cold rebuild in the `publish`
+  job can take longer than the Release workflow waited for `main-<sha>`, so it waits 60 min instead of 30.
+  Left: the per-account login limit counts every attempt, also successful ones (the decision below); a
+  rotated ingest key works up to one second longer (the credential cache); re-granting a login that a bound
+  member renamed away from, before their next sign-in, edits their grant.
 - **Decisions.** *open: upload limit, web memory limit, direct access without a proxy (cards of
   2026-10-27).*
 - **Not done (hardening notes, for a later milestone if wanted).** Containers as root and the read-write

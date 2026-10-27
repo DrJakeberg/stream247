@@ -10,6 +10,7 @@ import {
   resolveRemoteImageSrc,
   TRANSPARENT_PIXEL_DATA_URI
 } from "@stream247/overlay-render";
+import { requestOnce } from "../../packages/render/src/safe-image-fetch";
 import { chatGameCommandLane, createChatGameCooldowns } from "../../apps/worker/src/chat-game-cooldown";
 import { judgeUploadSpace, resolveUploadMaxFileBytes } from "../../apps/web/lib/server/upload-space";
 
@@ -121,6 +122,28 @@ describe("remote pictures in the overlay renderer (scene preview lead)", () => {
     expect(await resolveRemoteImageSrc("http://relay:9997/v3/paths/list", resolveHost)).toBe(TRANSPARENT_PIXEL_DATA_URI);
     expect(await resolveRemoteImageSrc("https://rebind.example/logo.png", resolveHost)).toBe(TRANSPARENT_PIXEL_DATA_URI);
     expect(asked).toEqual(["relay", "rebind.example"]);
+  });
+});
+
+describe("remote pictures are bounded in time as a whole (review of M125)", () => {
+  it("gives up on a host that drips one byte at a time, however steadily", async () => {
+    const server = http.createServer((_request, response) => {
+      response.writeHead(200, { "content-type": "image/png" });
+      const drip = setInterval(() => response.write(Buffer.from([0])), 100);
+      response.on("close", () => clearInterval(drip));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const { port } = server.address() as AddressInfo;
+      const started = Date.now();
+      await expect(
+        requestOnce(new URL(`http://127.0.0.1:${port}/slow.png`), { address: "127.0.0.1", family: 4 }, Date.now() + 600)
+      ).rejects.toThrow("did not finish in time");
+      expect(Date.now() - started).toBeLessThan(2_000);
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
   });
 });
 
