@@ -23,8 +23,10 @@ jobs:
     runs-on: ubuntu-latest
     # Without this the job inherits GitHub's 6-hour default. A hung apt mirror left a run wedged
     # for over an hour on the ffmpeg install, and because runs are serialised that blocked every
-    # later commit behind it. Fail in a useful timeframe instead.
-    timeout-minutes: 45
+    # later commit behind it. Fail in a useful timeframe instead. A green run takes about 36 minutes
+    # since M124's resume smoke; on 2026-10-26 a slow apt mirror added about 15 (ffmpeg 4 min,
+    # Playwright's system packages 11-17 min) and the job hit 45 with every step green.
+    timeout-minutes: 60
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     permissions:
