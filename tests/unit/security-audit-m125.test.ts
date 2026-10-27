@@ -194,6 +194,23 @@ describe("CI token (release-tag lead)", () => {
     expect(publish).toMatch(/packages:\s*write/);
     expect(publish).toMatch(/type=sha,prefix=main-/);
   });
+
+  it("test builds take node:22-alpine from mirror.gcr.io; the Dockerfiles and the publish job do not (owner's choice 2026-10-27)", () => {
+    const publishAt = ci.indexOf("\n  publish:\n");
+    const validate = ci.slice(0, publishAt);
+    const publish = ci.slice(publishAt);
+    const tagAt = validate.indexOf(
+      "docker tag mirror.gcr.io/library/node:22-alpine public.ecr.aws/docker/library/node:22-alpine"
+    );
+    expect(tagAt).toBeGreaterThan(0);
+    expect(tagAt).toBeLessThan(validate.indexOf("docker build -f docker/web.Dockerfile"));
+    expect(publish).not.toContain("mirror.gcr.io");
+    for (const file of ["docker/web.Dockerfile", "docker/worker.Dockerfile"]) {
+      const from = readFileSync(path.join(rootDir, file), "utf8").match(/^FROM .*/gm) ?? [];
+      expect(from.length).toBeGreaterThan(0);
+      for (const line of from) expect(line).toMatch(/^FROM public\.ecr\.aws\/docker\/library\/node:22-alpine /);
+    }
+  });
 });
 
 describe("web memory ceiling (upload lead, owner's choice 2026-10-27)", () => {

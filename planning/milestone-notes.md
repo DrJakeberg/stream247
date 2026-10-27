@@ -615,6 +615,10 @@ under `planning/archive/`, text unchanged.
   (owner's choice 2026-10-27 18:03 UTC; `mem_limit: ${STREAM247_WEB_MEMORY_LIMIT:-2g}` in
   `docker-compose.yml`). Direct access without a proxy: port 3000 on `127.0.0.1` only, `STREAM247_WEB_BIND=0.0.0.0`
   opens it (owner's choice 2026-10-27 18:03 UTC, "Port nur auf 127.0.0.1"); no per-account login limit.
+  CI: public.ecr.aws refused node:22-alpine with "429 Data limit exceeded" on every run from about 16:00
+  UTC, so the validate job pulls `mirror.gcr.io/library/node:22-alpine` and tags it under the Dockerfiles'
+  name before its test builds; the Dockerfiles and the publish job are unchanged (owner's choice 2026-10-27
+  20:31 UTC, "Nur CI zieht von mirror.gcr.io").
 - **Not done (hardening notes, for a later milestone if wanted).** Containers as root and the read-write
   Docker socket of `relay-watchdog`; `--frozen-lockfile=false`, actions and base images not pinned by
   digest, `latest` from main; `.dockerignore` without `.env`; Postgres password fallback; mediamtx API

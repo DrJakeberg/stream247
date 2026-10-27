@@ -157,6 +157,14 @@ jobs:
           done
       - run: pnpm test
       - run: pnpm build
+      # public.ecr.aws answers "429 Data limit exceeded" for hours at a time. The test builds take
+      # the same Docker Official Image from mirror.gcr.io and tag it under the name the Dockerfiles
+      # use, so docker build finds it locally. The Dockerfiles and the publish job still pull from
+      # public.ecr.aws; release images do not change (owner's choice 2026-10-27).
+      - name: Base image for the test builds from mirror.gcr.io
+        run: |
+          docker pull mirror.gcr.io/library/node:22-alpine
+          docker tag mirror.gcr.io/library/node:22-alpine public.ecr.aws/docker/library/node:22-alpine
       - run: docker build -f docker/web.Dockerfile -t stream247-web:test .
       - run: docker build -f docker/worker.Dockerfile -t stream247-worker:test .
       - run: pnpm test:fresh-db
