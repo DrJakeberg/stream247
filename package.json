@@ -21,6 +21,7 @@
     "test:live-bridge-smoke": "vitest run tests/unit/live-bridge.test.ts",
     "test:audio-cuepoint-smoke": "vitest run tests/unit/audio-lanes.test.ts tests/unit/cuepoints.test.ts",
     "test:queue-continuity": "bash ./scripts/queue-continuity-smoke.sh",
+    "test:resume": "bash ./scripts/resume-smoke.sh",
     "test:runtime-parity": "bash ./scripts/runtime-parity-smoke.sh",
     "test:broadcast-path": "bash ./scripts/broadcast-path-smoke.sh",
     "validate": "pnpm lint && pnpm lint:css-tokens && pnpm typecheck && pnpm test && pnpm build",

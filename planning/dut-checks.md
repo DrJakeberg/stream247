@@ -308,3 +308,17 @@ entries under its *DUT checks of 2.3.1 (run)*; the M107 entry below did not run 
 
 - The checks of 2.2.0-rc.1 are in the archive, sections M75-M82. That candidate never reached the DUT, so
   the 2.3.0 candidate runs them too.
+
+- M124, on the deployed candidate (it touches the seam chain, so it is soaked like a release): while a
+  pool's local file or cached Twitch archive has aired for more than 5 minutes, press Live → *Play now*
+  on a short other item. Passes when, after the inserted item, the cut item comes back about 10 s before
+  where it was cut (the picture repeats the last seconds), it reads "resumed at h:mm:ss" on
+  its row in the as-run log (`/live?tab=status`), and the overlay's chapter title and the Next card's time match the item, not the restart.
+
+  ```sh
+  ssh dut 'docker logs --since 30m stream247-worker-1 2>&1 | grep -E "playout\.resume\.(point|start|not_seekable)"'
+  ```
+
+- M124, at the repin of the candidate: the item on air when the containers restart continues 10 s before
+  the restart (a cut of a local file or cached archive), not from its beginning or with the next item.
+  Passes when the first `playout.resume.start` after the repin names the asset that was on air before it.

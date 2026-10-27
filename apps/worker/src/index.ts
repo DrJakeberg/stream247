@@ -104,6 +104,12 @@ import {
   type ViewerLocale,
   overlayTickerLine,
   overlayOnAirChapterTitle,
+  onAirItemZeroAt,
+  isResumePointValid,
+  isResumePointExhausted,
+  removeResumePointsOfAsset,
+  decideResumeStart,
+  formatCuepointOffsetLabel as formatResumeOffsetLabel,
   overlayScale,
   overlayTickerCrawlPlan,
   ASSET_PROBE_QUARANTINE_THRESHOLD,
@@ -228,6 +234,18 @@ import {
   isFinalScheduledInsertOpenFailure,
   type InputOpenRetryState
 } from "./input-open-retry.js";
+import {
+  classifyResumeExit,
+  decideResumeCheckpoint,
+  decideResumePointsAfterExit,
+  decideResumePointsAtStart,
+  isSeekableInput,
+  pickResumeItem,
+  resumeRunOf,
+  resumeRunPositionAt,
+  type ResumePick,
+  type ResumeRun
+} from "./resume-interrupted.js";
 import { createFailedExitWrite } from "./playout-exit-write.js";
 import { decideQuarantineTrialMode } from "./quarantine-trial.js";
 import {
@@ -488,10 +506,20 @@ import { fetchTwitchLiveStatus } from "./twitch-live-status.js";
 import { decideTwitchChannelMetadataWrite } from "./twitch-sync-policy.js";
 import { decideTwitchConnectionHeal, validateTwitchAccessToken } from "./twitch-connection-heal.js";
 
+/** Position 0 of the item on air on the process clock: the process start, earlier by its start offset (M124). */
+function playoutItemZeroMs(): number {
+  return playoutProcessStartedAtMs > 0 ? playoutProcessStartedAtMs - playoutStartOffsetSeconds * 1000 : 0;
+}
+
 /** The single synthetic source every locally mounted file belongs to — the global fallback included. */
 const LOCAL_LIBRARY_SOURCE_ID = "source-local-library";
 let playoutProcess: ChildProcess | null = null;
 let playoutProcessStartedAtMs = 0;
+// Where in the item the process on air started (M124): 0 from the beginning, more for a continued item.
+// Everything that measures "how far into the item" adds it to the time since the process start.
+let playoutStartOffsetSeconds = 0;
+// The run on air when it keeps a resume point (resume-interrupted.ts: a pool's pick from a file), else null.
+let playoutResumeRun: ResumeRun | null = null;
 let playoutAssetId = "";
 let playoutDestinationId = "";
 let playoutDestinationIds: string[] = [];
@@ -1346,6 +1374,15 @@ async function releaseWatchedVodCache(
     // the schedule came round — 2.38, 14.51, 4.04 and 9.47 GB on one day — and a replay that came
     // round before its re-download finished aired from Twitch directly.
     const finishedAsset = state.assets.find((asset) => asset.id === finishedAssetId && isTwitchVodAsset(asset));
+    // M124: a replay cut part-way is continued from this file when its pool comes back (within 24 hours);
+    // deleting it would make the continuation a download or a start from the beginning.
+    if (
+      finishedAsset &&
+      state.playout.resumePoints.some((point) => point.assetId === finishedAsset.id && isResumePointValid(point, Date.now()))
+    ) {
+      logRuntimeEvent("vod.cache.kept", { assetId: finishedAsset.id, reason: "resume-point" });
+      return;
+    }
     if (finishedAsset) {
       const moment = getCurrentScheduleMoment({ now: new Date(), timeZone: resolveChannelTimeZone(state.managedConfig) });
       const upcomingPoolIds = collectUpcomingPoolIds({
@@ -2127,7 +2164,8 @@ async function enforceAssetDurationBound(assets: AssetRecord[]): Promise<void> {
     !shouldEndAssetAtDurationBound({
       targetKind: playoutTargetKind,
       durationSeconds,
-      processStartedAtMs: playoutProcessStartedAtMs,
+      // A continued item (M124) has that much less left: the bound counts from position 0 of the item.
+      processStartedAtMs: playoutItemZeroMs(),
       nowMs,
       marginSeconds: options.marginSeconds
     })
@@ -2138,7 +2176,8 @@ async function enforceAssetDurationBound(assets: AssetRecord[]): Promise<void> {
   logRuntimeEvent("playout.duration_bound.end", {
     assetId: playoutAssetId,
     durationSeconds,
-    elapsedSeconds: Math.round((nowMs - playoutProcessStartedAtMs) / 1000)
+    elapsedSeconds: Math.round((nowMs - playoutItemZeroMs()) / 1000),
+    startOffsetSeconds: playoutStartOffsetSeconds
   });
   // The writer's side of the seam (M61), measured before the cut so it describes this encode. Bounded
   // to three seconds: a slow probe must not hold the boundary, so a miss is logged as absent, not waited for.
@@ -2599,9 +2638,17 @@ function getFfmpegCommand(
   tickerCrawl: TickerCrawlCommandConfig | null = null,
   // The audio track of a YouTube video+audio pair (2.1). Input 1, where an audio lane would sit; the
   // caller never passes both, since a lane replaces the programme's sound.
-  programAudioInput = ""
+  programAudioInput = "",
+  // Where in the programme to start (M124: an interrupted item continued); only for a seekable input.
+  programStartSeconds = 0
 ): string[] {
-  const command = ["-hide_banner", "-loglevel", "warning", "-y", ...buildFfmpegInputArgs({ input, realtime: true })];
+  const command = [
+    "-hide_banner",
+    "-loglevel",
+    "warning",
+    "-y",
+    ...buildFfmpegInputArgs({ input, realtime: true, startSeconds: programStartSeconds })
+  ];
   const outputVideoFilter = isStreamScaleEnabled(process.env) ? getOutputVideoFilter(output) : "";
   const separateProgramAudio = !audioLane && Boolean(programAudioInput);
   // Mandatory once the sound has its own input: a pair whose audio cannot be read must fail at open
@@ -3882,11 +3929,12 @@ function onAirItemStartedAt(state: AppState, asset: AssetRecord | null): string 
   if (!asset) {
     return "";
   }
+  // Position 0 of the item, which for an item continued after a cut (M124) aired before the process start.
   if (playoutAssetId === asset.id && playoutProcessStartedAtMs > 0) {
-    return new Date(playoutProcessStartedAtMs).toISOString();
+    return new Date(playoutItemZeroMs()).toISOString();
   }
   if (state.playout.currentAssetId === asset.id && state.playout.processStartedAt) {
-    return state.playout.processStartedAt;
+    return onAirItemZeroAt(state.playout);
   }
   return new Date().toISOString();
 }
@@ -3966,7 +4014,7 @@ async function writeOnAirOverlay(
         overrides.currentTitle ||
         overlayOnAirChapterTitle({
           currentAssetId: state.playout.currentAssetId,
-          processStartedAt: state.playout.processStartedAt,
+          processStartedAt: onAirItemZeroAt(state.playout),
           asset
         }) ||
         buildAssetDisplayTitle(asset) ||
@@ -5254,8 +5302,17 @@ function predictWorkerNextOnAir(state: AppState, playout: NextOnAirPlayout, now:
         return asset ? { title: buildAssetDisplayTitle(asset), durationSeconds: asset.durationSeconds ?? 0 } : null;
       },
       pickForBlock: (block) => {
+        // A pool with an interrupted item continues it first (M124); the item on air is not "next".
+        const resumed = block.poolId
+          ? selectPoolResumeItem(state, block.poolId, {
+              skippedAssetId,
+              removedNextAssetId,
+              runningAssetId: state.playout.currentAssetId,
+              nowMs: now.getTime()
+            })
+          : null;
         const asset = block.poolId
-          ? selectPoolAsset(state, block.poolId, skippedAssetId, removedNextAssetId)
+          ? resumed?.asset ?? selectPoolAsset(state, block.poolId, skippedAssetId, removedNextAssetId)
           : selectScheduledSourceAsset(state, block.sourceName, skippedAssetId, removedNextAssetId);
         return asset ? { assetId: asset.id, title: buildAssetDisplayTitle(asset) } : null;
       },
@@ -5297,6 +5354,34 @@ function slateNextVideo(state: AppState, slateKind: string): { nextTitle: string
   }
   const card = nextOnAirCardText({ prediction, locale, timeZone: resolveChannelTimeZone(state.managedConfig), now });
   return { ...card, nextScheduleItem: null };
+}
+
+/**
+ * The pool's interrupted item and where it continues (M124, resume-interrupted.ts), or null: the pool then
+ * picks as before. The item must still be one the pool may take now: from its sources, not held by the
+ * source breaker, ready, not held out by a Skip or Remove next, not quarantined.
+ */
+function selectPoolResumeItem(
+  state: AppState,
+  poolId: string,
+  options: { skippedAssetId: string; removedNextAssetId: string; runningAssetId: string; nowMs: number }
+): ResumePick<AssetRecord> | null {
+  const pool = poolId ? state.pools.find((entry) => entry.id === poolId) ?? null : null;
+  if (!pool) {
+    return null;
+  }
+  const heldSourceIds = poolSourceGate(state).heldSourceIds;
+  return pickResumeItem({
+    points: state.playout.resumePoints,
+    pool,
+    assets: state.assets,
+    isEligible: (asset) =>
+      pool.sourceIds.includes(asset.sourceId) &&
+      !heldSourceIds.includes(asset.sourceId) &&
+      isPoolAssetEligible(pool, asset, options.skippedAssetId, options.removedNextAssetId),
+    runningAssetId: options.runningAssetId,
+    nowMs: options.nowMs
+  });
 }
 
 function selectPoolAsset(state: AppState, poolId: string, skippedAssetId: string, removedNextAssetId = ""): AssetRecord | null {
@@ -5927,6 +6012,10 @@ type SelectionResult = {
   // Set on the item kept on air at such a boundary when the new block has no item to take the air with yet:
   // the cycle records the run before the boundary, so the next cycle tries the takeover again.
   scheduleTakeoverWaiting?: ScheduleTakeover;
+  // Set on a pool's pick that continues its interrupted item (M124): where it starts, 0 when it aired too
+  // little before the cut. Such a pick does not take the pool's position again (the pool stored it when
+  // the item first started).
+  resumeStartSeconds?: number;
 };
 
 function buildQueueHeadForSelection(args: {
@@ -6180,8 +6269,21 @@ function choosePlaybackCandidate(
         ) ?? null
       : null;
   if (retryAsset && retryDecision) {
+    // A continued item that failed to open is started once more at the same position (M124).
+    const retryPoint = state.playout.resumePoints.find(
+      (point) =>
+        point.assetId === retryAsset.id &&
+        point.poolId === (currentScheduleItem?.poolId ?? "") &&
+        isResumePointValid(point, scheduleNow.getTime()) &&
+        !isResumePointExhausted(point)
+    );
+    const retryResume =
+      retryPoint && retryDecision.reasonCode === "scheduled_match"
+        ? decideResumeStart({ positionSeconds: retryPoint.positionSeconds, durationSeconds: retryAsset.durationSeconds ?? 0 })
+        : null;
     return createSelection({
       asset: retryAsset,
+      ...(retryResume?.kind === "resume" ? { resumeStartSeconds: retryResume.startSeconds } : {}),
       // A scheduled insert's retry (R13) is still an insert on air and in the as-run log.
       queueKind: retryDecision.reasonCode === "scheduled_insert" ? "insert" : "asset",
       inputOpenRetry: true,
@@ -6233,6 +6335,15 @@ function choosePlaybackCandidate(
   // The operator arms above (Pin, Fallback, Play now / Insert, Live Bridge) come first and still win.
   const scheduleTakeoverEdge =
     processRunning && !options.setTakeoverAside ? getScheduleTakeover(state, currentScheduleItem, scheduleNow) : null;
+  // A pool's interrupted item is continued where it was cut before the pool picks on (M124,
+  // resume-interrupted.ts): the pool's position still names it, so without this the pool took the item
+  // after it and the rest of the cut item never aired.
+  const resumePick = selectPoolResumeItem(state, currentScheduleItem?.poolId ?? "", {
+    skippedAssetId,
+    removedNextAssetId,
+    runningAssetId: processRunning ? playoutAssetId : "",
+    nowMs: scheduleNow.getTime()
+  });
   // A block without an item of its own to take the air with takes nothing yet (review of M105): the ladder
   // below (global fallback, generic fallback, standby slate) cut the healthy item on air for a fallback,
   // where before M105 the item ran on and a fallback came only after it. The keep-arms hold the item and
@@ -6240,7 +6351,7 @@ function choosePlaybackCandidate(
   // tries again: a pool whose only source the breaker holds at 20:00 takes the air once it is let go.
   const takeoverPick = scheduleTakeoverEdge
     ? currentScheduleItem?.poolId
-      ? selectPoolAsset(state, currentScheduleItem.poolId, skippedAssetId, removedNextAssetId)
+      ? resumePick?.asset ?? selectPoolAsset(state, currentScheduleItem.poolId, skippedAssetId, removedNextAssetId)
       : findScheduledSourceAsset()
     : null;
   const scheduleTakeover = takeoverPick ? scheduleTakeoverEdge : null;
@@ -6379,21 +6490,27 @@ function choosePlaybackCandidate(
   const preferredAsset =
     takeoverPick ??
     (currentScheduleItem?.poolId
-      ? currentPoolAsset ?? selectPoolAsset(state, currentScheduleItem.poolId, skippedAssetId, removedNextAssetId)
+      ? currentPoolAsset ?? resumePick?.asset ?? selectPoolAsset(state, currentScheduleItem.poolId, skippedAssetId, removedNextAssetId)
       : findScheduledSourceAsset());
+  // The pick continues the cut item only when it is that item and not the one already on air.
+  const resumeStart =
+    resumePick && preferredAsset?.id === resumePick.asset.id && preferredAsset.id !== currentPoolAsset?.id ? resumePick : null;
 
   if (preferredAsset) {
     // While a takeover waits for a pick, the only item here is the one the pool keeps on air.
     return holdingForTakeover(
       createSelection({
         asset: preferredAsset,
-        reason: currentScheduleItem
-          ? `Scheduled block ${currentScheduleItem.title} is mapped to asset ${preferredAsset.title}.`
-          : `Selected asset ${preferredAsset.title}.`,
+        reason: resumeStart
+          ? `Scheduled block ${currentScheduleItem?.title ?? ""} continues ${preferredAsset.title} at ${formatResumeOffsetLabel(resumeStart.startSeconds)}.`
+          : currentScheduleItem
+            ? `Scheduled block ${currentScheduleItem.title} is mapped to asset ${preferredAsset.title}.`
+            : `Selected asset ${preferredAsset.title}.`,
         lifecycleStatus: "running" as const,
         reasonCode: "scheduled_match" as const,
         fallbackTier: "scheduled" as const,
-        ...(scheduleTakeover ? { scheduleTakeover } : {})
+        ...(scheduleTakeover ? { scheduleTakeover } : {}),
+        ...(resumeStart ? { resumeStartSeconds: resumeStart.startSeconds } : {})
       })
     );
   }
@@ -6851,6 +6968,12 @@ async function startOrSwitchPlayout(args: {
    * clears those, never a newer request the admin wrote while the cycle ran (decideCycleEndRestartFlag).
    */
   consumed: { restartRequestedAt: string } & PendingActionFields;
+  /**
+   * A pool's own pick (M124): its pool, so the run keeps a resume point, and where it starts. `resumed` is
+   * set when the pick continues an interrupted item (from `startSeconds`, 0 when it aired too little
+   * before). Null for everything that is not the pool's pick.
+   */
+  resume?: { poolId: string; startSeconds: number; resumed: boolean } | null;
 }): Promise<void> {
   const switching = playoutProcess && !playoutProcess.killed;
   if (switching) {
@@ -6925,6 +7048,20 @@ async function startOrSwitchPlayout(args: {
   const resolvedProgramInput = programMedia.input;
   // An audio lane replaces the programme's sound, so a pair's audio track is not opened next to one.
   const resolvedProgramAudioInput = resolvedAudioLaneInput && args.audioLane ? "" : programMedia.audioInput;
+  // Continue an interrupted item at its position (M124): only from a file on disk. An item whose archive
+  // has left the cache since the cut (it now resolves remotely) starts from the beginning, logged.
+  const wantedStartSeconds = args.asset && !args.liveBridge ? Math.max(0, Math.floor(args.resume?.startSeconds ?? 0)) : 0;
+  const startOffsetSeconds =
+    wantedStartSeconds > 0 && isSeekableInput({ input: resolvedProgramInput, audioInput: resolvedProgramAudioInput })
+      ? wantedStartSeconds
+      : 0;
+  if (wantedStartSeconds > 0 && startOffsetSeconds === 0) {
+    logRuntimeEvent("playout.resume.not_seekable", {
+      assetId: args.asset?.id ?? "",
+      wantedStartSeconds,
+      input: summarizePlaybackInput(resolvedProgramInput)
+    });
+  }
   const encoder = resolveEncoderQualitySettings(args.managedConfig, process.env);
   // Resolve the PiP config only when we will actually build it: asset path, scene mode, attach
   // decided. buildLiveSourceCommandConfig may run a bounded ffprobe for programme audio, so it is
@@ -6938,7 +7075,8 @@ async function startOrSwitchPlayout(args: {
           programInput: resolvedProgramInput,
           programAudioSeparate: Boolean(resolvedProgramAudioInput),
           assetId: args.asset.id,
-          programDurationSeconds: args.asset.durationSeconds ?? 0
+          // What is left of the programme from where this start begins.
+          programDurationSeconds: Math.max(0, (args.asset.durationSeconds ?? 0) - startOffsetSeconds)
         })
       : null;
   playoutLiveSourceInputActive = Boolean(liveSourceConfig);
@@ -6976,7 +7114,8 @@ async function startOrSwitchPlayout(args: {
           encoder,
           liveSourceConfig,
           activeTickerCrawl,
-          resolvedProgramAudioInput
+          resolvedProgramAudioInput,
+          startOffsetSeconds
         )
       : getStandbyFfmpegCommand(args.outputTarget, overlayMode, outputSettings, encoder, activeTickerCrawl);
   if (liveSourceConfig) {
@@ -7003,6 +7142,7 @@ async function startOrSwitchPlayout(args: {
   playoutProcessStartedAtMs = Date.now();
   // This start's own write describes the air from now on; an older exit write still kept must not undo it.
   failedPlayoutExitWrite.supersede();
+  playoutStartOffsetSeconds = startOffsetSeconds;
   playoutAssetId = args.asset?.id ?? "";
   playoutDestinationId = leadDestination.id;
   playoutDestinationIds = args.destinations.map((destination) => destination.id);
@@ -7024,6 +7164,30 @@ async function startOrSwitchPlayout(args: {
   playoutLastStderrSample = "";
   playoutLiveBridgeInputUrl = args.liveBridge?.inputUrl ?? "";
   playoutLiveBridgeInputType = args.liveBridge?.inputType ?? "";
+  playoutResumeRun = resumeRunOf({
+    targetKind: playoutTargetKind,
+    reasonCode: args.reasonCode,
+    poolId: args.resume?.poolId ?? "",
+    assetId: playoutAssetId,
+    input: resolvedProgramInput,
+    audioInput: resolvedProgramAudioInput,
+    startOffsetSeconds,
+    resumed: Boolean(args.resume?.resumed),
+    startedAtMs: playoutProcessStartedAtMs
+  });
+  // A start that continues a point counts against it at once (a container that dies with it writes no
+  // checkpoint). One that cannot continue it (not a file on disk any more) gives the point up: the item
+  // starts from 0 this once, and is not started from 0 again at every later cut.
+  const startResumeRun = playoutResumeRun;
+  const startDropsResumeAssetId = args.resume?.resumed && args.asset && !startResumeRun ? args.asset.id : "";
+  if (args.resume?.resumed && args.asset) {
+    logRuntimeEvent("playout.resume.start", {
+      assetId: args.asset.id,
+      poolId: args.resume.poolId,
+      startOffsetSeconds,
+      startOffset: formatResumeOffsetLabel(startOffsetSeconds)
+    });
+  }
 
   logRuntimeEvent("playout.process.start", {
     destinationIds: playoutDestinationIds,
@@ -7036,7 +7200,8 @@ async function startOrSwitchPlayout(args: {
     liveInputType: args.liveBridge?.inputType ?? "",
     audioLaneAssetId: args.audioLane?.asset.id ?? "",
     reasonCode: args.reasonCode,
-    lifecycleStatus: args.lifecycleStatus
+    lifecycleStatus: args.lifecycleStatus,
+    startOffsetSeconds
   });
   // The as-run row of this run (M76), queued and not awaited: the switch is not held up by its history.
   // Every start comes through here (programme, insert, fallback bridge, slate, live bridge), and the
@@ -7066,7 +7231,8 @@ async function startOrSwitchPlayout(args: {
       input: resolvedProgramInput,
       audioInput: resolvedProgramAudioInput,
       formatId: playoutFormatId,
-      formatCandidate: playoutFormatCandidateId
+      formatCandidate: playoutFormatCandidateId,
+      startOffsetSeconds
     })
   );
   // Its end is watched from here, before the first await below, and not from the exit handler further
@@ -7197,6 +7363,9 @@ async function startOrSwitchPlayout(args: {
     const lastLiveBridgeInputUrl = playoutLiveBridgeInputUrl;
     const hadLiveSourceInput = playoutLiveSourceInputActive;
     // One instant for ranForMs and the as-run row's end, which watchAsRunEnd took before this handler ran.
+    // The stop intent and the resume run of this run, read before they are reset for the next one (M124).
+    const lastStopIntent = asRunStopIntent;
+    const lastResumeRun = playoutResumeRun;
     const exitedAtMs = asRunExit.exitedAtMs() || Date.now();
     const ranForMs = playoutProcessStartedAtMs > 0 ? exitedAtMs - playoutProcessStartedAtMs : null;
     asRunStopIntent = "";
@@ -7210,6 +7379,8 @@ async function startOrSwitchPlayout(args: {
     stopSceneRendererLoop();
     playoutProcess = null;
     playoutProcessStartedAtMs = 0;
+    playoutStartOffsetSeconds = 0;
+    playoutResumeRun = null;
     playoutAssetId = "";
     playoutDestinationId = "";
     playoutDestinationIds = [];
@@ -7298,6 +7469,23 @@ async function startOrSwitchPlayout(args: {
         formatCandidate: lastFormatCandidateId
       });
     }
+    // What the exit does to the item's resume point (M124): kept at the cut, dropped at its end.
+    const resumeExitKind = classifyResumeExit({
+      plannedReason,
+      stopIntent: lastStopIntent,
+      naturalBoundary,
+      exitedCleanly,
+      immediateOpenFailure
+    });
+    if (lastResumeRun) {
+      logRuntimeEvent("playout.resume.point", {
+        assetId: lastResumeRun.assetId,
+        poolId: lastResumeRun.poolId,
+        exit: resumeExitKind,
+        positionSeconds: resumeRunPositionAt(lastResumeRun, exitedAtMs),
+        resumed: lastResumeRun.resumed
+      });
+    }
     let crashLoopDetectedAfterExit = false;
     const exitRuntimeUpdate = (playout: AppState["playout"]): AppState["playout"] => {
       const ranPastCrashWindow =
@@ -7321,6 +7509,14 @@ async function startOrSwitchPlayout(args: {
         transitionReadyAt: "",
         processPid: 0,
         processStartedAt: "",
+        currentStartOffsetSeconds: 0,
+        resumePoints: decideResumePointsAfterExit({
+          points: playout.resumePoints,
+          run: lastResumeRun,
+          kind: resumeExitKind,
+          exitedAtMs,
+          completedAssetId: resumeExitKind === "ended" && (plannedReason === "" || plannedReason === "duration-bound") ? lastAssetId : ""
+        }),
         lastSuccessfulStartAt: nonFailureExit || ranPastCrashWindow ? playout.processStartedAt : playout.lastSuccessfulStartAt,
         lastSuccessfulAssetId: nonFailureExit || ranPastCrashWindow ? playout.currentAssetId : playout.lastSuccessfulAssetId,
         lastExitCode: String(code ?? signal ?? ""),
@@ -7484,6 +7680,10 @@ async function startOrSwitchPlayout(args: {
     heartbeatAt: startedAt,
     processPid: pid,
     processStartedAt: startedAt,
+    currentStartOffsetSeconds: startOffsetSeconds,
+    resumePoints: startDropsResumeAssetId
+      ? removeResumePointsOfAsset(playout.resumePoints, startDropsResumeAssetId)
+      : decideResumePointsAtStart(playout.resumePoints, startResumeRun),
     lastTransitionAt: startedAt,
     selectionReasonCode: args.reasonCode,
     fallbackTier: args.fallbackTier,
@@ -7628,7 +7828,8 @@ function emitDueAssetChapterBoundaries(asset: AssetRecord | null): void {
     windowKey,
     chapters,
     firedChapterKeys: chapterBoundaryFiredKeys,
-    elapsedSeconds: Math.max(0, Math.floor((Date.now() - playoutProcessStartedAtMs) / 1000))
+    // Into the item, not into the run: a continued item (M124) announces the chapter it picks up in.
+    elapsedSeconds: Math.max(0, Math.floor((Date.now() - playoutItemZeroMs()) / 1000))
   });
   chapterBoundaryFiredKeys = progress.firedChapterKeys;
 
@@ -8236,6 +8437,7 @@ async function runPlayoutCycle(): Promise<void> {
       ...decideFailedCycleInsert({ consumed: state.playout, row: playout }),
       processPid: 0,
       processStartedAt: "",
+      currentStartOffsetSeconds: 0,
       heartbeatAt: new Date().toISOString(),
       selectionReasonCode: "destination_missing",
       fallbackTier: "none",
@@ -8851,7 +9053,8 @@ async function runPlayoutCycle(): Promise<void> {
   // that is not next. A running item that IS the stored pointer gives the same walk either way.
   // The retry of an item that failed to open (M94) does not take the position again: the pool already
   // stored it when the item first started, and after a bridge the runtime names the bridge, not the item.
-  const selectionTakesPosition = !selectionIsOpenRetry && selectionTakesPoolPosition({
+  // Nor does an item continued after a cut (M124): the pool stored it when it first started.
+  const selectionTakesPosition = !selectionIsOpenRetry && selection.resumeStartSeconds === undefined && selectionTakesPoolPosition({
     selectionReasonCode: selection.reasonCode,
     selectedAssetId: selection.asset?.id ?? "",
     runtimeCurrentAssetId: state.playout.currentAssetId,
@@ -8872,9 +9075,22 @@ async function runPlayoutCycle(): Promise<void> {
             selection.reasonCode === "operator_insert" ||
             selection.reasonCode === "operator_override")))
   );
-  const rawQueueAssets = prioritizeManualNextAsset(
+  // The pool's interrupted item comes next when something else is on air now (an insert, a Pin, a Live
+  // Bridge, a fallback): the pool continues it before its next pick (M124), so the queue and the Next card
+  // name it, and its input is warmed. A queued Move next still comes first, as the selection takes it first.
+  const resumeQueueAsset =
     currentScheduleItem?.poolId && poolQueueScanned
-      ? getPoolPlaybackQueue(
+      ? selectPoolResumeItem(state, currentScheduleItem.poolId, {
+          skippedAssetId: isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "",
+          removedNextAssetId: isTimestampActive(state.playout.removeNextUntil) ? state.playout.removeNextAssetId : "",
+          runningAssetId: selection.asset?.id ?? "",
+          nowMs: scheduleNow.getTime()
+        })?.asset ?? null
+      : null;
+  const rawQueueAssets = prioritizeManualNextAsset(
+    prioritizeManualNextAsset(
+      currentScheduleItem?.poolId && poolQueueScanned
+        ? getPoolPlaybackQueue(
           state,
           currentScheduleItem.poolId,
           isTimestampActive(state.playout.skipUntil) ? state.playout.skipAssetId : "",
@@ -8884,7 +9100,9 @@ async function runPlayoutCycle(): Promise<void> {
             removedNextAssetId: isTimestampActive(state.playout.removeNextUntil) ? state.playout.removeNextAssetId : ""
           }
         )
-      : [],
+        : [],
+      resumeQueueAsset
+    ),
     manualNextQueueAsset
   );
   // While broadcast coverage is down (no running playout process — clean or failed boundary),
@@ -9075,6 +9293,17 @@ async function runPlayoutCycle(): Promise<void> {
     reasonCode: selection.reasonCode
   });
 
+  // A pool's own pick keeps a resume point while it plays (M124); the pool is the as-run row's, which is
+  // set exactly when the pool's rotation picked the item.
+  const resumeOfSelection =
+    selection.asset && selection.reasonCode === "scheduled_match" && asRunSchedule.poolId
+      ? {
+          poolId: asRunSchedule.poolId,
+          startSeconds: selection.resumeStartSeconds ?? 0,
+          resumed: selection.resumeStartSeconds !== undefined
+        }
+      : null;
+
   if (!playoutProcess || playoutProcess.killed || restartRequested) {
     try {
       await startOrSwitchPlayout({
@@ -9102,6 +9331,7 @@ async function runPlayoutCycle(): Promise<void> {
         managedConfig: state.managedConfig,
         runtimeTargets: playoutTargets,
         asRun: { ...asRunSchedule, queueKind: selection.queueKind, overrideMode: state.playout.overrideMode },
+        resume: resumeOfSelection,
         consumed: consumedRequests
       });
     } catch (error) {
@@ -9186,6 +9416,7 @@ async function runPlayoutCycle(): Promise<void> {
         managedConfig: state.managedConfig,
         runtimeTargets: playoutTargets,
         asRun: { ...asRunSchedule, queueKind: selection.queueKind, overrideMode: state.playout.overrideMode },
+        resume: resumeOfSelection,
         consumed: consumedRequests
       });
     } catch (error) {
@@ -9298,8 +9529,17 @@ async function runPlayoutCycle(): Promise<void> {
       ? ""
       : buildAssetDisplayTitle(state.assets.find((asset) => asset.id === previousAssetId) ?? null) || previousAssetId;
 
-  await updatePlayoutRuntime((playout) => ({
+  await updatePlayoutRuntime((playout, current) => ({
     ...playout,
+    // The resume points still owed, and the position of the pool's item on air (M124): a container that
+    // dies with ffmpeg leaves no exit to write it, so every cycle writes it (resume-interrupted.ts).
+    resumePoints: decideResumeCheckpoint({
+      points: playout.resumePoints,
+      run: playoutResumeRun,
+      processRunning: isPlayoutProcessRunning(),
+      pools: current.pools,
+      nowMs: Date.now()
+    }),
     // An exit of the item this cycle started that is already written (failed, nothing running) stands.
     status: decideCycleEndStatus<AppState["playout"]["status"]>({
       computed:
@@ -10488,7 +10728,7 @@ async function reconcileTwitch(): Promise<void> {
     currentAsset && state.playout.currentAssetId === currentAsset.id && state.playout.processStartedAt !== ""
       ? getAssetChapterAt(
           parseAssetChaptersJson(currentAsset.chaptersJson),
-          Math.max(0, Math.floor((Date.now() - new Date(state.playout.processStartedAt).getTime()) / 1000))
+          Math.max(0, Math.floor((Date.now() - new Date(onAirItemZeroAt(state.playout)).getTime()) / 1000))
         )
       : null;
   // The chapter title replaces the asset title inside the usual composition, so the replay

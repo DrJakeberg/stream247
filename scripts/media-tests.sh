@@ -18,6 +18,7 @@ files=(
   tests/unit/ticker-crawl-ffmpeg.test.ts
   tests/unit/ticker-crawl-end-to-end.test.ts
   tests/unit/ticker-crawl-coverage.test.ts
+  tests/unit/resume-seek-ffmpeg.test.ts
   tests/integration/local-durations-worker.test.ts
 )
 

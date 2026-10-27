@@ -1,4 +1,5 @@
 import {
+  onAirItemZeroAt,
   DEFAULT_DESTINATION_FAILURE_COOLDOWN_SECONDS,
   resolveAsRunWindow,
   type AsRunRecord,
@@ -398,7 +399,7 @@ export function getPublicProgramme(state: AppState, now: Date = new Date()): Pub
     getWorkspaceTimeZone(state),
     state.playout.status,
     state.playout.currentAssetId,
-    state.playout.processStartedAt,
+    onAirItemZeroAt(state.playout),
     JSON.stringify(state.scheduleBlocks),
     JSON.stringify(state.pools),
     JSON.stringify(state.sourceBreakers),
@@ -442,7 +443,8 @@ function buildPublicProgrammeNow(state: AppState, now: Date): PublicProgramme {
  */
 function getPublicProgrammeCurrentItem(state: AppState, now: Date = new Date()): PublicProgrammeCurrentItem | null {
   const asset = state.playout.currentAssetId ? state.assets.find((entry) => entry.id === state.playout.currentAssetId) : undefined;
-  const startedAt = Date.parse(state.playout.processStartedAt || "");
+  // Position 0 of the item, earlier than the process start for an item continued after a cut (M124).
+  const startedAt = Date.parse(onAirItemZeroAt(state.playout) || "");
   const durationSeconds = Number(asset?.durationSeconds) || 0;
   if (!asset || getChannelStatusKind(state.playout.status) !== "onAir" || !Number.isFinite(startedAt)) {
     return null;
@@ -1318,7 +1320,7 @@ export function buildActiveScenePayload(
   // currentAssetId is empty and the helper returns "" on its first guard.
   const onAirChapterTitle = overlayOnAirChapterTitle({
     currentAssetId: state.playout.currentAssetId,
-    processStartedAt: state.playout.processStartedAt,
+    processStartedAt: onAirItemZeroAt(state.playout),
     asset: currentAsset
   });
 

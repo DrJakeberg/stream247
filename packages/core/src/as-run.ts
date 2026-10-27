@@ -57,6 +57,11 @@ export type AsRunRecord = {
   endReason: AsRunEndReason;
   /** The exit code or the signal, "" while on air and for a process nobody saw exit. */
   exitCode: string;
+  /**
+   * Where in the item the run started, in whole seconds: 0 from the beginning, more for an item continued
+   * after a cut (M124). Its aired seconds count from there.
+   */
+  startOffsetSeconds: number;
 };
 
 /**
@@ -253,7 +258,12 @@ export function buildAsRunRowView(
     origin: origin.join(" · "),
     input: `${describeAsRunInputKind(record.inputKind)}${format}`,
     ended: describeAsRunEndReason(record.endReason, record.exitCode),
-    timing: [record.plannedSeconds > 0 ? `planned ${formatAsRunSeconds(record.plannedSeconds)}` : "", airedText]
+    timing: [
+      // An item continued after a cut (M124) says where it picked up; its aired time counts from there.
+      record.startOffsetSeconds > 0 ? `resumed at ${formatAsRunSeconds(record.startOffsetSeconds)}` : "",
+      record.plannedSeconds > 0 ? `planned ${formatAsRunSeconds(record.plannedSeconds)}` : "",
+      airedText
+    ]
       .filter(Boolean)
       .join(" · ")
   };

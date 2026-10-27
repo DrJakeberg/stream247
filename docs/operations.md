@@ -77,10 +77,11 @@ the pool's next item. Under the relay no operator action shows that slate.
   with `reasonCode: operator_insert`, no slate, in either mode. An item that has not been played
   recently can take a minute or more to resolve (yt-dlp, Twitch); the item on air keeps playing
   meanwhile. While the insert plays, the pool's next items are prepared as usual. When the insert ends
-  (its end, its duration bound, a feed watchdog) the pool continues with its next item. The interrupted
-  item is not resumed at its position — it was the pool's last started item, so the pool goes on after
-  it (resuming is M77, deferred). Play now does not move a pool's position either, so a pool item played
-  by hand can still come round as the pool's next item. Both take a queued Move next out. Chat cannot
+  (its end, its duration bound, a feed watchdog) the pool continues the item it cut, 10 s before the
+  cut, when that is a local file or a cached Twitch archive (since M124, *Continuing an interrupted
+  item* below); a remote archive or a YouTube video is not continued, and the pool goes on after it.
+  Play now does not move a pool's position either, so a pool item played by hand can still come round
+  as the pool's next item. Both take a queued Move next out. Chat cannot
   skip it: skip votes are paused while it is pending or on air (*Chat skip votes* below, since M79).
 - Play now and Play insert are refused for the item already on air (with the relay, Restart plays it
   again from its beginning), while a Live Bridge is pending or on air (the takeover ends an insert;
@@ -142,12 +143,13 @@ the pool's next item. Under the relay no operator action shows that slate.
   `playout.skip.current` says "the Pin was ended by Skip" (or the Fallback). A Pin set but not yet on
   air is left alone: Skip skips the item before it, and the pin then takes the air.
 - **Live Bridge** takes the air at the next cycle once it is requested, ahead of every other control.
-  The takeover ends an operator insert (since M78): one on air is cut and not resumed after the
+  The takeover ends an operator insert (since M78): one on air is cut and not continued after the
   release (runtime event `playout.insert.ended`, `reason: live-bridge`), a pending one is dropped
   (`playout.insert.dropped`, `live-bridge`, with its audit row). Before, the insert on air started
   again from its beginning after the release, and a pending Play now aired whenever the bridge was
-  released. On release the schedule continues with the pool's next item; a Pin, Fallback or Move next
-  still in effect applies as usual. The planned reconnect of direct mode still restarts a running
+  released. On release the schedule continues with the pool's item the bridge cut, where it was cut
+  (local files and cached archives, since M124), else the pool's next item; a Pin, Fallback or Move
+  next still in effect applies as usual. The planned reconnect of direct mode still restarts a running
   insert from its beginning (unchanged; see Soft restart below).
 - **Chat skip votes** (`!skip`, Studio → Engagement, *Viewer control*) apply the same Skip, without
   the override part: while a Pin or Fallback holds the air (since M78), or the operator's Play now /
@@ -169,10 +171,12 @@ the pool's next item. Under the relay no operator action shows that slate.
   Bridge nothing is on air to skip: votes do nothing and the bot stays silent, also with a Pin still
   running underneath. The next-item poll (`!1`, `!2`, ...) and viewer requests are not paused.
 - **Soft restart** and **Hard reload** restart the encoder. With the relay the item on air (or the
-  running pin or insert) starts again from its beginning — there is no resume. Without the relay the
+  running pin or insert) starts again from its beginning — a Restart is asked for, so it keeps no
+  position (M124). Without the relay the
   slate shows and the playout then chooses as described above: the running Pin or insert from its
   beginning, else a queued Move next, else the pool's next item (a pool item on air is not restarted).
-  The planned reconnect of direct mode (every few hours) does the same.
+  The planned reconnect of direct mode (every few hours) cuts the item instead: a pool's local file or
+  cached archive continues 10 s before the reconnect (since M124).
 - A Soft restart, Hard reload, Force reconnect, Recover outputs or Refresh pressed while a playout cycle
   is running is carried out by the next cycle (since M89). A cycle can take a minute (an inline resolve,
   the queue probes, the start), and its last write used to clear the request it had never read, so nothing
@@ -200,6 +204,44 @@ the pool's next item. Under the relay no operator action shows that slate.
   they rejoin (slate, then as above). With the relay the programme is not restarted: the uplink takes
   the outputs back on its next cycle by restarting the uplink process of each output's rendition, so the
   outputs that share that rendition (Twitch, for one) reconnect once.
+
+### Continuing an interrupted item (since M124)
+
+An item of the pool on air that leaves the air without being asked to keeps its position, and the pool
+continues it there when it is on air again:
+
+- **Kept:** ffmpeg or the container dies (also a repin or a host restart), a feed watchdog ends a
+  stalled feed, *Play now* / *Play insert*, a Pin or Fallback of another item, a Live Bridge, a dated
+  block of another pool taking over, the planned reconnect of direct mode. **Not kept:** the item's end
+  (also its duration bound), *Skip current* or a chat skip, *Soft restart* / *Hard reload*; in direct
+  mode also *Force reconnect* and *Recover outputs*, which reach the playout as the same restart request.
+  A dated block of the same pool takes the pool's next item, and the cut one is not continued. A *Play
+  now* or Pin of the cut item itself that runs to its end clears its point.
+- **Where:** 10 s before the cut. An item that aired less than 2 minutes starts from its beginning; one
+  with less than 2 minutes left is not continued, the pool takes its next item.
+- **How long:** until the pool is on air again, at most 24 h after the cut. One point per pool; it goes when
+  the pool's position names another item (another of its items started).
+- **Which items:** local files and Twitch archives in the replay cache (a cached archive with a point is
+  kept on disk, `vod.cache.kept` with `reason: "resume-point"`). A remote archive, a YouTube video, a
+  Pin, an insert and a live source are not continued: the pool goes on after them, as before M124. A
+  cached archive removed from the cache anyway (the size cap, by hand) before it is continued starts
+  from its beginning that once (`playout.resume.not_seekable`), and its point is given up.
+- **What viewers see:** the title, the chat and `/channel` read as for any start; the Next card, the
+  overlay's chapter title, the duration bound and `/channel`'s *Now* count from the item's beginning,
+  not from the restart. The week view and *Up next* on `/channel` do not plan a pending point: they show
+  the pool's next item until the continued one is on air.
+- **What the log says:** `playout.resume.point` at the exit (`exit`: `cut`, `failed`, `ended`,
+  `open-failure`, with `positionSeconds`), `playout.resume.start` with `startOffset` when it continues,
+  `playout.resume.not_seekable` when the file is no longer a file on disk (it then starts from 0). The
+  as-run log reads "resumed at 1:15:10" (`as_run_log.start_offset_seconds`). A continued item that fails
+  again before it aired 2 minutes drops its point; one continued twice without airing 2 minutes (a file
+  that no longer opens, after the M94 retry; a spot that takes the container down) is given up and the
+  pool takes its next item. So a broken spot in a file cannot loop.
+
+```sh
+docker compose exec -T postgres psql -U stream247 -d stream247 -At -c \
+  "SELECT resume_points, current_start_offset_seconds FROM playout_runtime"
+```
 
 ## What Viewers Read: The Channel Language (since M80)
 

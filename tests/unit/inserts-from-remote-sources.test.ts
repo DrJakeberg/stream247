@@ -423,7 +423,10 @@ describe("W6: an item that failed to open is tried once more", () => {
     expect(flat).toContain("inputOpenRetry = { ...inputOpenRetry, retried: true, reasonCode: selection.reasonCode };");
     expect(flat).toContain("inputOpenRetry = { ...inputOpenRetry, retried: false, bridgeAssetId: bridged.asset.id };");
     // The retry does not take the pool's position again (after a bridge the runtime names the bridge).
-    expect(flat).toContain("const selectionTakesPosition = !selectionIsOpenRetry && selectionTakesPoolPosition({");
+    // Nor does an item continued after a cut (M124).
+    expect(flat).toContain(
+      "const selectionTakesPosition = !selectionIsOpenRetry && selection.resumeStartSeconds === undefined && selectionTakesPoolPosition({"
+    );
     expect(flat).toContain(
       "nonFailureExit || ranPastCrashWindow ? 0 : openRetry.countsTowardCrashLoop ? playout.crashCountWindow + 1 : playout.crashCountWindow;"
     );

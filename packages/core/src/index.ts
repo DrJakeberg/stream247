@@ -28,6 +28,7 @@ export * from "./pool-rotation.js";
 export * from "./probe-network-outage.js";
 export * from "./programming-asset-order.js";
 export * from "./relay-ingest.js";
+export * from "./resume-point.js";
 export * from "./source-circuit-breaker.js";
 export * from "./source-health.js";
 export * from "./twitch-vod-playback.js";
