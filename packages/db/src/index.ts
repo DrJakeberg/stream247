@@ -120,6 +120,8 @@ export type UserRecord = {
 export type TeamAccessGrant = {
   id: string;
   twitchLogin: string;
+  /** The Twitch user id that first signed in with this grant (M125); empty until then. Twitch logins can be renamed and released, the id cannot. */
+  twitchUserId: string;
   role: UserRole;
   createdAt: string;
   createdBy: string;
@@ -2585,6 +2587,7 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
     CREATE TABLE IF NOT EXISTS team_access_grants (
       id TEXT PRIMARY KEY,
       twitch_login TEXT NOT NULL,
+      twitch_user_id TEXT NOT NULL DEFAULT '',
       role TEXT NOT NULL,
       created_at TEXT NOT NULL,
       created_by TEXT NOT NULL
@@ -4512,6 +4515,25 @@ if (!schemaMigrations.some((migration) => migration.id === resumeInterruptedItem
   schemaMigrations.push(resumeInterruptedItemMigration);
 }
 
+/**
+ * Team grants remember the Twitch user id that first signed in with them (M125), so a released login
+ * that someone else registers does not inherit the grant. Word for word the base-schema line; an
+ * empty id binds on the member's next sign-in.
+ */
+export const teamGrantTwitchUserIdMigration: MigrationDefinition = {
+  id: "20261027_001_team_grant_twitch_user_id",
+  description: "Bind each team grant to the Twitch user id that signs in with it.",
+  apply: async (client) => {
+    await client.query(`
+      ALTER TABLE team_access_grants ADD COLUMN IF NOT EXISTS twitch_user_id TEXT NOT NULL DEFAULT '';
+    `);
+  }
+};
+
+if (!schemaMigrations.some((migration) => migration.id === teamGrantTwitchUserIdMigration.id)) {
+  schemaMigrations.push(teamGrantTwitchUserIdMigration);
+}
+
 async function ensureSchemaMigrationsTable(client: PoolClient): Promise<void> {
   await client.query(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -5127,10 +5149,10 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
   for (const grant of next.teamAccessGrants) {
     await client.query(
       `
-        INSERT INTO team_access_grants (id, twitch_login, role, created_at, created_by)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO team_access_grants (id, twitch_login, twitch_user_id, role, created_at, created_by)
+        VALUES ($1, $2, $3, $4, $5, $6)
       `,
-      [grant.id, grant.twitchLogin, grant.role, grant.createdAt, grant.createdBy]
+      [grant.id, grant.twitchLogin, grant.twitchUserId ?? "", grant.role, grant.createdAt, grant.createdBy]
     );
   }
 
@@ -5646,6 +5668,7 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
   const grantsResult = await client.query<{
     id: string;
     twitch_login: string;
+    twitch_user_id: string | null;
     role: UserRole;
     created_at: string;
     created_by: string;
@@ -6005,6 +6028,7 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     teamAccessGrants: grantsResult.rows.map((row) => ({
       id: row.id,
       twitchLogin: row.twitch_login,
+      twitchUserId: row.twitch_user_id ?? "",
       role: row.role,
       createdAt: row.created_at,
       createdBy: row.created_by
@@ -9195,16 +9219,24 @@ export async function upsertTeamAccessGrantRecord(grant: TeamAccessGrant): Promi
   await withSerializedStateWrite("upsertTeamAccessGrantRecord", async (client) => {
     await client.query(
       `
-        INSERT INTO team_access_grants (id, twitch_login, role, created_at, created_by)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO team_access_grants (id, twitch_login, twitch_user_id, role, created_at, created_by)
+        VALUES ($1, $2, $3, $4, $5, $6)
         ON CONFLICT (id) DO UPDATE SET
           twitch_login = EXCLUDED.twitch_login,
+          twitch_user_id = EXCLUDED.twitch_user_id,
           role = EXCLUDED.role,
           created_at = EXCLUDED.created_at,
           created_by = EXCLUDED.created_by
       `,
-      [grant.id, grant.twitchLogin, grant.role, grant.createdAt, grant.createdBy]
+      [grant.id, grant.twitchLogin, grant.twitchUserId ?? "", grant.role, grant.createdAt, grant.createdBy]
     );
+  });
+}
+
+/** Removes a team grant (M125). The member's sessions end with it, because every request derives a Twitch user's role from the current grants. */
+export async function deleteTeamAccessGrantRecord(grantId: string): Promise<void> {
+  await withSerializedStateWrite("deleteTeamAccessGrantRecord", async (client) => {
+    await client.query("DELETE FROM team_access_grants WHERE id = $1", [grantId]);
   });
 }
 
@@ -9977,6 +10009,22 @@ export function findUserById(state: AppState, id: string | null): UserRecord | n
 
 export function findUserByEmail(state: AppState, email: string): UserRecord | null {
   return state.users.find((user) => user.email === email) ?? null;
+}
+
+/**
+ * The grant a Twitch account holds now (M125): the one bound to its user id, otherwise an unbound grant
+ * for its login. A grant bound to another id never matches, so a renamed or released login that
+ * someone else registers inherits nothing.
+ */
+export function findTeamGrantForTwitchUser(state: AppState, twitchUserId: string, twitchLogin: string): TeamAccessGrant | null {
+  if (twitchUserId) {
+    const bound = state.teamAccessGrants.find((grant) => grant.twitchUserId === twitchUserId);
+    if (bound) {
+      return bound;
+    }
+  }
+  const login = twitchLogin.toLowerCase();
+  return state.teamAccessGrants.find((grant) => !grant.twitchUserId && grant.twitchLogin.toLowerCase() === login) ?? null;
 }
 
 export function findTeamGrantByLogin(state: AppState, twitchLogin: string): TeamAccessGrant | null {

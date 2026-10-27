@@ -40,10 +40,12 @@ export async function GET() {
       headers: { "cache-control": "no-store" }
     });
   } catch (error) {
+    // The cause goes to the log only (M125): this answer is public.
+    console.error("[scene-preview] renderer check failed:", error instanceof Error ? error.message : error);
     return NextResponse.json(
       {
         renderer: "failed",
-        message: error instanceof Error ? error.message : "The overlay renderer could not draw a frame."
+        message: "The overlay renderer could not draw a frame. The web container log has the cause."
       },
       { status: 503, headers: { "cache-control": "no-store" } }
     );
@@ -80,10 +82,9 @@ export async function POST(request: Request) {
   try {
     svg = await renderScenePreviewSvg(scene);
   } catch (error) {
-    return NextResponse.json(
-      { message: error instanceof Error ? error.message : "The overlay renderer could not draw this scene." },
-      { status: 500 }
-    );
+    // Never the renderer's own text (M125): it could carry what a fetched address answered.
+    console.error("[scene-preview] render failed:", error instanceof Error ? error.message : error);
+    return NextResponse.json({ message: "The overlay renderer could not draw this scene." }, { status: 500 });
   }
 
   return new Response(svg, {

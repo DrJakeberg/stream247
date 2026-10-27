@@ -101,21 +101,33 @@ export function clearAllRateLimits(): void {
 /**
  * Derives a client identifier from proxy headers.
  *
+ * The LAST X-Forwarded-For entry, never the first (M125). Each proxy appends the address it was
+ * called from, so the last entry is the one our own nearest proxy wrote; everything before it is
+ * whatever the client sent. Traefik in its default mode replaces a client-sent header with the
+ * real address, nginx's proxy_add_x_forwarded_for appends it, and a request that reaches the web
+ * port directly carries no header at all, which Next.js then fills with the socket address. Only a
+ * client talking to the web port directly can still write this value, which is why the login also
+ * has a per-account limit that no header changes.
+ *
  * These headers are attacker-controlled unless a trusted proxy sets them, so the value is only
- * ever used to *narrow* a limit, never to widen or bypass one: every limited endpoint also keys on
- * something the attacker cannot rotate freely, such as the account being targeted.
+ * ever used to *narrow* a limit, never to widen or bypass one.
  */
 export function getClientIdentifier(headers: Headers): string {
-  const forwarded = headers.get("x-forwarded-for") ?? "";
-  const first = forwarded.split(",")[0]?.trim() ?? "";
-  return first || headers.get("x-real-ip")?.trim() || "unknown";
+  const forwarded = (headers.get("x-forwarded-for") ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  return forwarded.at(-1) || headers.get("x-real-ip")?.trim() || "unknown";
 }
 
 export const LOGIN_RATE_LIMIT: RateLimitRule = { limit: 10, windowMs: 15 * 60_000 };
+// Per account, from every client together (M125): rotating the client value buys no more guesses
+// than this. The price is that a flood can lock the account's sign-in until its window ends.
+export const LOGIN_ACCOUNT_RATE_LIMIT: RateLimitRule = { limit: 50, windowMs: 15 * 60_000 };
 export const TWO_FACTOR_RATE_LIMIT: RateLimitRule = { limit: 8, windowMs: 15 * 60_000 };
-// Keyed on the address mediamtx reports for the connecting client. Generous enough for a flaky
-// publisher reconnecting in a loop (the relay asks once per connection, not per frame), far too
-// tight for guessing a generated key — and it bounds the audit noise a scanner can produce.
+// Counts refused relay checks per caller (M125); a correct credential is never refused by it, so
+// nobody can lock the relay's own checks out by filling a bucket. It bounds the audit noise and the
+// work a scanner can cause.
 export const RELAY_AUTH_RATE_LIMIT: RateLimitRule = { limit: 60, windowMs: 60_000 };
 // Keyed on the signed-in account, not the peer: the endpoint is already behind an owner/admin role
 // check, so what is left to bound is a stolen or careless session harvesting the key in a loop. Ten

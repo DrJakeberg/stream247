@@ -12,6 +12,7 @@ const {
   mockMkdir,
   mockCreateWriteStream,
   mockUnlink,
+  mockStatfs,
   writtenFiles,
   reservedUploadPaths
 } = vi.hoisted(() => ({
@@ -24,6 +25,7 @@ const {
   mockMkdir: vi.fn(),
   mockCreateWriteStream: vi.fn(),
   mockUnlink: vi.fn(),
+  mockStatfs: vi.fn(),
   writtenFiles: new Map<string, Buffer>(),
   reservedUploadPaths: new Set<string>()
 }));
@@ -68,7 +70,8 @@ vi.mock("node:fs", () => ({
   createWriteStream: mockCreateWriteStream,
   promises: {
     mkdir: mockMkdir,
-    unlink: mockUnlink
+    unlink: mockUnlink,
+    statfs: mockStatfs
   }
 }));
 
@@ -88,6 +91,8 @@ describe("source API safety regressions", () => {
     mockDeleteSourceRecordAndAssets.mockResolvedValue(undefined);
     mockMkdir.mockResolvedValue(undefined);
     mockUnlink.mockResolvedValue(undefined);
+    // 100 GiB volume, 50 GiB free.
+    mockStatfs.mockResolvedValue({ bsize: 4096, blocks: (100 * 1024 ** 3) / 4096, bavail: (50 * 1024 ** 3) / 4096 });
     writtenFiles.clear();
     reservedUploadPaths.clear();
     mockCreateWriteStream.mockImplementation((filePath: string) => {
@@ -102,6 +107,9 @@ describe("source API safety regressions", () => {
       }
 
       reservedUploadPaths.add(filePath);
+      queueMicrotask(() => {
+        stream.emit("open", 3);
+      });
       stream.on("data", (chunk) => {
         chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
       });
@@ -293,32 +301,51 @@ describe("source API safety regressions", () => {
     ]);
   });
 
-  it("marks the local library for rescan without whole-row source upserts", async () => {
-    mockReadAppState.mockResolvedValue({
-      sources: [
-        {
-          id: "source-local-library",
-          name: "Local Library",
-          type: "Local media library",
-          connectorKind: "local-library",
-          enabled: true,
-          status: "Ready",
-          externalUrl: "",
-          notes: "Worker ready",
-          lastSyncedAt: "2026-04-05T10:00:00.000Z"
-        }
-      ]
-    });
-
-    const formData = new FormData();
-    formData.append("subfolder", "uploads");
-    formData.append("files", new Blob([Buffer.from("file-bytes")], { type: "video/mp4" }), "clip.mp4");
-
-    const response = await uploadLibraryMedia(
+  const localLibraryState = {
+    sources: [
       {
-        formData: async () => formData
-      } as Request
-    );
+        id: "source-local-library",
+        name: "Local Library",
+        type: "Local media library",
+        connectorKind: "local-library",
+        enabled: true,
+        status: "Ready",
+        externalUrl: "",
+        notes: "Worker ready",
+        lastSyncedAt: "2026-04-05T10:00:00.000Z"
+      }
+    ],
+    managedConfig: {}
+  };
+
+  function uploadRequest(
+    name: string,
+    chunks: string[],
+    options: { subfolder?: string; contentLength?: number | null } = {}
+  ): Request {
+    const bytes = chunks.reduce((total, chunk) => total + Buffer.byteLength(chunk), 0);
+    const headers = new Headers({ "x-upload-name": encodeURIComponent(name), "x-upload-subfolder": encodeURIComponent(options.subfolder ?? "") });
+    if (options.contentLength !== null) {
+      headers.set("content-length", String(options.contentLength ?? bytes));
+    }
+    // Built by hand: a real Request recomputes Content-Length, and the route must be tested against a lying one too.
+    return {
+      headers,
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (const chunk of chunks) {
+            controller.enqueue(Buffer.from(chunk));
+          }
+          controller.close();
+        }
+      })
+    } as unknown as Request;
+  }
+
+  it("marks the local library for rescan without whole-row source upserts", async () => {
+    mockReadAppState.mockResolvedValue(localLibraryState);
+
+    const response = await uploadLibraryMedia(uploadRequest("clip.mp4", ["file-bytes"], { subfolder: "uploads" }));
 
     expect(response.status).toBe(200);
     expect(mockUpdateSourceFieldRecords).toHaveBeenCalledWith([
@@ -331,94 +358,28 @@ describe("source API safety regressions", () => {
     expect(mockUpsertSourceRecord).not.toHaveBeenCalled();
   });
 
-  it("streams uploaded media chunks to disk without buffering arrayBuffer payloads", async () => {
-    mockReadAppState.mockResolvedValue({
-      sources: [
-        {
-          id: "source-local-library",
-          name: "Local Library",
-          type: "Local media library",
-          connectorKind: "local-library",
-          enabled: true,
-          status: "Ready",
-          externalUrl: "",
-          notes: "Worker ready",
-          lastSyncedAt: "2026-04-05T10:00:00.000Z"
-        }
-      ]
+  it("M125: streams the request body to disk chunk by chunk, never through formData", async () => {
+    mockReadAppState.mockResolvedValue(localLibraryState);
+    const request = uploadRequest("concert.mp4", ["chunk-a", "chunk-b", "chunk-c"], { subfolder: "uploads" });
+    const formDataSpy = vi.fn(async () => {
+      throw new Error("formData buffers the whole body in memory");
     });
+    Object.defineProperty(request, "formData", { value: formDataSpy });
 
-    const streamedFile = new File([Buffer.from("chunk-a"), Buffer.from("chunk-b"), Buffer.from("chunk-c")], "concert.mp4", {
-      type: "video/mp4"
-    });
-    const arrayBufferSpy = vi.fn(async () => {
-      throw new Error("arrayBuffer should not be used for uploads");
-    });
-    Object.defineProperty(streamedFile, "stream", {
-      value: vi.fn(
-        () =>
-          new ReadableStream<Uint8Array>({
-            start(controller) {
-              controller.enqueue(Buffer.from("chunk-a"));
-              controller.enqueue(Buffer.from("chunk-b"));
-              controller.enqueue(Buffer.from("chunk-c"));
-              controller.close();
-            }
-          })
-      )
-    });
-    Object.defineProperty(streamedFile, "arrayBuffer", {
-      value: arrayBufferSpy
-    });
-
-    const formData = new FormData();
-    formData.append("subfolder", "uploads");
-    formData.append("files", streamedFile);
-
-    const response = await uploadLibraryMedia(
-      {
-        formData: async () => formData
-      } as Request
-    );
+    const response = await uploadLibraryMedia(request);
 
     expect(response.status).toBe(200);
-    expect(arrayBufferSpy).not.toHaveBeenCalled();
+    expect(formDataSpy).not.toHaveBeenCalled();
     expect(mockCreateWriteStream).toHaveBeenCalledWith(expect.stringMatching(/uploads\/concert\.mp4$/), { flags: "wx" });
-
     const [[storedPath]] = mockCreateWriteStream.mock.calls;
     expect(writtenFiles.get(storedPath)).toEqual(Buffer.from("chunk-achunk-bchunk-c"));
   });
 
-  it("keeps duplicate upload names collision-safe under streamed writes", async () => {
-    mockReadAppState.mockResolvedValue({
-      sources: [
-        {
-          id: "source-local-library",
-          name: "Local Library",
-          type: "Local media library",
-          connectorKind: "local-library",
-          enabled: true,
-          status: "Ready",
-          externalUrl: "",
-          notes: "Worker ready",
-          lastSyncedAt: "2026-04-05T10:00:00.000Z"
-        }
-      ]
-    });
+  it("keeps duplicate upload names collision-safe, without reading the body before the name is reserved", async () => {
+    mockReadAppState.mockResolvedValue(localLibraryState);
 
-    const formData = new FormData();
-    formData.append("subfolder", "uploads");
-    formData.append("files", new File([Buffer.from("alpha")], "clip.mp4", { type: "video/mp4" }));
-    formData.append("files", new File([Buffer.from("beta")], "clip.mp4", { type: "video/mp4" }));
-
-    const response = await uploadLibraryMedia(
-      new Request("http://localhost/api/library/uploads", {
-        method: "POST",
-        body: formData
-      })
-    );
-
-    expect(response.status).toBe(200);
+    expect((await uploadLibraryMedia(uploadRequest("clip.mp4", ["alpha"], { subfolder: "uploads" }))).status).toBe(200);
+    expect((await uploadLibraryMedia(uploadRequest("clip.mp4", ["beta"], { subfolder: "uploads" }))).status).toBe(200);
     expect(mockCreateWriteStream).toHaveBeenCalledTimes(3);
 
     const firstPath = String(mockCreateWriteStream.mock.calls[0]?.[0]);
@@ -430,5 +391,39 @@ describe("source API safety regressions", () => {
     expect(retryPath).toMatch(/uploads\/clip-[a-f0-9]{8}\.mp4$/);
     expect(writtenFiles.get(firstPath)).toEqual(Buffer.from("alpha"));
     expect(writtenFiles.get(retryPath)).toEqual(Buffer.from("beta"));
+  });
+
+  it("M125: refuses with 507 before writing when the upload would leave less free than the disk watermark", async () => {
+    mockReadAppState.mockResolvedValue(localLibraryState);
+    // 100 GiB volume, 10.5 GiB free: a 1 GiB file would leave 9.5 GiB, under the default 10 %.
+    mockStatfs.mockResolvedValue({ bsize: 4096, blocks: (100 * 1024 ** 3) / 4096, bavail: (10.5 * 1024 ** 3) / 4096 });
+
+    const response = await uploadLibraryMedia(uploadRequest("big.mp4", ["x"], { contentLength: 1024 ** 3 }));
+
+    expect(response.status).toBe(507);
+    expect(((await response.json()) as { message: string }).message).toContain("Not enough space on the media volume");
+    expect(mockCreateWriteStream).not.toHaveBeenCalled();
+  });
+
+  it("M125: refuses an upload without a size, and discards one longer or shorter than it declared", async () => {
+    mockReadAppState.mockResolvedValue(localLibraryState);
+
+    expect((await uploadLibraryMedia(uploadRequest("clip.mp4", ["abc"], { contentLength: null }))).status).toBe(400);
+    expect(mockCreateWriteStream).not.toHaveBeenCalled();
+
+    const longer = await uploadLibraryMedia(uploadRequest("long.mp4", ["0123456789"], { contentLength: 4 }));
+    expect(longer.status).toBe(400);
+    const shorter = await uploadLibraryMedia(uploadRequest("short.mp4", ["01"], { contentLength: 4 }));
+    expect(shorter.status).toBe(400);
+    expect(mockUnlink).toHaveBeenCalledWith(expect.stringMatching(/long\.mp4$/));
+    expect(mockUnlink).toHaveBeenCalledWith(expect.stringMatching(/short\.mp4$/));
+    expect(mockUpdateSourceFieldRecords).not.toHaveBeenCalled();
+  });
+
+  it("refuses a file type the library scan would ignore", async () => {
+    mockReadAppState.mockResolvedValue(localLibraryState);
+    const response = await uploadLibraryMedia(uploadRequest("notes.txt", ["x"]));
+    expect(response.status).toBe(400);
+    expect(mockCreateWriteStream).not.toHaveBeenCalled();
   });
 });

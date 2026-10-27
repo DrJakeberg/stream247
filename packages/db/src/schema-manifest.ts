@@ -41,7 +41,7 @@ export const DECLARED_SCHEMA: Record<string, string[]> = {
   sources: ["connector_kind", "enabled", "external_url", "id", "last_synced_at", "name", "notes", "status", "type"],
   stream_destinations: ["enabled", "encrypted_stream_key", "failure_count", "id", "last_error", "last_failure_at", "last_validated_at", "name", "notes", "output_profile_id", "priority", "provider", "role", "rtmp_url", "status", "stream_key_present"],
   system_state: ["initialized", "owner_created_at", "owner_email", "owner_password_hash", "singleton_id"],
-  team_access_grants: ["created_at", "created_by", "id", "role", "twitch_login"],
+  team_access_grants: ["created_at", "created_by", "id", "role", "twitch_login", "twitch_user_id"],
   twitch_broadcaster_connection: ["access_token", "broadcaster_id", "broadcaster_login", "connected_at", "error", "last_refresh_at", "refresh_token", "singleton_id", "status", "token_expires_at"],
   twitch_connection: ["access_token", "broadcaster_id", "broadcaster_login", "connected_at", "error", "last_metadata_sync_at", "last_refresh_at", "last_schedule_sync_at", "last_synced_category_id", "last_synced_category_name", "last_synced_title", "live_status", "refresh_token", "singleton_id", "started_at", "status", "token_expires_at", "viewer_count"],
   twitch_schedule_segments: ["block_id", "key", "segment_id", "start_time", "synced_at", "title"],

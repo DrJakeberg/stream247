@@ -4,7 +4,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { NextResponse } from "next/server";
 import { buildWorkspaceHref } from "../workspace-navigation";
-import { findUserById, readAppState, type AppState, type UserRecord, type UserRole } from "./state";
+import { findTeamGrantForTwitchUser, findUserById, readAppState, type AppState, type UserRecord, type UserRole } from "./state";
 
 const sessionCookieName = "stream247_session";
 const twoFactorChallengeMaxAgeSeconds = 60 * 5;
@@ -79,7 +79,20 @@ export function parseSessionValue(value: string | undefined): { userId: string; 
   return { userId, passwordStamp: stamp };
 }
 
-/** The user a session cookie names, or null when it is invalid, expired or signed in with an older password. */
+/**
+ * The role a Twitch sign-in holds now (M125), from the current state and not from the role stored at
+ * sign-in: owner while its Twitch id is the bound broadcaster, otherwise its current team grant, and
+ * null without either. So lowering, removing or rebinding takes effect on the member's next request.
+ */
+export function currentTwitchRole(user: Pick<UserRecord, "twitchUserId" | "twitchLogin">, state: AppState): UserRole | null {
+  const twitchUserId = user.twitchUserId ?? "";
+  if (twitchUserId && state.twitch.broadcasterId !== "" && state.twitch.broadcasterId === twitchUserId) {
+    return "owner";
+  }
+  return findTeamGrantForTwitchUser(state, twitchUserId, user.twitchLogin ?? "")?.role ?? null;
+}
+
+/** The user a session cookie names, or null when it is invalid, expired, signed in with an older password, or a Twitch sign-in that lost its access. */
 export function resolveSessionUser(value: string | undefined, state: AppState): UserRecord | null {
   const session = parseSessionValue(value);
   if (!session) {
@@ -89,7 +102,11 @@ export function resolveSessionUser(value: string | undefined, state: AppState): 
   if (!user || passwordStamp(sessionPasswordHash(user, state)) !== session.passwordStamp) {
     return null;
   }
-  return user;
+  if (user.authProvider !== "twitch") {
+    return user;
+  }
+  const role = currentTwitchRole(user, state);
+  return role ? { ...user, role } : null;
 }
 
 export function buildTwoFactorChallengeValue(userId: string): string {

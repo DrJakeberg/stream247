@@ -20,6 +20,8 @@ import {
   appendAuditEvent,
   appendPresenceWindowRecord,
   readAppState,
+  deleteTeamAccessGrantRecord,
+  upsertTeamAccessGrantRecord,
   updateAppState,
   upsertUserRecord,
   updatePlayoutRuntime,
@@ -297,6 +299,7 @@ describe.sequential("database roundtrip", () => {
         {
           id: "grant_1",
           twitchLogin: "operator",
+          twitchUserId: "tw-operator",
           role: "operator" as const,
           createdAt: "2026-04-04T10:10:00.000Z",
           createdBy: "owner@example.com"
@@ -3619,6 +3622,37 @@ describe.sequential("database roundtrip", () => {
 
       expect(await executeSql(`SELECT two_factor_secret FROM users WHERE id = '${ownerId}';`)).toBe(sealedSecret);
       expect(await executeSql("SELECT left(encrypted_payload, 24) FROM managed_config WHERE singleton_id = 1;")).toBe(sealedManaged);
+    }, 60_000);
+  });
+
+  describe("team grants bound to a Twitch user id (M125)", () => {
+    const grantMigrationId = "20261027_001_team_grant_twitch_user_id";
+
+    it("adds the id column to a database that predates it, binds, keeps and deletes a grant", async () => {
+      await ensureDatabaseWithRetry();
+      await executeSql(`
+        ALTER TABLE team_access_grants DROP COLUMN IF EXISTS twitch_user_id;
+        DELETE FROM schema_migrations WHERE id = '${grantMigrationId}';
+      `);
+      await resetDatabaseConnectionsForTests();
+      await ensureDatabaseWithRetry();
+
+      expect(
+        await executeSql("SELECT column_default FROM information_schema.columns WHERE table_name = 'team_access_grants' AND column_name = 'twitch_user_id';")
+      ).toBe("''::text");
+      expect(await executeSql(`SELECT COUNT(*) FROM schema_migrations WHERE id = '${grantMigrationId}';`)).toBe("1");
+
+      const grant = { id: "grant_m125", twitchLogin: "member_m125", twitchUserId: "", role: "admin" as const, createdAt: "2026-10-27T15:00:00.000Z", createdBy: "user_owner" };
+      await upsertTeamAccessGrantRecord(grant);
+      expect((await readAppState()).teamAccessGrants.find((entry) => entry.id === grant.id)?.twitchUserId).toBe("");
+      await upsertTeamAccessGrantRecord({ ...grant, twitchUserId: "tw-m125" });
+      expect((await readAppState()).teamAccessGrants.find((entry) => entry.id === grant.id)).toMatchObject({ twitchUserId: "tw-m125", role: "admin" });
+      // A full-state write keeps the binding.
+      await updateAppState((state) => state);
+      expect((await readAppState()).teamAccessGrants.find((entry) => entry.id === grant.id)?.twitchUserId).toBe("tw-m125");
+
+      await deleteTeamAccessGrantRecord(grant.id);
+      expect((await readAppState()).teamAccessGrants.some((entry) => entry.id === grant.id)).toBe(false);
     }, 60_000);
   });
 });

@@ -17,14 +17,15 @@ import {
   getSourceReferences,
   readAppState
 } from "@/lib/server/state";
-import { getAuthenticatedUser } from "@/lib/server/auth";
+import { requireAuthenticatedUser } from "@/lib/server/auth";
 
 const dayLabels = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 export default async function SourceDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  // Every page checks the sign-in itself (M125): the layout's check is not a guarantee for every render path.
+  const user = await requireAuthenticatedUser();
   const { id } = await params;
   const state = await readAppState();
-  const user = await getAuthenticatedUser();
   const source = state.sources.find((entry) => entry.id === id);
 
   if (!source) {

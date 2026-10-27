@@ -19,6 +19,7 @@ import {
   type OverlaySourceFrameView
 } from "@stream247/core";
 import type { SceneRenderFont } from "./fonts.js";
+import { inlineRemoteImages } from "./safe-image-fetch.js";
 
 export type SceneRenderRequest = {
   payload: OverlayScenePayloadView;
@@ -60,17 +61,20 @@ export async function renderSceneSvg(
   fonts: SceneRenderFont[],
   options: SceneRenderSvgOptions = {}
 ): Promise<string> {
+  const layout = buildOverlaySceneLayout(
+    {
+      payload: request.payload,
+      engagement: request.engagement ?? null,
+      game: request.game ?? null,
+      chat: request.chat ?? null,
+      sourceFrame: request.sourceFrame ?? null
+    },
+    { width: request.width, height: request.height, now: request.now, tickerCrawl: request.tickerCrawl }
+  );
+  // satori fetches nothing itself (M125): every remote picture is fetched under the address rules
+  // of safe-image-fetch.ts first and handed over as a data: URI.
   return satori(
-    buildOverlaySceneLayout(
-      {
-        payload: request.payload,
-        engagement: request.engagement ?? null,
-        game: request.game ?? null,
-        chat: request.chat ?? null,
-        sourceFrame: request.sourceFrame ?? null
-      },
-      { width: request.width, height: request.height, now: request.now, tickerCrawl: request.tickerCrawl }
-    ) as Parameters<typeof satori>[0],
+    (await inlineRemoteImages(layout)) as Parameters<typeof satori>[0],
     {
       width: request.width,
       height: request.height,

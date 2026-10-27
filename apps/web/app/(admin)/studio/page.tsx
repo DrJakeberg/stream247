@@ -5,10 +5,13 @@ import OverlayStudioPage from "@/app/(admin)/overlay-studio/page";
 import OverlaysPage from "@/app/(admin)/overlays/page";
 import { WorkspaceTabs } from "@/components/workspace-tabs";
 import { resolveWorkspaceTabId } from "@/lib/workspace-navigation";
+import { requireAuthenticatedUser } from "@/lib/server/auth";
 
 export default async function StudioWorkspacePage(props: {
   searchParams: Promise<{ tab?: string | string[] }>;
 }) {
+  // Every page checks the sign-in itself (M125): the layout's check is not a guarantee for every render path.
+  await requireAuthenticatedUser();
   const searchParams = await props.searchParams;
   const tab = resolveWorkspaceTabId("studio", searchParams.tab);
 

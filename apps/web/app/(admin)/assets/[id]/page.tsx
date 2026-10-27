@@ -24,8 +24,11 @@ import {
   getSourceHealthSnapshot,
   readAppState
 } from "@/lib/server/state";
+import { requireAuthenticatedUser } from "@/lib/server/auth";
 
 export default async function AssetDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  // Every page checks the sign-in itself (M125): the layout's check is not a guarantee for every render path.
+  await requireAuthenticatedUser();
   const { id } = await params;
   const state = await readAppState();
   const asset = state.assets.find((entry) => entry.id === id);
