@@ -23,7 +23,10 @@
       "Bash(git push --force-with-lease:*)",
       "Bash(git push origin main:*)",
       "Bash(git push origin HEAD:main:*)",
-      "Bash(git tag:*)",
+      "Bash(git push --tags:*)",
+      "Bash(git push origin --tags:*)",
+      "Bash(git push origin v:*)",
+      "Bash(git push origin refs/tags/:*)",
       "Read(./.env)",
       "Read(./.env.local)"
     ]

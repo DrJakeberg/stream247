@@ -121,7 +121,7 @@ The steps are in `.claude/skills/release/SKILL.md`. The rules:
 ## Claude Code
 
 - `CLAUDE.md` only imports this file. `.claude/settings.json` allows the usual pnpm, docker, git and
-  `gh api` commands and denies force-pushes, pushes to `main`, tags and reading `.env`. Personal
+  `gh api` commands and denies force-pushes, pushes to `main`, tag pushes and reading `.env`. Personal
   settings go into `settings.local.json` next to it (not committed).
 
 ## Hard blockers (the only reasons to stop before the milestone is done)
