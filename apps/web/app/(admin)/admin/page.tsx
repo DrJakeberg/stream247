@@ -4,10 +4,13 @@ import SettingsPage from "@/app/(admin)/settings/page";
 import TeamPage from "@/app/(admin)/team/page";
 import { WorkspaceTabs } from "@/components/workspace-tabs";
 import { resolveWorkspaceTabId } from "@/lib/workspace-navigation";
+import { requireAuthenticatedUser } from "@/lib/server/auth";
 
 export default async function AdminWorkspacePage(props: {
   searchParams: Promise<{ tab?: string | string[] }>;
 }) {
+  // Every page checks the sign-in itself (M125): the layout's check is not a guarantee for every render path.
+  await requireAuthenticatedUser();
   const searchParams = await props.searchParams;
   const tab = resolveWorkspaceTabId("admin", searchParams.tab);
 

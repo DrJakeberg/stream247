@@ -562,3 +562,69 @@ under `planning/archive/`, text unchanged.
   cut item is not continued. The week view and `/channel`'s *Up next* do not plan a pending point; they
   show the pool's next item until the continued one is on air. One point per pool: two cuts in one pool
   keep only the latest.
+
+### M125 The Security Audit's Findings Are Closed
+
+- **Source.** The security audit of 2026-10-27 on `main` 9a6df7e (research/security-audit-2026-10.md and
+  research/security-audit-2026-10/ in the project files, not in this repository): 3 confirmed findings and 7 leads that needed
+  facts outside the repository. The owner asked for all of them ("alle findings schließen", 2026-10-27
+  15:10 UTC). The audit's 47 hardening notes are not findings; those closed here are the ones on the same
+  code paths (listed below), the rest is the list at the end.
+- **3.1 Team roles.** `resolveSessionUser` derives a Twitch sign-in's role on every request:
+  owner while its Twitch id is the bound broadcaster, otherwise its current grant, without one no session.
+  Admin → Team has *Remove access* (`DELETE /api/team/access`). Local sign-ins keep the M117 password stamp.
+- **Login name lead.** `team_access_grants.twitch_user_id` (migration `20261027_001_team_grant_twitch_user_id`,
+  empty for existing grants): the first sign-in binds the grant to the Twitch user id and later sign-ins
+  follow the id, a rename moves the login along, another id with the released login matches nothing.
+- **3.2 Readiness.** `/api/health`, `/api/ready` and `/api/system/readiness` show the lead destination as
+  provider, role, priority, status and `streamKeyPresent`; the feed's playlist path and the database's error
+  text are gone (the error goes to the web log). The renderer and font routes answer fixed texts too.
+- **3.3 Chat game.** Two cooldowns: the room's (info, refusals) and the moderators' (start, stop).
+- **Admin pages lead.** Every `page.tsx` under `(admin)` awaits `requireAuthenticatedUser` (or
+  `requireRoles`) itself; a unit test fails for a new page without one. No middleware: the session check
+  needs the app secret from the data volume and the database.
+- **Scene preview lead.** satori fetched every http(s) picture itself, from any address, following
+  redirects. `packages/render/src/safe-image-fetch.ts` now fetches every remote `src` before satori runs:
+  http and https, every resolved address public (loopback, private, link-local, CGNAT, multicast,
+  reserved, IPv4-mapped, NAT64 and 6to4 forms refused), the connection pinned to the checked address,
+  up to 3 redirects each checked again, 5 s, 4 MiB, `image/*`; refused or failed pictures are a
+  transparent pixel. Cached 10 min, 256 entries. This covers the worker's stored image layers too (audit
+  section 7, item 2). The http scheme stays allowed for image layers so no existing layer goes dark.
+- **X-Forwarded-For leads.** The client key is the last entry (written by the nearest proxy). Next.js
+  fills a missing header with the socket address, so mediamtx's own call is keyed on the relay's
+  address. Direct access without a proxy: the shipped compose publishes 3000 on `127.0.0.1` only
+  (`STREAM247_WEB_BIND`), see Decisions.
+- **Relay check.** The limit counts refusals only and is consulted after the check, so a correct key always
+  passes; stored credentials are read at most once a second (`relay-credentials.ts`).
+- **Upload lead.** One file per request, streamed to disk; `Content-Length` required and enforced; 507 when
+  the upload would leave less free than the disk watermark's trigger; optional `STREAM247_UPLOAD_MAX_BYTES`.
+  The name is reserved (`wx`, waiting for `open`) before the body is read, because the body can be read once.
+- **Release tag lead.** `ci.yml`'s `validate` job holds `packages: read`; images are built and pushed by a
+  new `publish` job that runs for pushes to `main` only, after `validate`. Pull-request runs can no longer
+  write `main-<sha>`.
+- **Review (fresh subagent).** No blocker. Fixed: the picture fetch had only an idle timeout, so a host
+  dripping bytes held a frame for hours (now 5 s for the whole fetch); only the first resolved address was
+  tried (now each checked address in turn); the picture cache could grow to about 1.4 GB and kept a failed
+  picture blank for 10 min (now 32 MiB and one minute for failures); an open broadcast event stream outlived
+  a removed grant (it re-checks the session with every snapshot now); the cold rebuild in the `publish`
+  job can take longer than the Release workflow waited for `main-<sha>`, so it waits 60 min instead of 30.
+  Left: a rotated ingest key works up to one second longer (the credential cache); re-granting a login that a bound
+  member renamed away from, before their next sign-in, edits their grant.
+- **Decisions.** Upload: free space only, no per-file limit by default (owner's choice 2026-10-27 18:02 UTC,
+  "Nur Platz-Grenze"; `STREAM247_UPLOAD_MAX_BYTES` stays as an opt-in). Web memory: 2 GiB, changeable by env
+  (owner's choice 2026-10-27 18:03 UTC; `mem_limit: ${STREAM247_WEB_MEMORY_LIMIT:-2g}` in
+  `docker-compose.yml`). Direct access without a proxy: port 3000 on `127.0.0.1` only, `STREAM247_WEB_BIND=0.0.0.0`
+  opens it (owner's choice 2026-10-27 18:03 UTC, "Port nur auf 127.0.0.1"); no per-account login limit.
+  CI: public.ecr.aws refused node:22-alpine with "429 Data limit exceeded" on every run from about 16:00
+  UTC, so the validate job pulls `mirror.gcr.io/library/node:22-alpine` and tags it under the Dockerfiles'
+  name before its test builds; the Dockerfiles and the publish job are unchanged (owner's choice 2026-10-27
+  20:31 UTC, "Nur CI zieht von mirror.gcr.io").
+- **Not done (hardening notes, for a later milestone if wanted).** Containers as root and the read-write
+  Docker socket of `relay-watchdog`; `--frozen-lockfile=false`, actions and base images not pinned by
+  digest, `latest` from main; `.dockerignore` without `.env`; Postgres password fallback; mediamtx API
+  without auth on the compose network; Twitch OAuth tokens in plaintext; `authTagLength`, SMTP `requireTLS`,
+  APP_SECRET on the media volume; logout without server-side revocation, session/2FA key separation,
+  `timingSafeEqual` for HMACs, 2FA setup without TOTP, TOTP and challenge reuse; non-atomic bootstrap and
+  the first-run owner claim; EventSub replay window, body cap and order of checks; no SSE connection cap;
+  the yt-dlp `--` separator and the YouTube host check; tee delimiters in destination URLs; CSP
+  `frame-ancestors` and an Origin check; owner-only admin grants; the audit's six uncovered areas.

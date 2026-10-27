@@ -11,12 +11,23 @@ import { buildSessionValue, parseSessionValue, resolveSessionUser, sessionPasswo
 const oldHash = hashPassword("old-owner-password");
 const newHash = hashPassword("new-owner-password-2026");
 const owner = { id: "user_owner", email: "owner@example.com", authProvider: "local" as const, role: "owner" as const, passwordHash: oldHash };
-const editor = { id: "user_editor", email: "", authProvider: "twitch" as const, role: "editor" as const, passwordHash: "" };
+const editor = {
+  id: "user_editor",
+  email: "",
+  authProvider: "twitch" as const,
+  role: "operator" as const,
+  passwordHash: "",
+  twitchUserId: "tw-editor",
+  twitchLogin: "editor"
+};
 
 function stateWith(ownerHash: string) {
   return {
     owner: { email: owner.email, passwordHash: ownerHash, createdAt: "" },
-    users: [{ ...owner, passwordHash: ownerHash }, editor]
+    users: [{ ...owner, passwordHash: ownerHash }, editor],
+    // Since M125 a Twitch sign-in holds the role of its current grant.
+    teamAccessGrants: [{ id: "grant_editor", twitchLogin: "editor", twitchUserId: "tw-editor", role: "operator", createdAt: "", createdBy: "" }],
+    twitch: { broadcasterId: "" }
   } as never;
 }
 

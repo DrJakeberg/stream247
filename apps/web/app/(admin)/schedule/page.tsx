@@ -25,6 +25,7 @@ import {
 } from "@/lib/server/state";
 import { findUnplayableWeekBlocks } from "@/lib/server/onboarding";
 import { buildWorkspaceHref } from "@/lib/workspace-navigation";
+import { requireAuthenticatedUser } from "@/lib/server/auth";
 
 type ScheduleSearchParams = {
   lens?: string | string[];
@@ -57,6 +58,8 @@ function resolveDayOfWeek(value: string | string[] | undefined, fallbackDay: num
 }
 
 export default async function SchedulePage(props: { searchParams?: Promise<ScheduleSearchParams> } = {}) {
+  // Every page checks the sign-in itself (M125): the layout's check is not a guarantee for every render path.
+  await requireAuthenticatedUser();
   const searchParams = props.searchParams ? await props.searchParams : {};
   const state = await readAppState();
   const broadcastSnapshot = getBroadcastSnapshot(state);

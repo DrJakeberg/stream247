@@ -10,11 +10,12 @@ import { resolveAppBaseUrl } from "@stream247/db";
 import { issueOAuthState, type OAuthFlowKind } from "./oauth-state";
 import {
   appendAuditEvent,
-  findTeamGrantByLogin,
+  findTeamGrantForTwitchUser,
   getManagedTwitchConfig,
   readAppState,
   updateTwitchBroadcasterConnectionRecord,
   updateTwitchConnectionRecord,
+  upsertTeamAccessGrantRecord,
   upsertUserRecord,
   type AppState,
   type UserRecord,
@@ -370,12 +371,19 @@ export async function exchangeTwitchLoginCode(code: string): Promise<UserRecord>
   });
 
   let authenticatedUser: UserRecord | null = null;
-  const grant = findTeamGrantByLogin(state, twitchUser.login);
+  // By user id first, then an unbound grant for the login (M125): a grant another Twitch id already
+  // signed in with never matches a new account that took over the name.
+  const grant = findTeamGrantForTwitchUser(state, twitchUser.id, twitchUser.login);
   const isBroadcasterOwner =
     state.twitch.broadcasterId !== "" && state.twitch.broadcasterId === twitchUser.id;
 
   if (!grant && !isBroadcasterOwner) {
     throw new Error(`Twitch user ${twitchUser.login} is not authorized for this workspace.`);
+  }
+
+  if (grant && (grant.twitchUserId !== twitchUser.id || grant.twitchLogin !== twitchUser.login.toLowerCase())) {
+    // The first sign-in binds the grant to this account, and a rename moves the login along; a new owner of the old name gets nothing.
+    await upsertTeamAccessGrantRecord({ ...grant, twitchUserId: twitchUser.id, twitchLogin: twitchUser.login.toLowerCase() });
   }
 
   const role: UserRole = isBroadcasterOwner ? "owner" : grant?.role ?? "viewer";

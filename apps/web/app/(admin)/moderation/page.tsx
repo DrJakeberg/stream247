@@ -4,6 +4,7 @@ import { Panel } from "@/components/panel";
 import { ModerationSettingsForm } from "@/components/moderation-settings-form";
 import { PresenceCheckInForm } from "@/components/presence-checkin-form";
 import { getActivePresenceWindows, getPresenceStatus, getRecentPresenceWindows, readAppState } from "@/lib/server/state";
+import { requireAuthenticatedUser } from "@/lib/server/auth";
 
 function formatRequestedMinutes(value: number | null | undefined) {
   return value === null || value === undefined ? "default" : `${value} min`;
@@ -23,6 +24,8 @@ function formatClampReason(value: string | undefined) {
 }
 
 export default async function ModerationPage() {
+  // Every page checks the sign-in itself (M125): the layout's check is not a guarantee for every render path.
+  await requireAuthenticatedUser();
   const state = await readAppState();
   const status = getPresenceStatus(state);
   const activeWindows = getActivePresenceWindows(state);

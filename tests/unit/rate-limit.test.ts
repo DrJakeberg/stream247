@@ -103,8 +103,20 @@ describe("memory bounds", () => {
 });
 
 describe("getClientIdentifier", () => {
-  it("uses the first x-forwarded-for hop", () => {
-    expect(getClientIdentifier(new Headers({ "x-forwarded-for": "203.0.113.5, 10.0.0.1" }))).toBe("203.0.113.5");
+  it("M125: uses the last x-forwarded-for entry, the one our own proxy wrote", () => {
+    // A client that sends "X-Forwarded-For: 1.2.3.4" through a proxy that appends gets
+    // "1.2.3.4, <real address>": only the last entry is not the client's choice.
+    expect(getClientIdentifier(new Headers({ "x-forwarded-for": "203.0.113.5, 10.0.0.1" }))).toBe("10.0.0.1");
+    expect(getClientIdentifier(new Headers({ "x-forwarded-for": "198.51.100.9" }))).toBe("198.51.100.9");
+  });
+
+  it("M125: a rotated client-written first entry does not change the identifier", () => {
+    const keys = new Set(
+      ["1.1.1.1", "2.2.2.2", "unknown", "3.3.3.3"].map((spoofed) =>
+        getClientIdentifier(new Headers({ "x-forwarded-for": `${spoofed}, 192.0.2.44` }))
+      )
+    );
+    expect([...keys]).toEqual(["192.0.2.44"]);
   });
 
   it("falls back to x-real-ip and then to a constant", () => {

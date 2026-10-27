@@ -49,7 +49,7 @@ export function TeamAccessForm() {
         <input name="twitchLogin" required placeholder="moderator_name" />
       </label>
       <label>
-        <span className="label label-with-info">Role<InfoTip text="Decides what this person may change once signed in: viewers only look, moderators can also check in for chat coverage, operators run the playout, schedule, library, sources, shows and overlay (including the moderation and chat-game settings), and admins additionally manage destinations, the Twitch connection, the Settings pages and team access. A changed role applies at that person's next Twitch sign-in." /></span>
+        <span className="label label-with-info">Role<InfoTip text="Decides what this person may change once signed in: viewers only look, moderators can also check in for chat coverage, operators run the playout, schedule, library, sources, shows and overlay (including the moderation and chat-game settings), and admins additionally manage destinations, the Twitch connection, the Settings pages and team access. A changed or removed grant applies at that person's next click, also in a session that is already open." /></span>
         <select className="select" defaultValue="moderator" name="role">
           {roles.map((role) => (
             <option key={role} value={role}>

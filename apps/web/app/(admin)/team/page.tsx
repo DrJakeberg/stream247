@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 
 import { Panel } from "@/components/panel";
 import { TeamAccessForm } from "@/components/team-access-form";
+import { TeamAccessRevokeForm } from "@/components/team-access-revoke-form";
 import { requireRoles } from "@/lib/server/auth";
 import { readAppState } from "@/lib/server/state";
 
@@ -27,6 +28,7 @@ export default async function TeamPage() {
                 <div className="subtle">
                   Role: {grant.role} · Added {new Date(grant.createdAt).toLocaleString()}
                 </div>
+                <TeamAccessRevokeForm id={grant.id} twitchLogin={grant.twitchLogin} />
               </div>
             ))
           ) : (

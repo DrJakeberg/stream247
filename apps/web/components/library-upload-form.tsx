@@ -22,22 +22,46 @@ export function LibraryUploadForm() {
 
         const form = event.currentTarget;
         const formData = new FormData(form);
+        const files = formData.getAll("files").filter((value): value is File => value instanceof File && value.size > 0);
+        const folder = String(formData.get("subfolder") || "");
 
         startTransition(async () => {
-          const response = await fetch("/api/library/uploads", {
-            method: "POST",
-            body: formData
-          });
-
-          const payload = (await response.json()) as { message?: string };
-          if (!response.ok) {
-            const nextError = payload.message ?? "Could not upload media files.";
-            setError(nextError);
-            pushToast({ title: "Upload failed.", description: nextError, tone: "error" });
+          if (files.length === 0) {
+            setError("Select at least one local media file to upload.");
             return;
           }
 
-          pushToast({ title: payload.message ?? "Upload complete.", tone: "success" });
+          // One request per file, the file itself as the body: the server writes it straight to disk
+          // and checks the free space before the first byte.
+          let uploaded = 0;
+          for (const file of files) {
+            const response = await fetch("/api/library/uploads", {
+              method: "POST",
+              headers: {
+                "content-type": "application/octet-stream",
+                "x-upload-name": encodeURIComponent(file.name),
+                "x-upload-subfolder": encodeURIComponent(folder)
+              },
+              body: file
+            });
+
+            const payload = (await response.json().catch(() => ({}))) as { message?: string };
+            if (!response.ok) {
+              const nextError = `${payload.message ?? `Could not upload ${file.name}.`}${uploaded > 0 ? ` ${uploaded} of ${files.length} files were uploaded before it.` : ""}`;
+              setError(nextError);
+              pushToast({ title: "Upload failed.", description: nextError, tone: "error" });
+              if (uploaded > 0) {
+                router.refresh();
+              }
+              return;
+            }
+            uploaded += 1;
+          }
+
+          pushToast({
+            title: `Uploaded ${uploaded} file${uploaded === 1 ? "" : "s"} into ${folder || "uploads"}. The local media library will refresh on the next worker cycle.`,
+            tone: "success"
+          });
           setSubfolder("");
           form.reset();
           router.refresh();
@@ -45,7 +69,7 @@ export function LibraryUploadForm() {
       }}
     >
       <label>
-        <span className="label label-with-info">Media files<InfoTip text="Copied into the channel's media library and turned into playable assets by the worker's next library scan, usually within a few minutes. Only the container formats the scan ingests are accepted — mp4, mkv, mov, m4v, webm — so nothing lands on disk that the channel could not play. Several files can be picked at once; a name already taken is stored under a new one." /></span>
+        <span className="label label-with-info">Media files<InfoTip text="Copied into the channel's media library and turned into playable assets by the worker's next library scan, usually within a few minutes. Only the container formats the scan ingests are accepted — mp4, mkv, mov, m4v, webm — so nothing lands on disk that the channel could not play. Several files can be picked at once and are sent one after another; a name already taken is stored under a new one. An upload that would leave less free space on the media volume than the disk watermark is refused before it starts." /></span>
         <input accept={LIBRARY_MEDIA_FILE_EXTENSIONS.join(",")} multiple name="files" required type="file" />
       </label>
       <label>

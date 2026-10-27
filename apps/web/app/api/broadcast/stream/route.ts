@@ -1,6 +1,6 @@
-import { requireApiRoles } from "@/lib/server/auth";
+import { requireApiRoles, resolveSessionUser, sessionCookieFromHeader } from "@/lib/server/auth";
 import { getBroadcastSnapshot, readAppState } from "@/lib/server/state";
-import { createSseResponse } from "@/lib/server/sse";
+import { createSseResponse, SSE_CLOSE } from "@/lib/server/sse";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -11,5 +11,11 @@ export async function GET(request: Request) {
     return unauthorized;
   }
 
-  return createSseResponse(request, "state", async () => getBroadcastSnapshot(await readAppState()));
+  // The session is checked again with every snapshot (M125): an open stream ends as soon as its
+  // member's access is removed, like every other request of theirs.
+  const cookie = sessionCookieFromHeader(request.headers.get("cookie"));
+  return createSseResponse(request, "state", async () => {
+    const state = await readAppState();
+    return resolveSessionUser(cookie, state) ? getBroadcastSnapshot(state) : SSE_CLOSE;
+  });
 }

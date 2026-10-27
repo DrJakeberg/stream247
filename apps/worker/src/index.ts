@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import { chatGameCommandLane, createChatGameCooldowns } from "./chat-game-cooldown.js";
 import { collectUpcomingPoolIds, shouldKeepFinishedVodCache } from "./vod-cache-release-policy.js";
 import { lastPtsSecondsFromProbeOutput, resolveFeedAvLead } from "./feed-av-lead.js";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -882,8 +883,9 @@ const pendingChatEffects: ChatControlEffect[] = [];
 // A game command may do real work at most this often. Info is a pair of reads, starting a round is
 // an overlay write plus a settings write plus a reconcile — a room typing "!game" in unison must
 // not turn that into a write storm, and Twitch would drop the duplicate replies anyway.
+// The room and the moderators each have their own window (M125, chat-game-cooldown.ts).
 const CHAT_GAME_COMMAND_COOLDOWN_MS = 5_000;
-let lastChatGameCommandAt = 0;
+const chatGameCooldowns = createChatGameCooldowns(CHAT_GAME_COMMAND_COOLDOWN_MS);
 
 /**
  * Answers a game command from chat.
@@ -900,11 +902,9 @@ async function handleChatGameCommand(args: {
   actor: string;
   isModerator: boolean;
 }): Promise<string> {
-  const now = Date.now();
-  if (now - lastChatGameCommandAt < CHAT_GAME_COMMAND_COOLDOWN_MS) {
+  if (!chatGameCooldowns.claim(chatGameCommandLane(args.command, args.isModerator), Date.now())) {
     return "";
   }
-  lastChatGameCommandAt = now;
 
   const settings = await readChatGameSettingsRecord();
 

@@ -1,4 +1,4 @@
-type SnapshotFactory<T> = () => Promise<T>;
+type SnapshotFactory<T> = () => Promise<T | typeof SSE_CLOSE>;
 
 type SseResponseOptions = {
   snapshotIntervalMs?: number;
@@ -29,6 +29,12 @@ function registerSseConnection() {
     activeSseConnections = Math.max(0, activeSseConnections - 1);
   };
 }
+
+/**
+ * Returned by a snapshot factory to end the stream (M125): the broadcast stream re-checks its
+ * session with every snapshot, so a member whose access was removed stops receiving at once.
+ */
+export const SSE_CLOSE = Symbol("sse-close");
 
 export function getActiveSseConnectionCount(): number {
   return activeSseConnections;
@@ -104,6 +110,10 @@ export function createSseResponse<T>(request: Request, event: string, makeSnapsh
         try {
           const snapshot = await makeSnapshot();
           if (closed) {
+            return;
+          }
+          if ((snapshot as unknown) === SSE_CLOSE) {
+            close();
             return;
           }
           controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(snapshot)}\n\n`));

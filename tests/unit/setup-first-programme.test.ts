@@ -84,6 +84,7 @@ vi.mock("@/lib/server/state", async (importOriginal) => {
 
 vi.mock("@/lib/server/auth", () => ({
   getAuthenticatedUser: async () => page.user,
+  requireAuthenticatedUser: async () => page.user,
   requireApiRoles: async () => null
 }));
 

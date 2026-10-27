@@ -14,8 +14,11 @@ import { OutputSettingsForm } from "@/components/output-settings-form";
 import { Panel } from "@/components/panel";
 import { DESTINATION_ROLE_LABELS, DESTINATION_STATUS_LABELS, describeStreamKey } from "@/lib/destination-wording";
 import { readAppState } from "@/lib/server/state";
+import { requireAuthenticatedUser } from "@/lib/server/auth";
 
 export default async function OutputPage() {
+  // Every page checks the sign-in itself (M125): the layout's check is not a guarantee for every render path.
+  await requireAuthenticatedUser();
   const state = await readAppState();
   const effectiveOutput = resolveStreamOutputSettings({ settings: state.output, env: process.env });
   // The env-only resolution: what an empty managed field falls back to, shown as "Follow the
