@@ -27,7 +27,7 @@ vi.mock("@/lib/server/state", () => ({
 import { runBroadcastAction } from "../../apps/web/lib/server/broadcast";
 
 // M89. Restart, Hard reload, Recover outputs, Force reconnect, Refresh and Remove next do what the
-// operator pressed. H4: the cycle's writes clear only the request the cycle read (planning/research/
+// operator pressed. H4: the cycle's writes clear only the request the cycle read (planning/archive/research/
 // robustness.md W4). W2: Remove next has its own hold, which a Skip or a passed chat vote does not move
 // (owner decision 2026-10-01, Q5).
 

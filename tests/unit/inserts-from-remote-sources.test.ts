@@ -22,7 +22,7 @@ import { classifyIncidentFingerprint } from "../../apps/worker/src/incident-clas
 import { decideScheduledInsertSkip, describeSkippedInsert, isPoolIntervalInsertDueNext } from "../../apps/worker/src/scheduled-insert";
 
 // M94. A YouTube or Twitch insert airs, or is skipped once with an incident, never retried forever
-// (planning/research/robustness.md W1, W5, W6; owner decision Q6).
+// (planning/archive/research/robustness.md W1, W5, W6; owner decision Q6).
 
 const workerSource = readFileSync(path.join(process.cwd(), "apps/worker/src/index.ts"), "utf8");
 const flat = workerSource.replace(/\s+/g, " ");

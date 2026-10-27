@@ -2530,7 +2530,7 @@ describe.sequential("database roundtrip", () => {
       expect(after).toMatchObject({ skipAssetId: "asset_b", removeNextAssetId: "asset_c", removeNextUntil: "2099-01-01T00:00:00.000Z" });
     }, 60_000);
 
-    // R3's W4 run (planning/research/robustness.md, restart-flag-swallowed): the real updatePlayoutRuntime
+    // R3's W4 run (planning/archive/research/robustness.md, restart-flag-swallowed): the real updatePlayoutRuntime
     // on real Postgres, with the updaters the code uses. Before M89 the cycle-end write set the flag from a
     // constant and the next cycle read "".
     it("keeps a Restart and a Refresh pressed while a playout cycle runs for the next cycle", async () => {

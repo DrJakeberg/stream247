@@ -31,7 +31,7 @@ const block: ScheduleBlock = {
   categoryName: "Archive",
   sourceName: "Pool",
   dayOfWeek: 1,
-  // A 24/7 day, as in the research measurement (planning/research/ux-install.md, U4).
+  // A 24/7 day, as in the research measurement (planning/archive/research/ux-install.md, U4).
   startMinuteOfDay: 0,
   durationMinutes: 24 * 60,
   poolId: "pool-local"

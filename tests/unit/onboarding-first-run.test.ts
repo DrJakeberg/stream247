@@ -5,7 +5,7 @@ import * as React from "../../apps/web/node_modules/react";
 import { renderToStaticMarkup } from "../../apps/web/node_modules/react-dom/server";
 import { createInitialSeedState, type AppState } from "@stream247/db";
 
-// M91 "Honest first run" (planning/research/ux-install.md I2, I6, I7, I8): plain HTTP is explained on
+// M91 "Honest first run" (planning/archive/research/ux-install.md I2, I6, I7, I8): plain HTTP is explained on
 // /setup and /login, the instance step is prefilled, the password warning sits under its field, and the
 // Twitch sign-in hint is read to the end.
 //

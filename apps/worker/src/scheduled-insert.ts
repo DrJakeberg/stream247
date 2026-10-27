@@ -1,6 +1,6 @@
 /**
  * Scheduled inserts (a pool's "insert every N items" and a block's cuepoints) from a remote source (M94,
- * R3 W1 in planning/research/robustness.md).
+ * R3 W1 in planning/archive/research/robustness.md).
  *
  * A YouTube or Twitch insert never aired. The rotation leaves the insert out, so the queue scan never
  * warmed it; at the boundary it was cold, the local fallback was bridged in, and because the insert had

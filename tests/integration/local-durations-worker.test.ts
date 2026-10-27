@@ -1,6 +1,6 @@
 // M96 (U4): local-library files carry their real length.
 //
-// Measured in the research (planning/research/ux-install.md, U4): three short local files stored
+// Measured in the research (planning/archive/research/ux-install.md, U4): three short local files stored
 // `duration_seconds = 0`, so the Day lens read "Unique library: 90m" (three 30-minute estimates) for six
 // minutes of video. Here the built worker binary scans three generated two-minute files against a real
 // postgres:16-alpine: each row stores 120 s with its file version, the second scan probes nothing, and

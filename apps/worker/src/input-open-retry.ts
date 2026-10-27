@@ -1,5 +1,5 @@
 /**
- * An item that failed to open is tried once more (M94, R3 W6 in planning/research/robustness.md).
+ * An item that failed to open is tried once more (M94, R3 W6 in planning/archive/research/robustness.md).
  *
  * After an immediate input-open failure (a stale googlevideo URL, a 403 on the first request) the exit
  * handler drops the item's probe cache so that "the next attempt" re-resolves it. But the pool's position

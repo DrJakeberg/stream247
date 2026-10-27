@@ -3,7 +3,7 @@ import { createInitialSeedState, type AppState } from "@stream247/db";
 import { findUnplayableWeekBlocks, getGoLiveChecklist } from "../../apps/web/lib/server/onboarding";
 import { getMaterializedProgrammingWeekPreview } from "../../apps/web/lib/server/state";
 
-// M91 "Honest first run" (planning/research/ux-install.md I1, owner decision 5.1 Q5): a fresh install
+// M91 "Honest first run" (planning/archive/research/ux-install.md I1, owner decision 5.1 Q5): a fresh install
 // starts empty except the local library, and readiness counts only what can air.
 
 const NOW = new Date("2026-10-07T12:00:00.000Z");

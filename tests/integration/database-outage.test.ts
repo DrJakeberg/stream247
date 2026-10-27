@@ -2,7 +2,7 @@
 //
 // Runs against a real postgres:16-alpine container on a fixed host port, so the container can be
 // stopped and started again under the same DATABASE_URL -- the same thing `docker compose stop
-// postgres` does to a running stack. The last test is R3's S1 run (planning/research/robustness.md,
+// postgres` does to a running stack. The last test is R3's S1 run (planning/archive/research/robustness.md,
 // "S1 evidence") as a test: the built worker binary in all three modes, Postgres stopped for 45 s.
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";

@@ -9,7 +9,7 @@ import {
   findIncidentOperatorAction
 } from "@stream247/core";
 
-// M90, U10/U11 (planning/research/ux-install.md): a critical incident card said what was wrong and
+// M90, U10/U11 (planning/archive/research/ux-install.md): a critical incident card said what was wrong and
 // not what to press. Every critical fingerprint now has one operator action in the catalogue in
 // packages/core/src/incident-actions.ts; this file proves there is no critical reporting site
 // without one.
