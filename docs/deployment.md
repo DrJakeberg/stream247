@@ -100,6 +100,13 @@ Editing the local `docker-compose.yml` or `.env.production.example` does not cha
   - `TRAEFIK_HOST=<same-hostname>`
   - `TRAEFIK_ACME_EMAIL=<your-email>` when the built-in ACME resolver is active
 - The built-in Traefik profile leaves direct port `3000` publishing enabled for easier first-time recovery and debugging. If you want a proxy-only surface, remove the `web.ports` entry locally.
+- The sign-in limit and the relay check's limit tell clients apart by the **last** `X-Forwarded-For`
+  entry (since M125), the one the proxy in front of `web` writes. Traefik's default (no
+  `forwardedHeaders.insecure`, no `forwardedHeaders.trustedIPs` with addresses clients come from) and
+  nginx with `proxy_add_x_forwarded_for` both fit. A request that reaches port `3000` directly, without
+  a proxy, carries whatever header the client sent, so on top of the per-client limit the sign-in
+  allows 50 attempts per account in 15 minutes from all clients together. Do not put port `3000` on the
+  internet without a proxy.
 
 ## Secrets And Runtime Settings
 
@@ -146,6 +153,10 @@ Important current limitation:
 ## Media And Persistence
 
 - local media is read from `data/media`
+- a library upload (Program → Library) sends one file per request and streams it straight to disk
+  (since M125); it is refused before the first byte (HTTP 507) when it would leave less free space on
+  the media volume than the disk watermark's trigger (Settings → Disk watermark, default 10 %).
+  `STREAM247_UPLOAD_MAX_BYTES` sets an additional per-file limit in bytes (unset: none).
 - PostgreSQL must use a persistent volume
 - deleting your database volume resets workspace state
 - deleting `data/media` removes locally mounted playable files
