@@ -1,5 +1,179 @@
 # Changelog
 
+## 2.4.0-rc.1 - 2026-10-29
+
+The candidate for 2.4.0: 2.3.1 plus M111-M125, that is a sturdier soak monitor (M111), the suggestions of
+2026-10-04 (M112-M123), resuming an interrupted item (M124) and the closed findings of the security audit of
+2026-10-27 (M125). Upgrading from 2.3.1 adds four columns (two additive migrations, applied on the first
+start). New and optional: the Compose variables `STREAM247_WEB_BIND` (default `127.0.0.1`) and
+`STREAM247_WEB_MEMORY_LIMIT` (default `2g`), a per-file upload limit `STREAM247_UPLOAD_MAX_BYTES` (unset: no
+limit) and the soak monitor's `SOAK_DOCKER_TIMEOUT_SECONDS` (default 10). Back up PostgreSQL before the repin
+and read `docs/deployment.md` → *Upgrading To 2.4* first: the repin of the three image tags runs 2.4, but the
+supervisor of the playout and uplink processes and the new `relay-watchdog` service come with this release's
+stack file, which a stack file of one's own (a Portainer stack) takes over by hand after the repin and before
+a soak starts; everyone is signed out once; a logo or image layer at an internal address draws empty. This
+candidate's `docker-compose.yml` still defaults to the `v2.3.1` images, which cannot run its commands: start
+it only with the three image pins set to `v2.4.0-rc.1`. With that file, `web`'s port 3000 is published on
+`127.0.0.1` only (`STREAM247_WEB_BIND=0.0.0.0` opens it to the LAN, for a browser without a proxy in
+between) and `web` has a memory ceiling of 2 GiB.
+
+Rollback: before a reverse repin to 2.3.1, or in the same redeploy, every command that names `supervisor.js`
+goes back to `index.js` (`playout`, `uplink`, and `worker` where the stack file names one) and
+`relay-watchdog` goes, its container included; the 2.3.1 image has neither file, and those containers would
+not start. The four columns stay, unread. The reverse repin signs everyone out again, but a 2.4 cookie whose
+password stamp happens to read as a number (about one stamp in 1 500) passes 2.3.1's age check with no end:
+keep a rollback short. An incident only 2.4 raises that is open at the rollback stays open under 2.3.1 until
+it is resolved by hand. The rest is in *Rollback to 2.3.1*.
+
+### Added
+
+- An interrupted item continues where it was cut (M124). A pool's local file or cached Twitch archive that
+  leaves the air without being asked to (ffmpeg or the container dies, a repin or host restart, *Play now*, a
+  Pin or Fallback of another item, a Live Bridge, a dated block of another pool taking over) keeps its
+  position; when its pool is on air again within 24 h, it continues 10 s before the cut. The duration bound,
+  the chapters, the Next card, the overlay and `/channel`'s *Now* count from the item's start, and the as-run
+  log reads "resumed at h:mm:ss". *Skip current*, *Soft restart*, *Hard reload* and the item's own end keep
+  no position; an item that aired under 2 min starts from 0, one with under 2 min left gives way to the next,
+  and a point continued twice without the item airing 2 min is given up, so a broken spot cannot loop. Remote
+  archives and YouTube videos are not continued (the pool goes on after them, as before), nor is an item cut
+  by a dated block of its own pool. After a container kill the point is up to one cycle old, so the
+  continuation repeats those seconds as well; the repin from 2.3.1 itself continues nothing, since 2.3.1
+  kept no position. The week view and *Up next* show the pool's next item until the continued one is on air.
+  Left: a pool keeps one point, so of two cuts in one pool only the latest is continued; without the relay,
+  *Force reconnect* and *Recover outputs* reach the playout as a restart and drop the point too.
+  New columns `playout_runtime.resume_points`, `playout_runtime.current_start_offset_seconds` and
+  `as_run_log.start_offset_seconds` (migration `20261026_001_resume_interrupted_item`).
+- A frozen process restarts, and a relay that stops answering is reported and restarted (M114). The worker,
+  playout and uplink processes run under a supervisor (`apps/worker/dist/supervisor.js`) that kills its child
+  after five minutes without a heartbeat (a blocked event loop, SIGSTOP), so the restart policy starts the
+  container again, and the next process raises `<mode>.health.frozen-restart`. M103's self-restart cannot do
+  that, since it runs in the frozen process, and Compose does not restart an unhealthy container. While the
+  relay or live sources are in use, the worker asks the relay's API every cycle and raises the critical
+  incident `relay.unreachable` after two minutes without an answer. The new service `relay-watchdog` (worker
+  image, Docker socket, no database) restarts a relay that runs but has not answered for three minutes,
+  backing off 5, 10, 20, 40, then 60 min, and leaves a stopped or paused relay alone. The relay keeps
+  `bluenviron/mediamtx:1.15.4`, which cannot run a healthcheck. A frozen-process restart is a restart of the
+  restart policy and fails a soak; the watchdog's restart is a `docker restart`, which the soak monitor logs
+  as `container-started-again services=relay` and counts, so the run is *passed with failure* at best. A stack
+  file whose `playout` and `uplink` commands still name `index.js` runs them without the supervisor, as
+  before. Left: the watchdog restarts only a relay that has answered once since the watchdog started or last
+  restarted it (`relay.watchdog.never_answered`), and does nothing under a `hostname:` override, a host
+  network or a swarm stack; a `docker pause` of a process container is not covered.
+- The live view shows what operator actions leave behind, and the actions stay done (M120). *Operator holds*
+  under the next item lists a Pin, a Fallback, a pending Play now, Move next, a Skip's hold and Remove next
+  with the time left, and below them a Refresh or queue rebuild still waiting; *Resume schedule* is enabled
+  while one of the holds is in effect (a waiting Refresh or rebuild does not count, and Resume leaves it) and
+  restarts nothing for a skip hold, a Remove next or a Move next alone. No admin action clears
+  another's waiting Refresh or queue rebuild any more; the two add up (`refresh_and_rebuild_queue`, a new
+  value in the existing column). A retry owed to an item that failed to open survives a Restart or Force
+  reconnect pressed after the failure, waits through the reconnect slate and starts after it; a slate,
+  standby, Live Bridge or other item that takes the air instead drops it with a log line
+  (`playout.input.retry.dropped`).
+- The block form says what a dated block takes over, and the Day lens speaks plainly (M119). Before saving,
+  the form names the weekly block a dated block cuts, the dates and where it goes on ("Takes over 20:00–22:00
+  from Evening on 10 days (Thu 1 Oct to Sat 10 Oct); Evening continues at 22:00."), and offers *For how many
+  days* next to the dates; the notice is a hint, nothing is asked. The Day lens (*What this day plays*) counts
+  in hours, drops internal words ("materialized", "Unique fill", "Queue preview") and draws its video bars
+  from the week projection, so a pool carries on from block to block. An edit with *Apply to repeat set*
+  whose dates leave out a copy's weekday is refused with those weekdays named, instead of saving copies that
+  never air.
+- The soak monitor follows the `web` container (M111). With `--follow-web` it measures `web` at its address on
+  the stack network and follows the address when a Docker restart hands out new ones; on 2026-10-18 the
+  2.3.1-rc.1 soak kept asking the old address and ended `outage-exceeded` while the channel was on air again
+  16 s after the restart. A Docker daemon restart or a container started again is logged and counted in the
+  completion line (`dockerRestarts=N containersStartedAgain=N`), and a pass with either is *passed with
+  failure*; every docker call is bounded (`SOAK_DOCKER_TIMEOUT_SECONDS`, 10 s). Step 10 of *Safe Upgrade Flow*
+  starts the soak with `--follow-web`.
+
+### Changed
+
+- The week view and `/channel` plan with what really airs (M118). The block on air is filled from when the
+  item on air ends, not from now; an item that runs past its block delays the next weekly block, and a block
+  it covers completely reads *Covered by the item before*. A dated block of the weekly block's own pool is
+  filled between the weekly block's two parts in the worker's rotation order, a 24 h block of short clips is
+  projected to its end (up to 200 000 items per block; it stopped after 5 000), a Twitch VOD in its cache
+  cooldown is left out until the cooldown ends, and an item on air without a known length stays *Now* ("since
+  10:00", no progress bar) with *Up next* from the 30-minute estimate. The live view's cuepoint summary
+  applies a dated block's air windows, as the worker does. Projection only: nothing on air changes. Left: an
+  item or a cooldown that ends across the clock change is placed an hour off that night.
+- A password change signs the old sessions out (M117). The session cookie carries a stamp of the password it
+  signed in with, so a change or reset of the owner password ends every other session, a leaked one
+  included; before, a session stayed valid for up to 30 days. The session that makes the change stays signed
+  in, the reset command signs every owner session out, and Twitch sign-ins of the team are not touched.
+  Older cookies carry no stamp, so the update signs everyone out once. First-run setup takes the minimum
+  password length from the same constant as the change and the reset instead of a literal 10.
+- The setup and schedule texts say what happens, and the library list comes first (M116). The setup's
+  instance step says an unusable `CHANNEL_TIMEZONE` is ignored and the saved zone used (it said the variable
+  overrides it); the schedule tips describe the model since M88 (the part of a block past midnight counts on
+  the next day, a dated block over the weekly programme is not a clash, a cuepoint fires once per airing also
+  past midnight); `Program → Library` lists its items right after the filters, before the curated sets and
+  the bulk editing, which now sit below the list.
+- The tests that need a real ffmpeg and ffprobe run in CI (M121). Five test files (the duration probe, the
+  worker scan, the ticker crawl) were skipped there, since `pnpm test` ran before the optional ffmpeg install;
+  the CI step *Real ffmpeg and ffprobe tests* (`pnpm test:media`) runs them where a missing tool fails, with
+  the worker image's ffmpeg when the host has none. `PLANS.md` is short again: the milestone notes and the
+  DUT checks have files of their own under `planning/`.
+- For contributors, no change in behaviour: the two release test files share one fair lock on the
+  repository's `.env` (#36), and the repository was tidied for agent work (#52).
+
+### Fixed
+
+- The ten findings of the security audit of 2026-10-27 are closed (M125). A Twitch team member's role is
+  derived from the grant on every request, so a demoted, removed or rebound member keeps no old role, and
+  Admin → Team has *Remove access*. A grant is bound to the Twitch user id of its first sign-in (new column
+  `team_access_grants.twitch_user_id`, migration `20261027_001_team_grant_twitch_user_id`), so it follows a
+  rename and another account that takes over the old login gets nothing. The public readiness answers
+  (`/api/health`, `/api/ready`, `/api/system/readiness`) carry the destination's provider, role, priority,
+  status and `streamKeyPresent` only, no ingest URL, notes, error text or feed path, and a fixed message when
+  the state read fails. A viewer's `!game` no longer uses up the cooldown of a moderator's `!game` start or
+  stop. Every admin page checks the sign-in itself. The scene renderer fetches overlay pictures itself, from
+  public addresses only (http or https, every resolved address checked, 5 s, 4 MiB, images only), so a
+  picture at a loopback, private or other internal address draws empty. The sign-in limit and the relay
+  check key on the last `X-Forwarded-For` entry, the one the proxy writes, and the shipped compose file
+  publishes `web`'s port 3000 on `127.0.0.1` only (`STREAM247_WEB_BIND=0.0.0.0` opens it); the relay check
+  counts refusals only, so a correct key always passes. A library upload sends one file per request and is
+  streamed to disk, refused (507) when it would leave less free space than the disk watermark's trigger,
+  with an optional per-file limit (`STREAM247_UPLOAD_MAX_BYTES`), and with the shipped compose file `web` has
+  a memory ceiling of 2 GiB (`STREAM247_WEB_MEMORY_LIMIT`). A pull-request CI run can no longer overwrite the
+  `main-<sha>` images a release promotes. Left: a rotated ingest key works up to one second longer;
+  re-granting a login that a bound member renamed away from edits that member's grant until their next
+  sign-in; the audit's hardening notes (containers as root, the watchdog's read-write Docker socket,
+  unpinned base images and others) are not done.
+- A broken source neither crashes nor stalls the loop (M112). A burst of ffmpeg error output no longer
+  exhausts the database connection pool: the runtime's stderr sample is written at most every 2 s, each
+  stderr incident at most every 10 s and the feed status every 5 s, while the container log keeps every
+  line. A pool whose pick fails to resolve passes over that item for a minute and takes its next one, and
+  the failure counts towards quarantine, instead of trying the same item every cycle. The source syncs
+  start a remote call only when its whole timeout ends within 80 % of the stall guard; a source left
+  without room syncs first in the next cycle, and one whose call ran out is paused for 10 min, so dead
+  hosts no longer hold the worker cycle until the stall guard. Cost: an item whose probe failed in the
+  minute before its turn loses that turn.
+- No overlay column can fail every state read any more, and old Twitch schedule segments do not go
+  unnoticed (M113). Text that is not JSON, or JSON of the wrong shape, in the overlay's layer order, disabled
+  layers, scenes, panel placements, the draft or a stored scene preset reads as empty (default order, no
+  panels) instead of stopping every read; M85 guarded only the custom layers. A stale Twitch segment whose
+  delete Twitch refuses or does not answer is kept and tried again with the next schedule sync, and the
+  warning `twitch.schedule.delete.failed` stays open meanwhile; a 404 counts as deleted, one that has
+  started is dropped with a log line, and a stored segment whose update answers 404 is created anew.
+- An output on the operator's own RTMP server publishes and keeps publishing (M115). Every encoded tee
+  output asks the encoder for a global header (`-flags:v +global_header`); before, each started with an empty
+  AVC sequence header, MediaMTX refused it (`unable to parse H264 config`) and the output never published.
+  Twitch now gets the complete header instead of an empty one; a stream copy is unchanged.
+- The setup wizard keeps a regional Twitch ingest and finds the time zone (M122). *Where the stream goes*
+  shows a regional ingest (`live-<region>.twitch.tv`, `<server>.contribute.live-video.net`) as *Twitch* and
+  keeps it on saving; it read as *Another RTMP service*, and saving it as Twitch moved the channel to the
+  global ingest. A source that becomes playable while *First programme* is open arrives ticked, and the
+  instance step's zone field suggests the zone names the browser knows (any other name can still be typed).
+- The spring clock change, `/channel`'s *Up next* and `!now` in a short recovery (M123). A block that starts
+  in the hour the clock skips in spring is posted to Twitch and counts its cuepoints from the switch, where it
+  starts airing (before, from 03:30), and one that ends in that hour is posted only up to the switch (before,
+  for its wall-clock length, which is longer than it airs). The week view, the Day lens and `/channel` plan
+  both clock-change nights in real time (23 h and 25 h days). A programme that runs on into the next day
+  under the same title and pool, a daily 24 h block, is one *Up next* card. While playout reads `recovering`,
+  `!now` names the item on air, or "switching to the next video: <title>" after a Skip, a waiting Pin or a
+  pending *Play now*, instead of saying nothing is playing. Left: on the autumn night, a block boundary
+  inside the repeated hour counts that hour for both blocks in the projection.
+
 ## 2.3.1 - 2026-10-20
 
 The release the candidate `2.3.1-rc.1` was for: 2.3.0 plus M107 and M108. The on-air "Next" card names the
