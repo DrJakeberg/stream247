@@ -326,7 +326,12 @@ Do not use `latest` for unattended production deployments.
 
     `RestartCount` counts only the restarts of the restart policy. A Docker daemon restart (on 2026-10-18 an
     upgrade of `containerd.io`) starts every container again and leaves it at 0, so the restart check alone
-    does not see one. The monitor also reads each service's start time (`State.StartedAt`) after every
+    does not see one. A `docker restart` (the relay watchdog's) sets it back to 0: when a service's count
+    falls below its baseline, the monitor logs `container-restart-count-reset service=<service>
+    baseline=<old> restartCount=<new>` once and takes 0 as that service's baseline (Docker only sets it back
+    to 0, so a count above 0 at that sample is already a restart of the restart policy), so a restart of the
+    restart policy still fails the soak (M126; before, it stayed below the old baseline and
+    went unseen). The monitor also reads each service's start time (`State.StartedAt`) after every
     healthy sample, and once more when an outage ends the soak (never while one runs, so a slow daemon
     cannot delay the samples that measure it): when every service started again, it logs
     `docker-daemon-restart startedAt=<time> services=…` (a `docker compose restart` or a recreate of the whole stack looks the same); when only some did,
@@ -839,8 +844,9 @@ whole chapter list).
 
 ### Upgrading To 2.4
 
-2.4 is 2.3.1 plus M111-M125: the suggestions of 2026-10-04 (M112-M123), resuming an interrupted item (M124)
-and the closed findings of the security audit of 2026-10-27 (M125); M111 changes the soak monitor only.
+2.4 is 2.3.1 plus M111-M126: the suggestions of 2026-10-04 (M112-M123), resuming an interrupted item (M124),
+the closed findings of the security audit of 2026-10-27 (M125) and the fixes of the review of the production
+stack of 2026-10-29 (M126); M111 changes the soak monitor only.
 `CHANGELOG.md` lists every change. This section is the upgrade from 2.3.1 and the way back; from 2.1.0, take
 *Upgrading To 2.3* and *Upgrading To 2.3.1* first.
 
@@ -874,20 +880,27 @@ and the closed findings of the security audit of 2026-10-27 (M125); M111 changes
   | Change in `docker-compose.yml` | Milestone | With a stack file that lacks it |
   | --- | --- | --- |
   | `playout` and `uplink` run `["node", "apps/worker/dist/supervisor.js", "<mode>"]` instead of `index.js`; `worker` names no command and takes the image's, which is the supervisor from this release on | M114 | `playout` and `uplink` run without the supervisor, as in 2.3.1: when one freezes, nothing restarts it |
-  | new service `relay-watchdog`: `STREAM247_WORKER_IMAGE`, `["node", "apps/worker/dist/relay-watchdog.js"]`, `/var/run/docker.sock`, no env file | M114 | a relay that hangs is reported (`relay.unreachable`), not restarted |
+  | new service `relay-watchdog`: `STREAM247_WORKER_IMAGE`, `["node", "apps/worker/dist/relay-watchdog.js"]`, `/var/run/docker.sock`, no env file | M114 | a relay that hangs is reported (`relay.unreachable`) only while something uses it (`rtmp` input or live sources, M126), and not restarted |
   | `web`: `mem_limit: ${STREAM247_WEB_MEMORY_LIMIT:-2g}` | M125 | no memory ceiling, as before |
   | `web`: port `${STREAM247_WEB_BIND:-127.0.0.1}:3000:3000` instead of `3000:3000` | M125 | the port stays as the stack file has it; the Portainer stack publishes none |
 
-  Two more things matter from this release on. The table does not list them because the shipped file has
-  had them since before 2.3.1, but a stack file of one's own may lack them.
+  Two more things matter for a stack file of one's own. The table does not list them because the shipped
+  file has been this way since before 2.3.1 (the relay's API on, no tmpfs).
 
-  - **The relay's API.** From this release on, while relay mode or live sources are on, the worker asks the
-    relay's API (`http://relay:9997` on the stack network) every cycle, and `relay-watchdog` asks the same
-    API. The shipped file turns the API on by mounting `docker/mediamtx.yml` (`api: yes`, M57 stage 2). A
-    relay that runs on the image's own configuration (no `/mediamtx.yml` mount, no `MTX_*` variables) has
-    the API off. Then, about two minutes after the repin, the worker raises the critical `relay.unreachable`
-    and never closes it while the API stays off, and a soak run with `SESSION_COOKIE` fails on it;
-    `relay-watchdog` logs `relay.watchdog.never_answered` and never restarts the relay. The smallest change
+  - **The relay's API.** From this release on `relay-watchdog` asks the relay's API (`http://relay:9997` on
+    the stack network) every 30 s, and the worker asks the same API every cycle while something uses the
+    relay: relay mode with the uplink reading the programme from it (`STREAM247_UPLINK_INPUT_MODE=rtmp`), or
+    live sources. Program-feed mode (`STREAM247_RELAY_ENABLED=1` with the default `hls` input, the shipped
+    default and the DUT's mode) passes no programme through the relay, so there the worker asks only while
+    live sources are on (M126; 2.4.0-rc.1 asked in relay mode whatever the input). The worker reads
+    `STREAM247_UPLINK_INPUT_MODE` from its own environment, so set it where `worker`, `playout` and `uplink`
+    all see it, as the shipped file does with the env file they share: a value on `uplink` alone leaves the
+    worker on `hls`, and it would not report a hung relay that carries the programme. The shipped file turns
+    the API on by mounting `docker/mediamtx.yml` (`api: yes`, M57 stage 2). A relay that runs on the image's
+    own configuration (no `/mediamtx.yml` mount, no `MTX_*` variables) has the API off. Then
+    `relay-watchdog` logs `relay.watchdog.never_answered` and never restarts a relay that hangs; and while
+    the worker asks, it raises the critical `relay.unreachable` about two minutes after the repin and never
+    closes it while the API stays off, and a soak run with `SESSION_COOKIE` fails on it. The smallest change
     is one variable on `relay`:
 
     ```yaml
@@ -901,7 +914,8 @@ and the closed findings of the security audit of 2026-10-27 (M125); M111 changes
     file hands it every secret. The API needs neither a published port nor `expose`: services on the same
     network reach it. With the image's default users it answers a call from another container with `401`,
     which counts as an answer for the worker and the watchdog. RTMP publish and read stay as they are, and
-    an open `relay.unreachable` closes on the first answer. The change works with the 2.3.1 images too,
+    an open `relay.unreachable` closes on the first answer (in program-feed mode with live sources off, on
+    the worker's first cycle, "Nothing uses the relay any more."). The change works with the 2.3.1 images too,
     since 2.3.1 reads a `401` as it reads a refused connection, and the redeploy recreates only `relay`.
     Make it in a redeploy of its own before the repin; then `relay.unreachable` never opens. Check it from
     the worker: this prints `401`, and `docker port <project>-relay-1` lists no `9997`:
@@ -915,13 +929,17 @@ and the closed findings of the security audit of 2026-10-27 (M125); M111 changes
     `STREAM247_RELAY_OUTPUT_URL` and `STREAM247_RELAY_INPUT_URL` carry it
     (*Settings → Operations → Relay access*). The mount needs an absolute path to a file that exists on the
     host, and the API then answers `200` to every container on the network without credentials.
-  - **A tmpfs on `/tmp`.** The supervisor keeps its frozen-restart marker in the temp directory. A tmpfs on
-    `/tmp` is empty again after the restart, so the next process never raises `<mode>.health.frozen-restart`;
-    the restart itself still happens. A stack file that mounts a tmpfs on `/tmp` for `worker`, `playout` or
-    `uplink` sets `STREAM247_SUPERVISOR_MARKER_DIR=/var/tmp` on those services: `/var/tmp` lies in the
-    container's writable layer, which a restart keeps. Keep the tmpfs, since the playout writes its slate
-    and ticker files there. Set the variable in the same redeploy as the commands, since it recreates the
-    three containers.
+  - **A tmpfs on `/tmp`.** It needs nothing (M126), unless the root file system is read-only. The supervisor
+    keeps its frozen-restart marker in `/var/tmp`, which lies in the container's writable layer that a
+    restart keeps, and only where `/var/tmp` is missing or not writable in the temp directory; the worker and
+    playout images (both built from `docker/worker.Dockerfile`; `uplink` runs the worker image) have it
+    (mode `1777`). So the next process finds the marker and raises `<mode>.health.frozen-restart` with a
+    tmpfs on `/tmp` for `worker`, `playout` or `uplink` too. Keep the tmpfs, since the playout writes its
+    slate and ticker files there. With `read_only: true` on those services `/var/tmp` is not writable, the
+    marker lands on the tmpfs and is gone after the restart: set `STREAM247_SUPERVISOR_MARKER_DIR` there to a
+    directory on a volume. The variable still wins where it is set; `/var/tmp` there is the default and
+    harmless. 2.4.0-rc.1 kept the marker in the temp directory: with a tmpfs on `/tmp` and
+    without the variable, the restart still happened but the incident was never raised.
 
   Take the table's first two rows into the stack file after the repin has run, never before: a 2.3.1 image
   has neither `supervisor.js` nor `relay-watchdog.js`, and those containers would not start on it
@@ -986,9 +1004,10 @@ and the closed findings of the security audit of 2026-10-27 (M125); M111 changes
 
   The two Compose variables act only in a stack file that uses them, as the shipped one does. The supervisor
   and the watchdog also read `STREAM247_SUPERVISOR_MARKER_DIR` (where the frozen-restart marker is kept,
-  default the temp directory) and `STREAM247_DOCKER_SOCKET` (default `/var/run/docker.sock`); their
-  defaults fit the shipped `docker-compose.yml`; a stack file with a tmpfs on `/tmp` sets the marker
-  directory (*Stack* above).
+  default `/var/tmp`, the temp directory where `/var/tmp` is missing or not writable) and
+  `STREAM247_DOCKER_SOCKET` (default `/var/run/docker.sock`); their defaults fit the shipped
+  `docker-compose.yml` and a stack file with a tmpfs on `/tmp` alike, but not a read-only root file system,
+  which sets the marker directory to a volume (*Stack* above).
 
 - **After the repin, the operator.** Everyone is signed out once, since older session cookies carry no
   password stamp (M117): sign in again. A `SESSION_COOKIE` the soak monitor was given before the repin is
@@ -1013,9 +1032,16 @@ What changes on air in the first hours, without touching a setting:
   it reaches the relay is under *Stack* above). A frozen-process restart is a restart of the restart policy,
   which raises `RestartCount` and fails a running soak. The watchdog's relay restart is a `docker restart`,
   which does not raise `RestartCount` (it sets it back to 0): the soak monitor logs
-  `container-started-again services=relay` and counts it in `containersStartedAgain`, so a run without
-  `SESSION_COOKIE` is *passed with failure* at best; with it, the worker's critical `relay.unreachable` at two
-  minutes fails the run before the watchdog acts at three. Neither is expected on a healthy day. The worker cycle has the step `relay`, which adds at most 5 s while the relay hangs.
+  `container-started-again services=relay` and counts it in `containersStartedAgain`, so the run is
+  *passed with failure* at best. Where the relay's count was above 0, the monitor also logs
+  `container-restart-count-reset service=relay baseline=<old> restartCount=0` once and takes 0 as the relay's
+  baseline, so a later restart of the restart policy fails the run as any restart does (M126; under the
+  2.4.0-rc.1 monitor it stayed below the old baseline and went unseen). With `SESSION_COOKIE` and a worker
+  that watches the relay (the uplink's `rtmp` input, or live sources on), the worker's critical
+  `relay.unreachable` at two minutes fails the run before the watchdog acts at three; in program-feed mode
+  with live sources off the worker does not watch the relay, and the run goes on across the watchdog's
+  restart. Neither is expected on a healthy day. The worker cycle has the step `relay`, which adds at most
+  5 s while the relay hangs and does not ask the relay while nothing uses it.
 - **M115.** The uplink's encoded ffmpeg command carries `-flags:v +global_header`, so Twitch gets the complete
   header; its unplanned restart count should not move because of it.
 - **M112.** The runtime's stderr sample and the stderr incidents trail a burst of ffmpeg output by up to 2 s
@@ -1033,6 +1059,11 @@ What changes on air in the first hours, without touching a setting:
   real time on the two clock-change nights; only the plan changes, not what airs.
 - **M120.** *Resume schedule* of a Skip's hold, a Remove next or a Move next alone no longer restarts the
   playout, and *Operator holds* lists what Resume clears.
+- **M126.** In program-feed mode with live sources off the worker does not ask the relay's API; a
+  `relay.unreachable` that 2.4.0-rc.1 left open closes on the first cycle with "Nothing uses the relay any
+  more." A new incident deletes only resolved incidents beyond the newest 100: an open one stays however
+  old it is (before, a run of new incidents could push an open critical one out unresolved), so the table
+  can hold more than 100 rows while old incidents are open.
 
 #### Rollback to 2.3.1
 
@@ -1090,6 +1121,10 @@ What 2.3.1 does with what 2.4 left behind; none of it needs a step:
   matters). A segment 2.4 kept for another delete is stale to 2.3.1 as well: its next sync asks Twitch once
   more and forgets it, whatever the answer. An output on the operator's own RTMP server stops publishing
   again.
+- **M126.** 2.3.1's prune deletes every incident beyond the newest 100 again, open ones included: an open
+  incident that 2.4 kept beyond them goes, unresolved, with the first new incident after the rollback, as
+  it did under 2.3.1 before. A frozen-restart marker in `/var/tmp` is never read (2.3.1 has no supervisor)
+  and goes with the container, which the repin recreates.
 - **Incidents only 2.4 raises.** 2.3.1 never closes `relay.unreachable`, `twitch.schedule.delete.failed`,
   `worker.health.frozen-restart`, `playout.health.frozen-restart` or `uplink.health.frozen-restart` (its
   sweep closes only the event incidents it knows): one that is open at the rollback stays open until it is
