@@ -61,8 +61,13 @@ test.describe("links go somewhere", () => {
         expect(targets.length, "an operator surface should link somewhere").toBeGreaterThan(0);
       }
 
+      // One visit per page: links that differ only in their fragment (the week lens links every block to
+      // its day, `…&day=2#schedule-block-…`) get the same answer from the server, and following each of
+      // them pushed the schedule surface past the timeout (CI, 2026-10-29).
+      const pages = [...new Set(targets.map((href) => href.split("#")[0]))];
+
       const deadEnds: string[] = [];
-      for (const href of [...new Set(targets)]) {
+      for (const href of pages) {
         // Navigated, not fetched. An API request out of this context does not carry the session the
         // way a click does, and every operator link then looks like a redirect to the login page —
         // a false accusation against the product, from the test.
