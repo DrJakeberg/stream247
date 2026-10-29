@@ -12,7 +12,7 @@ import { buildScheduleVideoTimelineSegments } from "../../apps/web/lib/schedule-
 import { buildChatProgrammeInfo, type ChatPlayoutRow } from "../../apps/worker/src/chat-programme-info";
 import { planTwitchScheduleSegments } from "../../apps/worker/src/twitch-schedule-plan";
 
-// M123: suggestions 20, 21 and 23 of planning/suggestions-2026-10-04.md. A block in the skipped March hour posts
+// M123: suggestions 20, 21 and 23 of planning/archive/suggestions-2026-10-04.md. A block in the skipped March hour posts
 // and counts from the switch, where it starts airing, and one ending in it stops there; the week view and the
 // Day lens project the nights the clocks change in real time; a daily 24 h block is one Up next card on
 // /channel; !now names the item on air, or what replaces it, while the playout reads "recovering".

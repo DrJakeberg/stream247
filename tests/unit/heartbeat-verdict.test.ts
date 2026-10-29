@@ -34,7 +34,7 @@ import { getPlayoutHeartbeatHealth, getRuntimeDriftReport, getWorkerHealth } fro
 import { getSystemReadiness } from "../../apps/web/lib/server/readiness";
 import { decideHealthcheck } from "../../apps/worker/src/healthcheck";
 
-// M90, audit U3/U30 (planning/research/robustness.md): the Live page judged a playout heartbeat
+// M90, audit U3/U30 (planning/archive/research/robustness.md): the Live page judged a playout heartbeat
 // stale after 45 s while readiness and the worker allowed 60 s, and the worker window of 240 s was
 // declared three times. R3's probe: a 50 s old playout heartbeat read "Playout heartbeat is stale."
 // on the Live page and `playout: ok` in readiness, for the same second.

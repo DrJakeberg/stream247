@@ -77,7 +77,7 @@ under `planning/archive/`, text unchanged.
 ### M112 A Broken Source Neither Crashes Nor Stalls The Loop
 
 - Checked against `main` at `abc4676` first: none of the three was fixed by M105-M111.
-  `planning/review-2026-10-05.md` has no entry for them; at `abc4676` the playout's stderr handler still
+  `planning/archive/review-2026-10-05.md` has no entry for them; at `abc4676` the playout's stderr handler still
   fired `void updatePlayoutRuntime(` and `void upsertIncident(` per chunk (`apps/worker/src/index.ts`,
   the handler after the M105 comment on listeners), `selectPoolAsset` knew no failed pick, and the two
   source syncs passed `SOURCE_SYNC_YTDLP_TIMEOUT_MS` to every call.
@@ -173,7 +173,7 @@ under `planning/archive/`, text unchanged.
 ### M113 Overlay Data And Twitch Segments That Do Not Go Unnoticed
 
 - Checked against `main` at `85de666` first: neither was fixed by M105-M112, and
-  `planning/review-2026-10-05.md` has no entry for them. At `85de666` `mapOverlayRowToRecord` parsed
+  `planning/archive/review-2026-10-05.md` has no entry for them. At `85de666` `mapOverlayRowToRecord` parsed
   `layer_order_json`, `disabled_layers_json`, `scenes_json` and `panel_placements_json` bare
   (`packages/db/src/index.ts:1140-1148`, only `custom_layers_json` guarded), the preset reader
   `overlay_json` (`:1250`), and `syncTwitchSchedule` awaited the stale DELETE without reading its answer
@@ -203,7 +203,7 @@ under `planning/archive/`, text unchanged.
   loop (`enforceHealthSelfRestart`, `apps/worker/src/index.ts:11661`), and the stall guard
   (`runWithStallGuard`, `:11588`) is a timer on the same event loop, so neither runs in a blocked or
   stopped process; only `traefik` mounted the Docker socket (`docker-compose.yml:30`), and `relay` was the
-  one service without a healthcheck. `planning/review-2026-10-05.md` has no entry for it.
+  one service without a healthcheck. `planning/archive/review-2026-10-05.md` has no entry for it.
 - **The relay image.** `bluenviron/mediamtx:1.15.4` holds `/mediamtx` and `LICENSE`, nothing else
   (`docker export` of a container of it, listed with `tar -t`): no shell, no HTTP client, no health
   subcommand (`/mediamtx --help` names only `--version` and `--upgrade`). A Compose healthcheck cannot run
@@ -274,7 +274,7 @@ under `planning/archive/`, text unchanged.
   (`apps/worker/src/multi-output.ts:171`) gives every destination `f=flv` behind `tee` with the fifo, and
   neither the uplink's encoded command (`buildUplinkFfmpegCommand`, `apps/worker/src/ffmpeg-runtime.ts`)
   nor the playout's three encoded commands (`apps/worker/src/index.ts`, relay off) asked the encoder for a
-  global header. M105 to M114 did not touch it; `planning/review-2026-10-05.md` has no entry for it.
+  global header. M105 to M114 did not touch it; `planning/archive/review-2026-10-05.md` has no entry for it.
 - **Measured in the cloud container** (2026-10-21, Ubuntu ffmpeg 6.1, `bluenviron/mediamtx:1.15.4` pulled
   through `mirror.gcr.io`, the uplink's encoder and tee options, 30 s): without the flag 34 connections,
   the first closed `unable to parse H264 config: invalid size 1`, the next 28 ended with
@@ -634,3 +634,11 @@ under `planning/archive/`, text unchanged.
   the first-run owner claim; EventSub replay window, body cap and order of checks; no SSE connection cap;
   the yt-dlp `--` separator and the YouTube host check; tee delimiters in destination URLs; CSP
   `frame-ancestors` and an Origin check; owner-only admin grants; the audit's six uncovered areas.
+
+### Suggestions 2026-10-04 to M112-M124, then M125
+
+Moved out of `PLANS.md`, text unchanged apart from the archive path.
+
+The findings outside the milestones in `planning/archive/suggestions-2026-10-04.md` are taken in their order, one
+milestone at a time, since the owner's go of 2026-10-20 23:55 UTC (1-3: M112, 4-5: M113, 6: M114, 7: M115, 8, 12 and 13: M116, 9: M117, 14-17: M118, 18 and 19: M119, 22: M120,
+24 and 25: M121; 26 and 27 only the owner can do). On 2026-10-25 the owner took the leave-items too ("ja, alle"): 10 and 11: M122, 20, 21 and 23: M123. After the list M77 (resuming an interrupted item): M124. The security audit of 2026-10-27: M125.

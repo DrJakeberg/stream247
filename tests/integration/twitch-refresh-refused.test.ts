@@ -1,6 +1,6 @@
 // M87: an external failure costs one step, not the cycle.
 //
-// R3's S2 run (planning/research/robustness.md, "S2 evidence") as a test: the built worker binary
+// R3's S2 run (planning/archive/research/robustness.md, "S2 evidence") as a test: the built worker binary
 // against a real postgres:16-alpine, the bot connection seeded "connected" with an access token that
 // expired a minute ago, and a fetch preload that answers Twitch's token endpoint with HTTP 400
 // "Invalid refresh token". Before M87 every cycle ended in `worker.loop.crashed`, no heartbeat was

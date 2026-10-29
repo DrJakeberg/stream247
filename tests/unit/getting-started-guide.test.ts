@@ -156,7 +156,7 @@ describe("getting-started guide", () => {
   });
 });
 
-// M92 "Getting started a stranger can follow" (planning/research/ux-install.md I3, I4, I5).
+// M92 "Getting started a stranger can follow" (planning/archive/research/ux-install.md I3, I4, I5).
 describe("getting-started guide from an empty host (M92)", () => {
   /** One paragraph per array entry, with its line breaks folded into single spaces. */
   const paragraphs = (text: string) => text.split(/\n\s*\n/).map((paragraph) => paragraph.replace(/\s+/g, " ").trim());

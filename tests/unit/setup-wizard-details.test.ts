@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "../../apps/web/node_modules/react";
 import { renderToStaticMarkup } from "../../apps/web/node_modules/react-dom/server";
 
-// M122 (suggestions 10 and 11 of planning/suggestions-2026-10-04.md, left by M99 and M91): a regional
+// M122 (suggestions 10 and 11 of planning/archive/suggestions-2026-10-04.md, left by M99 and M91): a regional
 // Twitch ingest is Twitch in the wizard, a source that becomes playable while the "First programme" step is
 // open arrives ticked, and the zone field suggests the zone names the browser knows.
 //

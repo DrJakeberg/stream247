@@ -19,7 +19,7 @@ import {
   type OperatorHoldsInput
 } from "../../apps/web/lib/operator-holds";
 
-// M120 = suggestion 22 of planning/suggestions-2026-10-04.md: operator actions get lost or stay invisible
+// M120 = suggestion 22 of planning/archive/suggestions-2026-10-04.md: operator actions get lost or stay invisible
 // (M89 "Not changed", M94 review "Left as is").
 
 const { mockAppendAuditEvent, mockReadAppState, mockUpdateDestinationRecord, mockUpdatePlayoutRuntime } = vi.hoisted(() => ({

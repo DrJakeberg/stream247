@@ -6,7 +6,7 @@ import * as React from "../../apps/web/node_modules/react";
 import { renderToStaticMarkup } from "../../apps/web/node_modules/react-dom/server";
 import { createInitialSeedState } from "@stream247/db";
 
-// M104 wording pass (planning/research/ux-install.md U13, U14 and the stopped planning branch's S19):
+// M104 wording pass (planning/archive/research/ux-install.md U13, U14 and the stopped planning branch's S19):
 // admin text names no milestone ids, the admin shows the standby text viewers actually read, and the
 // Scene tab says first whether overlay output is on and that nothing was published yet.
 

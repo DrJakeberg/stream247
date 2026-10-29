@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from "../../apps/web/node_modules/react-dom/serv
 import type { AppState } from "../../apps/web/lib/server/state";
 import type { BroadcastSnapshot, LiveIncidentSummary } from "../../apps/web/lib/live-broadcast";
 
-// M90 "The 3 A.M. Answer" (planning/research/ux-install.md U7, U8, U11, U12): a tired operator sees
+// M90 "The 3 A.M. Answer" (planning/archive/research/ux-install.md U7, U8, U11, U12): a tired operator sees
 // what is wrong and what to press, first.
 //
 // The components are rendered for real: renderToStaticMarkup for markup, and for the buttons the

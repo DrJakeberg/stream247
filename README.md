@@ -133,15 +133,9 @@ are not retroactively revoked.
 
 ## What Is Not Done Yet
 
-- Scene supports positioned text/logo/image/video-source layers, built-in typography presets, and conservative local font-stack overrides. Website-embed and widget layers were removed from the studio in M60: the on-air renderer cannot draw an external page and there is no separate browser overlay, so they never reached the picture. Broader cloud-style composition remains partial.
-- richer multi-scene composition inside the playout runtime beyond the current scene-presets + draft/publish workflow
-- more advanced playout transitions, stronger continuity semantics, and less restart-heavy normal switchovers beyond the current staged output recovery model
-- deeper per-output platform guidance and recovery automation beyond the current failure attribution, cooldown visibility, and staged recovery controls
-- deeper Live Bridge session management and recovery UX
-- deeper analytics views and richer incident correlation
-- inline override lanes in the schedule editor
-- richer audio mixing, crossfades, and layered audio routing beyond the current replace-mode audio lanes
-- deeper cross-install media remapping automation and richer reusable programming packages beyond the current curated-set and selective-blueprint workflows
+Open milestones and known gaps are tracked in [PLANS.md](PLANS.md) (*Open*, *Owner-gated and deferred*,
+*Known follow-ups*) and in [docs/architecture.md](docs/architecture.md) (*Major Known Gaps*).
+
 
 ## Quick Start
 
@@ -353,27 +347,11 @@ Stream247 now supports two additional programming controls for longer-form chann
 
 ## Twitch App Credentials
 
-If you need `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET`, follow this section or the dedicated guide in [docs/twitch-setup.md](docs/twitch-setup.md#how-to-get-client-id-and-secret).
+The bot, the channel owner connection and Twitch sign-in need a Twitch application (`TWITCH_CLIENT_ID`,
+`TWITCH_CLIENT_SECRET`). [docs/twitch-setup.md](docs/twitch-setup.md) walks through it, including the three
+redirect URLs. Both values can be stored as encrypted managed settings in Stream247; `.env` remains the
+bootstrap and deployment fallback.
 
-1. Open the Twitch developer console.
-2. Create a new application or edit the existing Stream247 application.
-3. Register both redirect URLs:
-   - `<APP_URL>/api/integrations/twitch/callback`
-   - `<APP_URL>/api/auth/twitch/callback`
-   - `<APP_URL>/api/integrations/twitch/callback-broadcaster` (the channel owner connection)
-4. Copy the generated Client ID into `TWITCH_CLIENT_ID`.
-5. Generate, reveal, or regenerate the Client Secret and store it in `TWITCH_CLIENT_SECRET`.
-6. Restart the stack after changing `.env`.
-7. Use `Live → Status` for:
-   - the bot account and channel owner connections
-   - Twitch SSO sign-in for team members
-
-Important:
-
-- `TWITCH_CLIENT_ID` is public application identity.
-- `TWITCH_CLIENT_SECRET` is private application secret.
-- both can now be stored as encrypted managed settings in Stream247.
-- `.env` remains supported as bootstrap and deployment fallback.
 
 ## Deployment
 
@@ -423,39 +401,13 @@ Operational docs:
 
 ## Release Readiness Workflow
 
-Before tagging a production release:
+Before tagging a production release run `pnpm release:preflight`, `./scripts/upgrade-rehearsal.sh <target-version>`
+and a 24-hour soak (`./scripts/soak-monitor.sh --hours 24`), and tag only after the rehearsal and the soak
+are clean. The full order, the script settings (`CHECK_BASE_URL`, `--follow-web`, `SESSION_COOKIE`,
+`RELEASE_PREFLIGHT_ENV_FILE`, `UPGRADE_REHEARSAL_IMAGE_TAG`) and what a `v*` tag publishes are in
+[docs/deployment.md](docs/deployment.md) (*Canonical Release And Rollout Flow*, *Safe Upgrade Flow*,
+*Release Flow*).
 
-1. Pin explicit GHCR version tags in `.env`.
-2. Run:
-   ```bash
-   pnpm release:preflight
-   pnpm test:runtime-parity
-   pnpm test:e2e:smoke
-   ```
-3. Rehearse the target version:
-   ```bash
-   ./scripts/upgrade-rehearsal.sh v1.5.7
-   ```
-4. Run an extended soak:
-   ```bash
-   ./scripts/soak-monitor.sh --hours 24
-   ```
-5. Review `Live → Status`, `/api/health`, and `/api/system/readiness`, and confirm `/api/system/readiness` reports `broadcastReady=true`.
-6. Tag only after the rehearsal and soak are clean.
-
-Notes:
-
-- set `CHECK_BASE_URL=http://127.0.0.1:3000` if your public `APP_URL` points through an external proxy or domain that is not reachable from the host running the scripts
-- pass `--follow-web` to the soak monitor instead when the stack does not publish `web`'s port on the host (a Portainer stack): it measures the `web` container's address on the stack network and follows it when a Docker restart moves it (`docs/deployment.md`, step 10 of *Safe Upgrade Flow*)
-- set `SESSION_COOKIE="stream247_session=..."` if you want the soak monitor to fail on open critical incidents via the authenticated incidents API
-- set `RELEASE_PREFLIGHT_ENV_FILE=/path/to/production.env` if you want to validate a staged env file without replacing the local `.env`
-- set `UPGRADE_REHEARSAL_IMAGE_TAG=main-<sha>` if you need to force rehearsal against a specific pre-release snapshot tag instead of the script's automatic selection
-- `./scripts/upgrade-rehearsal.sh` bootstraps an empty workspace with a rehearsal owner and seeds one tiny local media fixture when `data/media` has no playable media yet; set `UPGRADE_REHEARSAL_SEED_LOCAL_MEDIA=0` to disable fixture seeding
-- `pnpm release:preflight` only passes with non-blank production values; copied `.env.example` or `.env.production.example` placeholders, quoted-empty required settings, and Traefik example defaults must be replaced first
-- `./scripts/upgrade-rehearsal.sh` now uses the published `v*` images when they already exist, and otherwise falls back to the CI-published `main-<sha>` snapshot for the current commit before the release tag is created
-- the rehearsal and soak scripts are release gates now: both expect a broadcast-ready channel, not just a merely reachable stack
-- local `pnpm release:preflight` runs a full `pnpm validate`; CI and release workflows only set `RELEASE_PREFLIGHT_SKIP_VALIDATE=1` after the outer job has already completed `pnpm validate`
-- pushing a `v*` tag publishes the three images and then creates the GitHub release for that tag from its `CHANGELOG.md` section (`scripts/release-notes.mjs`); a tag with a suffix such as `-rc.1` becomes a pre-release, and a tag without a `CHANGELOG.md` section fails the last step instead of publishing an empty release
 
 ## Feature Overview
 
@@ -672,14 +624,6 @@ Current validation covers:
 - `packages/db`: PostgreSQL-backed application state layer
 - `docs`: architecture, deployment, and Twitch setup docs
 - `.github`: CI, release, issues, and PR templates
-
-## Roadmap
-
-- encrypted secret management from the setup/admin UI
-- richer multi-scene overlay composition
-- more advanced playout transitions and switchovers
-- deeper ops views, filtering, and historical analytics
-- more powerful timeline authoring directly in the schedule editor
 
 ## License
 

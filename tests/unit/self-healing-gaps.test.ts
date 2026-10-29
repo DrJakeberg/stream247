@@ -15,7 +15,7 @@ import { isStaleProcessExit } from "../../apps/worker/src/process-exit-guard.js"
 import { rearmStateIncidentFlags } from "../../apps/worker/src/state-incident-rearm.js";
 import { sourceBreakerOutcomesOf } from "../../apps/worker/src/source-breaker-outcomes.js";
 
-// M95 Self-Healing Fills The Gaps: H5, W7 and H9 of planning/research/robustness.md.
+// M95 Self-Healing Fills The Gaps: H5, W7 and H9 of planning/archive/research/robustness.md.
 const root = path.resolve(import.meta.dirname, "../..");
 const worker = readFileSync(path.join(root, "apps/worker/src/index.ts"), "utf8");
 

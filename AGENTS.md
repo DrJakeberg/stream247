@@ -1,8 +1,9 @@
 # Agent Rules
 
-The only rule file for every session, local or cloud. `PLANS.md` says what to build; history up to 2.3.1
-is in `planning/archive/`. If a brief, a plan or another file disagrees with this file, this file wins
-unless the owner says otherwise in the brief; name the conflict in the report.
+The only rule file for every session, local or cloud, and for every agent (`CLAUDE.md` imports it).
+`PLANS.md` says what to build; history up to 2.3.1 is in `planning/archive/`. If a brief, a plan or
+another file disagrees with this file, this file wins unless the owner says otherwise in the brief; name
+the conflict in the report.
 
 ## Start of a session
 
@@ -12,7 +13,7 @@ unless the owner says otherwise in the brief; name the conflict in the report.
 - A session implements its own milestone and stops there. It never continues with the next open
   milestone, however obvious the next step looks; the owner starts the next one.
 - Never start a milestone under "Owner-gated and deferred" in `PLANS.md`: M66 (Live Bridge rehearsal) and
-  the soak part of M57 never without the owner; M77 and M81 only on the owner's word.
+  the soak part of M57 never without the owner; M81 only on the owner's word.
 
 ## Communication with the owner
 
@@ -29,7 +30,8 @@ unless the owner says otherwise in the brief; name the conflict in the report.
 - Changed behaviour needs tests, or a written justification in the report.
 - No test is deleted or weakened to get green. If a test contradicts the code, find out which is right.
 - Docs stay in sync with behaviour, in the same commit.
-- No new dependency without a one-line reason in the report.
+- No new dependency without a one-line reason in the report. The package manager is pnpm
+  (`packageManager` in `package.json`); there is no npm lockfile.
 - UI text changes need the design and wording baselines re-recorded on a fresh stack through
   `scripts/design-baseline.sh` (snapshots are not portable). Without Docker, say so; CI checks them.
 - What you notice outside the milestone goes into the report as a list, not into the diff.
@@ -38,17 +40,21 @@ unless the owner says otherwise in the brief; name the conflict in the report.
 
 - `pnpm validate` (lint, CSS token lint, typecheck, unit and integration tests, build) before every
   commit. Quote its decisive output line in the report.
-- The integration tests need Docker (they start `postgres:16-alpine`). In a cloud container start the
-  daemon first (`dockerd`) if `docker info` fails; without Docker run lint, typecheck, unit tests and
-  build one by one and say that CI covers the rest.
+- The integration tests need Docker (they start `postgres:16-alpine`). In a cloud container the
+  SessionStart hook (`.claude/hooks/session-start.sh`) starts `dockerd` and runs `pnpm install`; if
+  `docker info` still fails, run lint, typecheck, unit tests and build one by one and say that CI covers the rest.
 - Three tests fail only in cloud containers and pass in CI: the process-group test in `tests/unit/process-utils.test.ts`
   and the two ICU "GMT" zone-name tests in `tests/unit/ops-state.test.ts` and `tests/unit/viewer-messages.test.ts`.
   Locally the bar is no failure beyond these three; the pull request's CI run decides.
-- Targeted checks where needed: `pnpm test:fresh-db`, `pnpm test:fresh-compose`, `docker/smoke-test.sh`.
+- `pnpm validate` does not cover these CI steps (`.github/workflows/ci.yml`): `pnpm test:fresh-db`,
+  `test:fresh-compose`, `test:media`, `test:queue-continuity`, `test:resume`, `test:runtime-parity`,
+  `test:broadcast-path`, `test:e2e:smoke`, `release:preflight` and `scripts/design-baseline.sh`. Run the ones your diff
+  touches; `docker/smoke-test.sh` for image changes.
 
 ## Commits, branches, merges
 
-- Work on a feature branch. One commit per milestone, plus merge commits.
+- Work on a feature branch. One commit per milestone, plus merge commits. The steps from branch to green
+  pull request are in `.claude/skills/milestone-pr/SKILL.md`.
 - Never force-push. Never push, merge or tag `main` unless the brief says so explicitly.
 - A milestone is done when its acceptance is shown with command and output, a fresh reviewer without
   prior context (a subagent) has checked the diff against the acceptance, and the pull request's CI is
@@ -71,6 +77,8 @@ unless the owner says otherwise in the brief; name the conflict in the report.
 - Tag pushes from the cloud are refused: give the owner the exact tag command.
 
 ## Releases
+
+The steps are in `.claude/skills/release/SKILL.md`. The rules:
 
 - No release before the owner hands over the soak result. A soak with any outage or failure is
   "passed with failure", never "clean"; report outages, the longest outage and the uplink restarts.
@@ -107,6 +115,15 @@ unless the owner says otherwise in the brief; name the conflict in the report.
 
 - CI runs one at a time per ref (`concurrency` in `.github/workflows/ci.yml`); a new push queues.
 - Compose merges lists: `ports`, `env_file` and `volumes` need `!override` in an override file.
+- The Dockerfiles take `node:22-alpine` from `public.ecr.aws`, which fails for hours at a time; the CI test
+  builds pull it from `mirror.gcr.io` instead (M125). A build that still fails at a registry with
+  "unexpected status code" or "429" is the registry, not the diff: rerun the failed jobs of that run.
+
+## Claude Code
+
+- `CLAUDE.md` only imports this file. `.claude/settings.json` allows the usual pnpm, docker, git and
+  `gh api` commands and denies force-pushes, pushes to `main`, tag pushes and reading `.env` or `stack.env`. Personal
+  settings go into `settings.local.json` next to it (not committed).
 
 ## Hard blockers (the only reasons to stop before the milestone is done)
 

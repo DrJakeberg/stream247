@@ -10,7 +10,7 @@ code or inferred, not demonstrated. Probes were throw-away vitest files run agai
 afterwards; their decisive output lines are quoted.
 
 An earlier planning thread left partial notes on `claude/proposal-2026-10-te1vlg`
-(`planning/proposal-2026-10.md`). I used them as leads only; every claim below was re-checked on
+(`planning/archive/proposal-2026-10.md`). I used them as leads only; every claim below was re-checked on
 `ab42e11`, and where I disagree with them it is said.
 
 ---
@@ -506,7 +506,7 @@ recommendation of Q1-Q7 is decided as written:
 3. A dated playlist continues each evening where it stopped (pool cursor, M73).
 4. GronkhTV: answered with two screenshots; evaluated in 1.6, row B rewritten accordingly.
 5. Twitch: keep the non-recurring sync; no recurring-segment variant now. jimpanse247 is an affiliate
-   (owner's answer of 2026-10-01, recorded in `planning/proposal-2026-10.md:337` on
+   (owner's answer of 2026-10-01, recorded in `planning/archive/proposal-2026-10.md:337` on
    `claude/vorschlag-2026-10-6a60z9`), so non-recurring segments work for the channel.
 6. DST comes after dated items, as its own milestone; row C follows R3's decided Q4 (wall clock, counts
    fixed).

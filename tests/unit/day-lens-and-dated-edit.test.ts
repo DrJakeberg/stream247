@@ -11,7 +11,7 @@ import {
   type ScheduleBlock
 } from "@stream247/core";
 
-// M119: suggestions 18 and 19 of planning/suggestions-2026-10-04.md. The Day lens speaks plainly and its
+// M119: suggestions 18 and 19 of planning/archive/suggestions-2026-10-04.md. The Day lens speaks plainly and its
 // video bars carry each pool's rotation from block to block (M97 "Not built", Known follow-ups); the block
 // form says what a dated block takes over before it is saved and offers "for how many days" (M93 "Not
 // built", R1 1.3 steps 5 and 8). The repeat-set check is in schedule-dated-blocks.test.ts.

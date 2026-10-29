@@ -15,7 +15,7 @@ import { getProjectionClock, getPublicProgramme, summarizeCuepoints } from "../.
 import { getCuepointInsertPlan } from "../../apps/worker/src/cuepoints";
 import { isTwitchVodCacheCoolingDown } from "../../apps/worker/src/twitch-vod-cache";
 
-// M118: suggestions 14-17 of planning/suggestions-2026-10-04.md. The week view and /channel project from
+// M118: suggestions 14-17 of planning/archive/suggestions-2026-10-04.md. The week view and /channel project from
 // when the item on air ends, carry an item that runs over its block into the next one, fill a dated block
 // between the two parts of the weekly block it cuts in time order, project a 24 h block of short clips to
 // its end, leave out a Twitch archive in its cache cooldown, and the live summary counts cuepoints like

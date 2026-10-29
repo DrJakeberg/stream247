@@ -156,7 +156,7 @@ Run: worker started, then killed (`pkill -f apps/worker/dist/index.js` at 23:01 
 
 **Decided.** Benjamin accepted every recommendation of the merged proposal ("Alles was du empfiehlst",
 2026-10-01 23:34 UTC, confirmed 2026-10-02 10:22 UTC). The record is section 5 of
-`planning/proposal-2026-10.md` on branch `claude/vorschlag-2026-10-6a60z9`. Where the proposal is more
+`planning/archive/proposal-2026-10.md` on branch `claude/vorschlag-2026-10-6a60z9`. Where the proposal is more
 precise than the recommendation below, the proposal applies.
 
 | Here | Proposal section 5 | Decision |

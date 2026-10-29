@@ -5,7 +5,7 @@ import * as React from "../../apps/web/node_modules/react";
 import { renderToStaticMarkup } from "../../apps/web/node_modules/react-dom/server";
 import { createInitialSeedState, type AppState } from "@stream247/db";
 
-// M99 "Wizard to first programme" (planning/research/ux-install.md U1, U2, R2 U3): /setup asks for the
+// M99 "Wizard to first programme" (planning/archive/research/ux-install.md U1, U2, R2 U3): /setup asks for the
 // stream key and builds a first programme, the destination forms live in Studio → Output, and the empty
 // library says how media gets in.
 //
