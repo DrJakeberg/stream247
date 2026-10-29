@@ -349,3 +349,84 @@ entries under its *DUT checks of 2.3.1 (run)*; the M107 entry below did not run 
   ```sh
   ssh dut 'docker ps --format "{{.Names}}" | grep -i traefik | xargs -r -n1 docker inspect --format "{{.Name}} {{join .Args \" \"}}" | grep -o "forwardedHeaders[^ ]*"'
   ```
+
+- M126, after the repin of the candidate (the DUT runs program-feed mode, `STREAM247_RELAY_ENABLED=1` with the
+  `hls` input): with live sources off the worker does not watch the relay, and a `relay.unreachable` left
+  open closes. The first command prints both variables in worker and uplink; both lines must carry the
+  same (`1 hls`, or `1` alone: unset is `hls`), since the worker decides from its own. Whether live sources
+  are on is the switch *Live video from sources* under Settings; say which it was. Run the rest with the
+  M114 follow-up
+  (its relay stop): two and a half minutes after its `docker kill -s STOP`, before the watchdog's restart at
+  three, the query lists no row with status `open` (2.4.0-rc.1 raised one at two minutes); after its wait,
+  the worker's log (it starts when the repin created the container) has no `relay.unreachable` line (a
+  `relay.reachable` line with `"inUse":false` is the close of one that was open). With live sources on, the
+  worker watches the relay as before, and an open row at two and a half minutes is the expected result.
+
+  ```sh
+  ssh dut 'for c in worker uplink; do docker exec stream247-$c-1 sh -c "echo $c \$STREAM247_RELAY_ENABLED \$STREAM247_UPLINK_INPUT_MODE"; done'
+  # with the M114 follow-up, two and a half minutes after its docker kill -s STOP stream247-relay-1
+  ssh dut 'docker exec -i stream247-postgres-1 psql -U stream247 -d stream247 -At' <<'SQL'
+  SELECT status, created_at, updated_at, resolved_at FROM incidents WHERE fingerprint = 'relay.unreachable';
+  SQL
+  # after the M114 follow-up's wait
+  ssh dut 'docker logs stream247-worker-1 2>&1 | grep -E "relay\.(reachable|unreachable)"'
+  ```
+
+- M126, after the repin: the frozen-restart marker survives the tmpfs on `/tmp`. Passes when the first command
+  prints `/var/tmp 1777`, `writable` (a read-only root prints `1777` too, but not this) and a `tmpfs` line
+  for `/tmp` in each of worker, playout and uplink, and the M114 check above (a stopped worker process
+  restarts), run with the stack file's tmpfs in place and without `STREAM247_SUPERVISOR_MARKER_DIR` (the
+  second command prints nothing, or `/var/tmp` where the stack file still sets it), is followed by the next
+  process's report: after the M114 check's wait the fourth command prints `1`, and the fifth lists the
+  `worker.health.frozen-restart` row with an `updated_at` later than the time the third command printed
+  right before the M114 check's `kill -STOP`. A row an earlier restart left keeps its `created_at`, so the
+  M114 query's row alone proves nothing. Outside a soak, as the M114 check.
+
+  ```sh
+  ssh dut 'for c in worker playout uplink; do docker exec stream247-$c-1 sh -c "stat -c \"%n %a\" /var/tmp; touch /var/tmp/.m126 && rm /var/tmp/.m126 && echo writable; grep \" /tmp \" /proc/mounts"; done'
+  ssh dut 'docker exec stream247-worker-1 printenv STREAM247_SUPERVISOR_MARKER_DIR'
+  # right before the M114 check's kill -STOP
+  ssh dut 'date -u +%Y-%m-%dT%H:%M:%SZ'
+  # after the M114 check's wait
+  ssh dut 'docker logs --since 10m stream247-worker-1 2>&1 | grep -c "worker.health.frozen_restart"'
+  ssh dut 'docker exec -i stream247-postgres-1 psql -U stream247 -d stream247 -At' <<'SQL'
+  SELECT status, updated_at FROM incidents WHERE fingerprint = 'worker.health.frozen-restart';
+  SQL
+  ```
+
+- M126, after the candidate's soak: a `docker restart` (the relay watchdog's) is followed by the restart check.
+  Each `container-restart-count-reset` line is listed with its time in the result, next to the
+  `container-started-again` (or `docker-daemon-restart`) line that names the same service at the same
+  sample; a run with one is *passed with failure* at best. Passes when every reset line has such a
+  partner, and a `container-restart-check-failed` line after a reset names a service whose `RestartCount`
+  (second command) is above the reset's `restartCount`: a restart of the restart policy, which fails the
+  soak as it should, not the reset itself.
+
+  ```sh
+  ssh dut 'grep -E "Baseline container restarts|container-restart-count-reset|container-started-again|docker-daemon-restart|container-restart-check-failed" ~/logs/soak-<stamp>.log'
+  ssh dut 'docker inspect -f "{{.Name}} {{.RestartCount}}" stream247-web-1 stream247-worker-1 stream247-playout-1 stream247-uplink-1 stream247-relay-1'
+  ```
+
+- M126, right before the repin and a few hours after it: an open incident is never pruned. The check is void
+  when the fourth command's first line (the incidents open before) is `0`; say so. Passes when it prints
+  nothing after that line. A fingerprint it prints (open before, gone after) fails the check when the fifth
+  command prints a count below 100: a resolved row ages out only behind 100 rows updated no earlier than
+  it, so with fewer than 100 rows updated since the snapshot that row went while it was open. At 100 or
+  more that fingerprint is undecided (it may have resolved and aged out as it should): list it. The status
+  counts go into the result (the table may now hold more than 100 rows while old incidents are open).
+
+  ```sh
+  ssh dut 'date -u +%Y-%m-%dT%H:%M:%S.000Z > ~/m126-snapshot-at.txt; cat ~/m126-snapshot-at.txt'
+  ssh dut 'docker exec -i stream247-postgres-1 psql -U stream247 -d stream247 -At > ~/m126-open-before.txt' <<'SQL'
+  SELECT fingerprint FROM incidents WHERE status = 'open';
+  SQL
+  # a few hours after the repin
+  ssh dut 'docker exec -i stream247-postgres-1 psql -U stream247 -d stream247 -At > ~/m126-all-after.txt' <<'SQL'
+  SELECT fingerprint FROM incidents;
+  SQL
+  ssh dut 'wc -l < ~/m126-open-before.txt; grep -vxFf ~/m126-all-after.txt ~/m126-open-before.txt'
+  ssh dut 'docker exec -i stream247-postgres-1 psql -U stream247 -d stream247 -At -v since="$(cat ~/m126-snapshot-at.txt)"' <<'SQL'
+  SELECT COUNT(*) FROM incidents WHERE updated_at >= :'since';
+  SQL
+  ssh dut 'docker exec stream247-postgres-1 psql -U stream247 -d stream247 -At -c "SELECT status, COUNT(*) FROM incidents GROUP BY status"'
+  ```

@@ -119,7 +119,8 @@ services:
     # must never be published to the host — it can inject and kick streams.
     # No healthcheck: the pinned image holds only the mediamtx binary, nothing that could run one.
     # Since M114 the worker asks the API instead and raises `relay.unreachable` after two minutes, and
-    # `relay-watchdog` below restarts the relay after three.
+    # `relay-watchdog` below restarts the relay after three. The worker asks only while the uplink reads
+    # from the relay (`rtmp` input) or live sources are on, not in program-feed mode alone (M126).
     volumes:
       - ./docker/mediamtx.yml:/mediamtx.yml:ro
     expose:

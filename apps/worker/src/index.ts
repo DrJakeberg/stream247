@@ -1801,9 +1801,10 @@ async function observeRelay(): Promise<void> {
   const managed = await readManagedConfigRecord();
   const inUse = relayInUse({
     relayModeEnabled: STREAM247_RELAY_ENABLED,
+    uplinkInputMode: STREAM247_UPLINK_INPUT_MODE,
     sourceLiveEnabled: resolveSourceLiveEnabled(managed, process.env)
   });
-  const action = inUse ? relayWatch.observe(await isRelayApiReachable(), Date.now()) : relayWatch.idle();
+  const action = await relayWatch.cycle(inUse, isRelayApiReachable);
   if (action.action === "raise") {
     logRuntimeEvent("relay.unreachable", { unreachableForMs: action.unreachableForMs });
     await upsertIncident({

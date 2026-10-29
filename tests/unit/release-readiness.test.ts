@@ -42,7 +42,8 @@ type CurlResponse = {
 
 type DockerStubOptions = {
   manifestAvailableRefs?: string[];
-  restartCounts?: Partial<Record<"web" | "worker" | "playout", number[]>>;
+  // One `RestartCount` per inspect; a value that is not a number reads as `unknown`.
+  restartCounts?: Partial<Record<"web" | "worker" | "playout" | "uplink" | "relay", Array<number | string>>>;
   // One `State.StartedAt` per inspect, as for the restart counts; without a list a service never restarts.
   startedAt?: Record<string, string[]>;
   // One answer per inspect of web's networks: "project=<name> <network>=<address> …".
@@ -1177,5 +1178,82 @@ describe("release readiness scripts", () => {
       )
     );
     expect(result.output.match(/docker-daemon-restart /g) ?? []).toHaveLength(1);
+  }, 30_000);
+
+  // M126. The relay watchdog restarts the relay with `docker restart`, which sets RestartCount back to 0.
+  // Against the baseline of the start, a later restart of the restart policy (0 to 1) stayed below it and
+  // passed unseen.
+  const RESTARTED_BY_POLICY = "2026-10-19T03:40:02.000000000Z";
+
+  it("soak monitor takes a RestartCount that fell as the new baseline and fails on the next restart", () => {
+    // Per read: baseline, first sample, the watchdog's docker restart at the second sample (logged once,
+    // although the count stays at 0 for the third), a restart of the restart policy at the fourth.
+    const result = runShellScript(soakScriptPath, ["--hours", "1", "--interval-seconds", "300"], [healthy], {
+      clockStartEpoch: CLOCK,
+      docker: {
+        restartCounts: { relay: [3, 3, 0, 0, 1] },
+        startedAt: { relay: [STARTED, STARTED, RESTARTED, RESTARTED, RESTARTED_BY_POLICY] }
+      }
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("Baseline container restarts: web=0 worker=0 playout=0 uplink=0 relay=3");
+    expect(result.output).toContain(`container-started-again startedAt=${RESTARTED} services=relay`);
+    expect(result.output.match(/container-restart-count-reset /g) ?? []).toHaveLength(1);
+    expect(result.output).toMatch(/T[0-9:+-]+ container-restart-count-reset service=relay baseline=3 restartCount=0\n/);
+    expect(result.output).toMatch(/T[0-9:+-]+ container-restart-check-failed relayRestarts=1\(\+1\)\n/);
+    expect(result.output).not.toContain("soak-monitor-complete");
+  }, 30_000);
+
+  it("soak monitor fails a RestartCount that fell to a count above 0, a restart of the restart policy after the reset", () => {
+    // Docker only sets RestartCount back to 0, so 1 after 3 is a docker restart and then one of the policy.
+    const result = runShellScript(soakScriptPath, ["--hours", "1", "--interval-seconds", "300"], [healthy], {
+      clockStartEpoch: CLOCK,
+      docker: {
+        restartCounts: { relay: [3, 3, 1] },
+        startedAt: { relay: [STARTED, STARTED, RESTARTED_BY_POLICY] }
+      }
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("container-restart-count-reset service=relay baseline=3 restartCount=1");
+    expect(result.output).toMatch(/T[0-9:+-]+ container-restart-check-failed relayRestarts=1\(\+1\)\n/);
+    expect(result.output).not.toContain("soak-monitor-complete");
+  }, 30_000);
+
+  it("soak monitor passes a RestartCount that fell and did not rise again, with one line for it", () => {
+    const result = runShellScript(soakScriptPath, ["--hours", "1", "--interval-seconds", "300"], [healthy], {
+      clockStartEpoch: CLOCK,
+      docker: {
+        restartCounts: { relay: [3, 3, 0] },
+        startedAt: { relay: [STARTED, STARTED, RESTARTED] }
+      }
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.output.match(/container-restart-count-reset /g) ?? []).toHaveLength(1);
+    expect(result.output).toContain("container-restart-count-reset service=relay baseline=3 restartCount=0");
+    expect(result.output).not.toContain("container-restart-check-failed");
+    // The restart itself is counted where it always was.
+    expect(result.output).toContain("dockerRestarts=0 containersStartedAgain=1");
+  }, 30_000);
+
+  it("soak monitor keeps every other service's baseline across a reset and a count it could not read", () => {
+    // The baselines are written anew after every sample. The worker's must survive the relay's reset at
+    // the second sample and its own unreadable count at the third, so its restart at the fourth still
+    // fails the run.
+    const result = runShellScript(soakScriptPath, ["--hours", "1", "--interval-seconds", "300"], [healthy], {
+      clockStartEpoch: CLOCK,
+      docker: {
+        restartCounts: { relay: [3, 3, 0], worker: [0, 0, 0, "error", 1] },
+        startedAt: { relay: [STARTED, STARTED, RESTARTED] }
+      }
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("container-restart-count-reset service=relay baseline=3 restartCount=0");
+    expect(result.output).toContain("worker=unknown");
+    expect(result.output).toMatch(/T[0-9:+-]+ container-restart-check-failed workerRestarts=1\(\+1\)\n/);
+    expect(result.output).not.toContain("relayRestarts=");
   }, 30_000);
 });

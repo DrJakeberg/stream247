@@ -281,30 +281,44 @@ BASELINE_UPLINK_UNPLANNED_RESTARTS="$(
 export BASELINE_UPLINK_UNPLANNED_RESTARTS
 echo "Baseline uplink unplanned restarts: ${BASELINE_UPLINK_UNPLANNED_RESTARTS}" | tee -a "$LOG_FILE"
 
+# Called after every healthy sample, in this shell (it keeps state): sets container_restart_line, and fails
+# when a service's RestartCount rose above its baseline. A `docker restart` (the relay watchdog's, M114) sets
+# RestartCount back to 0, so a later restart of the restart policy stayed below the old baseline and passed
+# unseen (M126). A count below the baseline is logged once, with both counts, and the baseline becomes 0:
+# Docker only ever sets the count back to 0, so a count above 0 at that sample is already a restart of the
+# restart policy and fails the soak as any restart does. The start itself is logged by check_container_starts.
 check_container_restarts() {
   current_counts="$(collect_container_restart_counts)"
   issues=""
+  next_counts=""
 
   for service in $SOAK_RESTART_SERVICES; do
     baseline_count="$(service_value "$service" "$BASELINE_CONTAINER_RESTART_COUNTS")"
     current_count="$(service_value "$service" "$current_counts")"
     case "${baseline_count}:${current_count}" in
       *[!0-9:]*|:*|*:)
+        next_counts="${next_counts}${next_counts:+ }${service}=${baseline_count}"
         continue
         ;;
     esac
+    if [ "$current_count" -lt "$baseline_count" ]; then
+      echo "${NOW} container-restart-count-reset service=${service} baseline=${baseline_count} restartCount=${current_count}" | tee -a "$LOG_FILE"
+      baseline_count=0
+    fi
+    next_counts="${next_counts}${next_counts:+ }${service}=${baseline_count}"
     delta=$((current_count - baseline_count))
     if [ "$delta" -gt 0 ]; then
       issues="${issues}${issues:+, }${service}Restarts=${current_count}(+${delta})"
     fi
   done
+  BASELINE_CONTAINER_RESTART_COUNTS="$next_counts"
 
   if [ -n "$issues" ]; then
-    echo "$issues" >&2
+    container_restart_line="$issues"
     return 1
   fi
 
-  echo "containerRestarts=${current_counts}"
+  container_restart_line="containerRestarts=${current_counts}"
 }
 
 # Called after every healthy sample, and once more when an outage ends the soak, in this shell (it keeps
@@ -629,7 +643,7 @@ while [ "$(now_epoch)" -lt "$END_TIME" ] || [ -n "$outage_started_at" ]; do
     exit 1
   fi
 
-  if container_restart_line="$(check_container_restarts 2>&1)"; then
+  if check_container_restarts; then
     :
   else
     echo "${NOW} container-restart-check-failed ${container_restart_line}" | tee -a "$LOG_FILE"

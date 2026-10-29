@@ -635,6 +635,79 @@ under `planning/archive/`, text unchanged.
   the yt-dlp `--` separator and the YouTube host check; tee delimiters in destination URLs; CSP
   `frame-ancestors` and an Origin check; owner-only admin grants; the audit's six uncovered areas.
 
+### M126 The Relay Watch, The Restart Marker, The Soak And Open Incidents Hold On A Stack Of One's Own
+
+- **Source.** A review of the production stack for 2.4.0-rc.1 on 2026-10-29; the owner chose the same day to
+  build the fixes now, as rc.2. The production stack file differs from `docker-compose.yml`: the relay runs
+  on the image's defaults with `MTX_API=yes` (the API answers other containers with `401`),
+  `STREAM247_RELAY_ENABLED=1` with `STREAM247_UPLINK_INPUT_MODE=hls` (program-feed mode: the playout writes
+  HLS, the uplink reads the playlist, no programme passes through the relay), and `worker`, `playout` and
+  `uplink` have a tmpfs on `/tmp`. Program-feed mode is also the default of `.env.production.example`.
+- **Relay watch.** `relayInUse` takes the uplink input mode as `getUplinkInputMode` normalises it (anything
+  but `rtmp` is `hls`): relay mode counts as use only with `rtmp`, live sources always. That is the split
+  of `isProgramFeedHeartbeatMode` in `packages/core`, which a test compares case by case. Not in use, the
+  worker asks nothing and `idle()` resolves an open `relay.unreachable` with "Nothing uses the relay any
+  more." `RelayWatch.cycle` holds that choice (probe, then `observe`, or `idle()`), so the tests drive the
+  code `observeRelay` runs rather than a copy. `relay-watchdog` (`relay-restart.ts`) is unchanged: it asks
+  the API in every mode, restarts a hung relay after three minutes and holds one that never answered.
+- **Restart marker.** `frozenMarkerPath` takes `/var/tmp` when it is a directory the process can write to
+  (`stat`, then `access` with `W_OK | X_OK`), else `os.tmpdir()`; `STREAM247_SUPERVISOR_MARKER_DIR` still
+  wins. The supervisor (`runSupervisor`) writes and the next process (`reportFrozenRestart` in `index.ts`)
+  reads through this one function, so the reader needed no change; a test pins both calls. `worker`,
+  `playout` and `uplink` all run the image of `docker/worker.Dockerfile` (there is no playout Dockerfile),
+  whose runner stage is `node:22-alpine` as root. `stat -c "%n %a %U:%G" /var/tmp` printed
+  `/var/tmp 1777 root:root` in `node:22-alpine` (Alpine 3.24.1), a local `stream247-worker:test`, and the
+  `main-62b0fb2` worker and `main-9c45ff2` playout images: no image lacks it, the Dockerfile is unchanged.
+  By hand in `node:22-alpine` with `--tmpfs /tmp`: the marker written with the defaults, `docker restart`,
+  then read: `/var/tmp/stream247-frozen-playout.json {"mode":"playout",…}`; the old source gave
+  `/tmp/stream247-frozen-playout.json null`.
+- **Soak monitor.** `check_container_restarts` runs in the main shell now, as `check_container_starts` does,
+  so a lowered baseline lasts to the next sample; it sets `container_restart_line` instead of printing.
+  A count below the baseline logs `container-restart-count-reset service=<s> baseline=<old>
+  restartCount=<new>` once and the baseline becomes 0 (Docker only ever sets `RestartCount` back to 0, so a
+  count above 0 at a fall is a restart of the restart policy since the reset and fails at once; the
+  acceptance first said "the lower count", the lead changed it after the review); a service that reads
+  `unknown` keeps its baseline. As
+  the baselines are written anew after every sample, a test has the worker restart after the relay's reset
+  and after a count it could not read; without the carry-over line for `unknown` that restart passed.
+- **Incident prune.** The reading taken of "resolved ones beyond the newest 100": the window stays as it
+  was, the newest 100 rows of any status by `updated_at`, and only resolved rows outside it are deleted.
+  The table holds at most 100 rows plus every open row outside the window, and without old open rows the
+  prune deletes exactly what it did before. An acknowledged incident stays `open` and is kept too, as is a
+  row of an unknown status. The other reading (keep the newest 100 resolved rows plus every open one)
+  passes the acceptance test as well and was not built.
+- **Tests on the old code.** Each part's source was set back to `HEAD` alone (no `git stash`: the four
+  parts were built side by side in one worktree) with the new tests in place: `relay-watch.test.ts` 4 of
+  12 failed, `process-supervisor.test.ts` 4 of 19, the two soak-monitor tests in
+  `release-readiness.test.ts` both, the prune test in `db-roundtrip.test.ts` with
+  `expected '' to be 'open|critical'`. The cases that pass on the old code guard behaviour that stays
+  (the raise at two minutes with `rtmp` or live sources, an explicit marker directory, the wiring).
+- **Left (outside the milestone).** `relayUnreachableMessage` says the uplink reads the programme from the
+  relay, which is not so in program-feed mode with live sources on; the header of `relay-restart.ts` says
+  the worker's two-minute incident comes first, which holds only while the worker watches. The soak
+  monitor never checks the `RestartCount` of a service that read `unknown` at the start, even once it
+  runs; a `docker restart` and a restart of the restart policy within one sample interval (3, then 0, then
+  1) make 1 the baseline, so the count check misses that one restart (`container-started-again` still
+  logs the start). A stack with a read-only root has no writable `/var/tmp`, and the marker falls back to
+  the temp directory. The M114 follow-up DUT check says the relay carries the programme to the uplink,
+  which in program-feed mode it does not. With *Video sources on the stream* on, the worker samples a
+  pushed camera from the relay for a scene layer (`readOverlayVideoSourceUrls`), whatever the live switch
+  says: that use is not in `relayInUse`, so a hung relay there freezes the layer unreported until the
+  watchdog's restart. Since open incidents stay, the keyed state incidents of a deleted source
+  (`source.<kind>.<id>`, `playout.source-unplayable.<id>`, `playout.source-breaker.<id>`) stay open for
+  good: neither the source's delete nor `planIncidentResolutions` (events and retired fingerprints) closes
+  them, and only the prune used to remove them.
+- **Review.** Two fresh reviewers checked the diff against the acceptance; all four parts met. Taken in:
+  `RelayWatch.cycle`, the baseline carry-over test, the read-only root and the shared
+  `STREAM247_UPLINK_INPUT_MODE` in `docs/deployment.md`, the relay-watchdog row of the *Stack* table, the
+  image wording, and DUT checks that tell the new code from the old (the relay watch during the M114
+  follow-up's relay stop, the marker by the log line and `updated_at`, writability instead of the mode, the
+  prune decided by the rows updated since the snapshot), and on a fall the baseline is 0 rather than the
+  lower count (see *Soak monitor* above).
+  Open pull request #56 rewrites the relay-watchdog paragraph of `docs/operations.md` and the M114 DUT
+  entry with the opposite of this milestone (a two-minute `relay.unreachable` in every mode, a marker
+  directory set where `/tmp` is a tmpfs): whoever merges second keeps M126's wording.
+
 ### Suggestions 2026-10-04 to M112-M124, then M125
 
 Moved out of `PLANS.md`, text unchanged apart from the archive path.

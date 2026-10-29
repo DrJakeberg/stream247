@@ -38,6 +38,8 @@
   fields (transition state, queue version, next-item check, transition target) are under *Details*.
 - Incident messages carry absolute UTC times, never "2 minutes ago": the card's own age line is the
   live one.
+- An open incident stays however old it is: a new incident deletes only resolved ones beyond the newest
+  100 (M126; before, an open one beyond them went too, unresolved, and left *Open problems*).
 - `Live → Status` says under *System readiness* whether the worker and playout reported within the
   last few minutes instead of a fixed sentence, with no open incident and, while either is silent,
   under the open incidents too.
@@ -398,6 +400,7 @@ Reading the rows:
 - when relay/HLS is enabled, a fresh `programFeed.updatedAt` now counts as active playout liveness for `running`, `recovering`, and `switching`; do not treat a quiet FFmpeg stderr stream by itself as an outage while `programFeed=fresh` and `uplinkStatus=running`
 - if the playout container accumulates zombie FFmpeg or yt-dlp processes, recreate it: the image runs Node under `tini`, which reaps them, so an accumulation means the container is not running the shipped entrypoint
 - if the soak monitor reports `container-restart-check-failed`, inspect `docker compose ps`, `docker inspect --format '{{.RestartCount}}'`, and recent logs for the service it names (`web`, `worker`, `playout`, `uplink` or `relay`) before restarting the soak
+- `container-restart-count-reset service=<service> baseline=<old> restartCount=<new>` in the soak monitor log means that service's `RestartCount` fell, through a `docker restart` (the relay watchdog's, or a hand's) or a recreate; the monitor takes 0 as the baseline (Docker only sets the count back to 0, so a count above 0 at that sample is already a restart of the restart policy), so a restart of the restart policy fails the soak (M126). The start itself is logged next to it (`container-started-again`, or `docker-daemon-restart` when every service started again)
 - `playout.stop.deadline_exceeded` means an FFmpeg did not exit within 20 s of being stopped (a hung mount, uninterruptible I/O) and the playout started its replacement without it. When that process exits later, `playout.process.exit_ignored` is logged and nothing else happens; before M95 that late exit cleared the replacement's state and a third FFmpeg was started onto the same feed. Before M105 it could also mean an FFmpeg that had ended during its own start (a YouTube item refused at once while the database answered slowly): that exit went unhandled, the next cycle bridged the fallback for the item it still called on air and waited the 20 s for an exit that had already happened. Since M105 such an exit is logged and handled like any other (`playout.process.exit`, and the item is tried once more when its input could not be opened), and a stop of a process that has already ended returns at once (`playout.stop.already_exited`)
 - for what aired around the failure, read the as-run log first (*What was on air at a given time?*
   above): it survives the container restart that the logs do not
@@ -503,6 +506,12 @@ policy starts the container again. No Docker socket is involved.
 - the log shows `worker.supervisor.frozen` (with `mode` and `silentForMs`) before the kill, and the next
   process logs `worker.health.frozen_restart` and raises the warning incident
   `<mode>.health.frozen-restart`, which closes once the area is healthy again
+- the next process learns of the kill from a marker the supervisor writes to
+  `/var/tmp/stream247-frozen-<mode>.json`, in the container's writable layer, which the restart keeps, also
+  with a tmpfs on `/tmp` (M126); only where `/var/tmp` is missing or not writable it takes the temp
+  directory, and `STREAM247_SUPERVISOR_MARKER_DIR` overrides both. A read-only root file system leaves
+  `/var/tmp` unwritable: there, set the variable to a directory on a volume, or a tmpfs on `/tmp` loses the
+  marker in the restart
 - the container healthcheck still calls `index.js healthcheck <mode>` directly; nothing changes there
 - not covered: `docker pause` freezes the supervisor too, and the relay (below)
 - a compose file of your own that still says `command: ["node", "apps/worker/dist/index.js", ...]` keeps
@@ -512,9 +521,14 @@ policy starts the container again. No Docker socket is involved.
 
 The relay image holds only the mediamtx binary, so it cannot run a healthcheck, and its pin stays as it
 is. Instead the worker asks the relay's API (`http://relay:9997`) every cycle while something uses the
-relay (`STREAM247_RELAY_ENABLED=1` or live sources). After two minutes without any answer it raises the
+relay: the uplink reads the programme from it (`STREAM247_RELAY_ENABLED=1` with
+`STREAM247_UPLINK_INPUT_MODE=rtmp`), or live sources publish into it. Program-feed mode (relay on with the
+default `hls` input) passes no programme through the relay, so with live sources off the worker does not
+ask (M126); with *Video sources on the stream* on, the snapshots of a pushed camera in a scene layer still
+come from the relay, and that use is not watched. After two minutes without any answer it raises the
 critical incident `relay.unreachable` (log `relay.unreachable`); the card says to run
-`docker compose restart relay`. The incident closes on the first answer again (log `relay.reachable`).
+`docker compose restart relay`. The incident closes on the first answer again (log `relay.reachable`), or on
+the next cycle once nothing uses the relay any more.
 A relay that crashes is restarted by `restart: unless-stopped` as before.
 
 Since the M114 follow-up the service `relay-watchdog` restarts a relay that runs but does not answer
@@ -526,9 +540,12 @@ stopped or paused (`docker compose stop relay`, `docker pause`) is left alone. S
 the watchdog started or since its last restart (log `relay.watchdog.never_answered`): that points to the
 configuration (another network, `api: no`), not to a hang. The watchdog finds itself by its hostname
 (Docker's default, the container id) and the relay by the Compose labels, so it does nothing with a
-`hostname:` override, `network_mode: host` or `docker stack deploy` (log `relay.watchdog.relay_not_found`). Each restart is a
-container restart, so a soak fails on it like on any other. To switch it off, stop the service
-(`docker compose stop relay-watchdog`); the incident above still reports a hanging relay.
+`hostname:` override, `network_mode: host` or `docker stack deploy` (log `relay.watchdog.relay_not_found`). The
+watchdog asks whatever the relay is used for, in program-feed mode too. Each restart is a `docker restart`,
+which sets the relay's `RestartCount` back to 0: the soak monitor logs `container-started-again
+services=relay` (and `container-restart-count-reset` when the count was above 0), so the soak passes with
+failure at best. To switch it off, stop the service (`docker compose stop relay-watchdog`); the incident
+above still reports a hanging relay while something uses it.
 
 ### Restarts back off (since M103)
 
