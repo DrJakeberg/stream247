@@ -543,9 +543,12 @@ configuration (another network, `api: no`), not to a hang. The watchdog finds it
 `hostname:` override, `network_mode: host` or `docker stack deploy` (log `relay.watchdog.relay_not_found`). The
 watchdog asks whatever the relay is used for, in program-feed mode too. Each restart is a `docker restart`,
 which sets the relay's `RestartCount` back to 0: the soak monitor logs `container-started-again
-services=relay` (and `container-restart-count-reset` when the count was above 0), so the soak passes with
-failure at best. To switch it off, stop the service (`docker compose stop relay-watchdog`); the incident
-above still reports a hanging relay while something uses it.
+services=relay` (and `container-restart-count-reset` when the count was above 0), so a run without
+`SESSION_COOKIE` passes with failure at best; with it, and while something uses the relay, the worker's
+critical `relay.unreachable` at two minutes fails the run before the watchdog acts at three
+(`docs/deployment.md`, *Upgrading To 2.4*). To switch it off, stop the service
+(`docker compose stop relay-watchdog`); the incident above still reports a hanging relay while something
+uses it.
 
 ### Restarts back off (since M103)
 
