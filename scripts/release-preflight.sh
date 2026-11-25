@@ -40,41 +40,7 @@ if ! docker compose version >/dev/null 2>&1; then
   exit 1
 fi
 
-read_env_value() {
-  key="$1"
-  file_path="$2"
-  awk -v key="$key" '
-    $0 ~ "^[[:space:]]*" key "=" {
-      line = $0
-      sub("^[[:space:]]*" key "=", "", line)
-      print line
-      found = 1
-      exit
-    }
-    END {
-      if (!found) {
-        exit 1
-      }
-    }
-  ' "$file_path"
-}
-
-normalize_env_value() {
-  value="$(printf '%s' "$1" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-
-  case "$value" in
-    \"*\")
-      value="${value#\"}"
-      value="${value%\"}"
-      ;;
-    \'*\')
-      value="${value#\'}"
-      value="${value%\'}"
-      ;;
-  esac
-
-  printf '%s' "$value" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
-}
+. "$ROOT_DIR/scripts/lib/script-helpers.sh"
 
 is_placeholder_value() {
   key="$1"

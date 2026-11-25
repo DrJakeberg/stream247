@@ -103,9 +103,7 @@ compose() {
   docker compose --project-name "$PROJECT_NAME" --env-file "$ENV_FILE" -f docker-compose.yml -f "$OVERRIDE_FILE" "$@"
 }
 
-psql_query() {
-  compose exec -T postgres psql -U stream247 -d stream247 -At -F '|' -c "$1"
-}
+. "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/lib/script-helpers.sh"
 
 # Keeps the response body and names the request on failure (the same helper as runtime-parity-smoke.sh).
 api_call() {
