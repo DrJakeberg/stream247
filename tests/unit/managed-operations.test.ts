@@ -142,6 +142,19 @@ describe("replay cache tuning resolution", () => {
     const resolved = resolveVodCacheTuning({ vodCacheLimitRate: "8 Mbit" }, { TWITCH_VOD_CACHE_LIMIT_RATE: "8M" });
 
     expect(resolved.limitRate).toBe("8M");
+    expect(resolved.limitRateRejected).toBe("");
+  });
+
+  it("hands back a refused env limit rate only while the env path is in force", () => {
+    expect(resolveVodCacheTuning(null, { TWITCH_VOD_CACHE_LIMIT_RATE: "8Mbps" })).toMatchObject({
+      limitRate: "",
+      limitRateRejected: "8Mbps"
+    });
+    expect(
+      resolveVodCacheTuning({ vodCacheLimitRate: "4M" }, { TWITCH_VOD_CACHE_LIMIT_RATE: "8Mbps" }).limitRateRejected
+    ).toBe("");
+    expect(resolveVodCacheTuning(null, { TWITCH_VOD_CACHE_LIMIT_RATE: "8M" }).limitRateRejected).toBe("");
+    expect(resolveVodCacheTuning(null, {}).limitRateRejected).toBe("");
   });
 
   it("validates GB fields and the limit-rate notation for the settings surfaces", () => {

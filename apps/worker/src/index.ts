@@ -414,7 +414,9 @@ import {
   isInternalMediaCachePath,
   isTwitchVodAsset,
   isTwitchVodCacheCoolingDown,
-  TwitchVodCachePendingError
+  planRejectedLimitRateReport,
+  TwitchVodCachePendingError,
+  type TwitchVodCacheConfig
 } from "./twitch-vod-cache.js";
 import { planRecoveryAfterPlaybackPreparationFailure } from "./playout-recovery.js";
 import { measureIncidentAreaHealth, planIncidentResolutions } from "./incident-classes.js";
@@ -1292,7 +1294,28 @@ function getMediaRoot(): string {
 // Re-resolved on every call rather than memoised: since M56 part 2 the tuning is managed config
 // first, and a value saved in the GUI must take effect on the next cycle, not the next deploy.
 function getTwitchVodCacheRuntimeConfig() {
-  return getTwitchVodCacheConfig(process.env, getMediaRoot(), latestManagedConfig);
+  const config = getTwitchVodCacheConfig(process.env, getMediaRoot(), latestManagedConfig);
+  reportRejectedVodCacheLimitRate(config);
+  return config;
+}
+
+let reportedRejectedVodCacheLimitRate = "";
+
+/**
+ * Says once that the configured bandwidth ceiling was refused. Without this the rejection is
+ * invisible: an operator who writes "8Mbps" or "8 Mbit/s" instead of "8M" sees no error and the
+ * cache goes back to taking the whole line while the channel is on air.
+ */
+function reportRejectedVodCacheLimitRate(config: TwitchVodCacheConfig): void {
+  const plan = planRejectedLimitRateReport(reportedRejectedVodCacheLimitRate, config, latestManagedConfig !== null);
+  if (plan.report) {
+    logRuntimeEvent("twitch.vod-cache.limit_rate.rejected", {
+      configured: config.limitRateRejected,
+      effect: "cache downloads run unthrottled",
+      expected: "a number with an optional K/M/G suffix, e.g. 8M"
+    });
+  }
+  reportedRejectedVodCacheLimitRate = plan.remembered;
 }
 
 function isAssetBlockedForAutomaticSelection(asset: AssetRecord): boolean {

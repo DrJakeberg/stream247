@@ -49,6 +49,12 @@ export type TwitchVodCacheConfig = {
    * background activity rather than something that competes with playout for the uplink.
    */
   limitRate: string;
+  /**
+   * The env ceiling when it is the one in force but was not in yt-dlp's notation and had to be
+   * dropped, otherwise "". A dropped value leaves the cache unthrottled, which is the exact
+   * condition limitRate exists to prevent, so it has to reach the operator rather than fail quietly.
+   */
+  limitRateRejected: string;
 };
 
 export type TwitchVodCacheResult =
@@ -116,7 +122,35 @@ export function getTwitchVodCacheConfig(
     minFreeBytes: tuning.minFreeBytes,
     failureCooldownMs: tuning.failureCooldownSeconds * 1000,
     maxAssetBytes: tuning.maxAssetBytes,
-    limitRate: tuning.limitRate
+    limitRate: tuning.limitRate,
+    limitRateRejected: tuning.limitRateRejected
+  };
+}
+
+/**
+ * Whether a refused bandwidth ceiling has to be reported now, and what the caller remembers as
+ * reported afterwards. The config is rebuilt on every call (a GUI change must apply on the next
+ * cycle), so the caller says it once per refused value instead of once per cycle; a fixed or
+ * replaced value resets it. Two states report nothing:
+ * - no managed config loaded yet: the resolver ran env-only, and a managed value that overrides
+ *   the env could still turn up on this cycle; the memory is kept untouched until it is known;
+ * - the cache is off: no download runs, so "unthrottled" would be false; the memory resets so
+ *   that switching the cache on reports the value again.
+ */
+export function planRejectedLimitRateReport(
+  lastReported: string,
+  config: Pick<TwitchVodCacheConfig, "enabled" | "limitRateRejected">,
+  managedConfigLoaded: boolean
+): { report: boolean; remembered: string } {
+  if (!managedConfigLoaded) {
+    return { report: false, remembered: lastReported };
+  }
+  if (!config.enabled) {
+    return { report: false, remembered: "" };
+  }
+  return {
+    report: config.limitRateRejected !== "" && config.limitRateRejected !== lastReported,
+    remembered: config.limitRateRejected
   };
 }
 
