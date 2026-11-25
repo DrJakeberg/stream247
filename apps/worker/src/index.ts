@@ -147,6 +147,7 @@ import {
   appendAuditEvent,
   appendPresenceWindowRecord,
   readManagedDestinationStreamKeys,
+  recordSourceSyncOutcomes,
   replaceAssetsForSourceIds,
   readAppState,
   replaceTwitchScheduleSegments,
@@ -156,7 +157,7 @@ import {
   resolveChannelTimeZone,
   resolveIncident,
   resolveSecretKeyMismatchWhenSecretsDecrypt,
-  updateDestinationRecord,
+  updateDestinationStatusRecord,
   updateEngagementGameRuntimeRecord,
   updateAssetCacheRecords,
   updateAssetChapterProbeRecords,
@@ -307,7 +308,7 @@ import {
   watchAsRunEnd,
   type AsRunStopIntent
 } from "./as-run.js";
-import { AlertDeduper, deliverAlert, opensIncident } from "./alerts.js";
+import { AlertDeduper, deliverAlert, opensIncident, smtpTransportOptions } from "./alerts.js";
 import {
   ensureLocalAssetThumbnail,
   getAssetThumbnailPath,
@@ -2475,8 +2476,8 @@ async function markDestinationFailure(destinationId: string, errorMessage: strin
     return;
   }
 
-  await updateDestinationRecord({
-    ...destination,
+  await updateDestinationStatusRecord({
+    id: destination.id,
     status: "error",
     lastValidatedAt: now,
     lastFailureAt: now,
@@ -4405,12 +4406,13 @@ async function syncDirectMediaSources(): Promise<void> {
     });
   });
 
-  await upsertSources(
+  await recordSourceSyncOutcomes(
     directSources.map((source) => {
       const invalid = plan.invalidSourceIds.has(source.id);
       const preservedAssets = invalid ? (storedBySource.get(source.id) ?? 0) : 0;
       return {
-        ...source,
+        id: source.id,
+        syncedExternalUrl: source.externalUrl ?? "",
         status: invalid ? (preservedAssets > 0 ? "Invalid URL (asset preserved)" : "Invalid URL") : "Ready",
         notes: invalid
           ? preservedAssets > 0
@@ -4657,7 +4659,7 @@ async function reconcileSourceDroughtIncident(args: {
  */
 async function replaceSyncedSourceAssets(args: {
   connector: string;
-  sources: { id: string }[];
+  sources: { id: string; externalUrl?: string }[];
   storedAssets: AssetRecord[];
   incomingAssets: AssetRecord[];
   failedSourceIds: Set<string>;
@@ -4682,8 +4684,12 @@ async function replaceSyncedSourceAssets(args: {
     return;
   }
 
-  // The sync computed both lists together, so an empty write here really is an emptied source.
-  await replaceAssetsForSourceIds(plan.replaceableSourceIds, plan.assetsToWrite, { allowEmptyReplacement: true });
+  // The sync computed both lists together, so an empty write here really is an emptied source. A source
+  // deleted or pointed elsewhere while the sync ran is skipped under the lock (M127).
+  await replaceAssetsForSourceIds(plan.replaceableSourceIds, plan.assetsToWrite, {
+    allowEmptyReplacement: true,
+    expectedSourceUrls: new Map(args.sources.map((source) => [source.id, source.externalUrl ?? ""]))
+  });
 }
 
 async function syncYoutubePlaylistSources(): Promise<void> {
@@ -4823,7 +4829,9 @@ async function syncYoutubePlaylistSources(): Promise<void> {
   }
   noteSourceSyncDeferrals("youtube-sources", deferredSourceIds);
 
-  await upsertSources(
+  // Only the sync columns, and only for a source still at the URL listed above (M127): the snapshot is
+  // minutes old by now, and spreading it undid an operator's disable, URL change or delete.
+  await recordSourceSyncOutcomes(
     youtubeSources.map((source) => {
       // Describing the source from the same outcome the replacement decision uses is the point:
       // "Ingestion failed" alone read identically whether the archive survived or was deleted.
@@ -4834,7 +4842,8 @@ async function syncYoutubePlaylistSources(): Promise<void> {
         storedAssetCount: state.assets.filter((asset) => asset.sourceId === source.id).length
       });
       return {
-        ...source,
+        id: source.id,
+        syncedExternalUrl: source.externalUrl ?? "",
         status: description.status,
         notes: description.assetsPreserved
           ? buildPreservedAssetsNote(description.effectiveAssetCount)
@@ -5041,7 +5050,7 @@ async function syncTwitchVodSources(): Promise<void> {
   noteSourceSyncDeferrals("twitch-sources", deferredSourceIds);
   twitchSyncHeldBack = twitchCallsStarted === 0 && deferredSourceIds.length > 0 && youtubeCallsStarted > 0;
 
-  await upsertSources(
+  await recordSourceSyncOutcomes(
     twitchSources.map((source) => {
       // The source of the original wipe. The status now says whether the archive survived it.
       const description = describeSourceSyncStatus({
@@ -5051,7 +5060,8 @@ async function syncTwitchVodSources(): Promise<void> {
         storedAssetCount: state.assets.filter((asset) => asset.sourceId === source.id).length
       });
       return {
-        ...source,
+        id: source.id,
+        syncedExternalUrl: source.externalUrl ?? "",
         status: description.status,
         notes: description.assetsPreserved
           ? buildPreservedAssetsNote(description.effectiveAssetCount)
@@ -6835,8 +6845,8 @@ async function promoteRecoveringDestinations(reason: "manual" | "transition"): P
 
   const now = new Date().toISOString();
   for (const destination of recoveringDestinations) {
-    await updateDestinationRecord({
-      ...destination,
+    await updateDestinationStatusRecord({
+      id: destination.id,
       status: "ready",
       lastValidatedAt: now,
       notes:
@@ -7752,8 +7762,8 @@ async function startOrSwitchPlayout(args: {
 
   if (args.updateDestinations !== false) {
     for (const destination of args.destinations) {
-      await updateDestinationRecord({
-        ...destination,
+      await updateDestinationStatusRecord({
+        id: destination.id,
         status: "ready",
         lastValidatedAt: startedAt,
         // Failures since the last clean start — the counter meant nothing while it only ever grew.
@@ -7788,13 +7798,13 @@ async function syncDestinations(): Promise<void> {
         role: destination.role
       });
     }
-    await updateDestinationRecord({
-      ...destination,
+    // Status columns only (M127): spreading the snapshot undid an owner's disable, URL change or delete
+    // saved while this loop ran, and paired a rotated key with the old URL.
+    await updateDestinationStatusRecord({
+      id: destination.id,
       streamKeyPresent: Boolean(managedKey || envConfig.key),
-      streamKeySource,
       status: nextStatus,
       lastValidatedAt: now,
-      lastError: destination.lastError,
       notes: coolingDown
         ? `${
             destination.role === "backup" ? "Backup" : "Primary"
@@ -9776,8 +9786,8 @@ async function startUplink(group: DestinationRuntimeTargetGroup, managedConfig: 
   }));
 
   for (const destination of group.targets.map((entry) => entry.destination)) {
-    await updateDestinationRecord({
-      ...destination,
+    await updateDestinationStatusRecord({
+      id: destination.id,
       status: "ready",
       lastValidatedAt: startedAt,
       // Failures since the last clean start — the counter meant nothing while it only ever grew.
@@ -10352,13 +10362,7 @@ async function sendAlert(subject: string, message: string): Promise<void> {
     discordWebhookUrl: getDiscordWebhookUrl(state),
     smtp,
     fetchImpl: fetch,
-    createTransport: (settings) =>
-      nodemailer.createTransport({
-        host: settings.host,
-        port: settings.port,
-        secure: settings.port === 465,
-        auth: settings.user ? { user: settings.user, pass: settings.password || "" } : undefined
-      })
+    createTransport: (settings) => nodemailer.createTransport(smtpTransportOptions(settings))
   });
   logRuntimeEvent("alert.delivery", { subject, discord: report.discord, email: report.email, delivered: report.delivered });
 

@@ -767,8 +767,42 @@ under `planning/archive/`, text unchanged.
   alone. A sign-in whose user row vanished meanwhile issues no cookie. `updateOwnerAndInitialized` stays
   (test setup uses it); bootstrap no longer calls it. Bootstrap that claimed the workspace but meets an
   unreadable managed config answers 409 with no cookie; the owner signs in normally.
+- **Second part: the third pass (15-18).** The audit's third pass on the same code added four confirmed
+  findings, closed in a second commit. (15, medium) The second-factor challenge, which the sign-in returns
+  after the password alone, had the session's construction and key: in 2.3.1 it worked as an owner session,
+  and 2.4 refused it only because the M117 session has four parts. The challenge is now
+  `userId:issuedAt:2fa:hmac` under a key derived from the app secret (`HMAC(secret,
+  "stream247:two-factor-challenge")`); the session is unchanged, so nobody is signed out, and a challenge
+  pending at the update is refused (the password again, within its 5 minutes). 2.3.1 refuses the new
+  challenge twice: wrong key, and `2fa` where it reads the issue time. Side find: on the old code a session
+  whose stamp was all digits (about 1 in 1 850) also passed as a challenge (no bypass, the TOTP step still
+  ran). (16, medium; 17, low) The worker's source syncs and destination checks wrote whole rows back from a
+  snapshot read before minutes of yt-dlp calls, undoing an operator's disable, URL change or delete and
+  re-inserting a deleted row. `recordSourceSyncOutcomes` writes only `status`, `notes` and
+  `last_synced_at`, `WHERE id = $1 AND external_url = $2`; `replaceAssetsForSourceIds` takes
+  `expectedSourceUrls` and, under the same lock, leaves out a source that is gone or moved with its incoming
+  assets. `updateDestinationStatusRecord` writes only the status columns by id (five worker call sites);
+  the full upserts stay for creation and the API. A source disabled during a sync still gets its status and
+  assets (it keeps `enabled = false`). (18, low) Alert mail authenticated in plain text on ports other than
+  465: `smtpTransportOptions` sets `secure` on 465 and `requireTLS` on every other port, with or without a
+  login. A plain-text LAN relay now fails the delivery; no opt-out exists and none was added (owner
+  question below). No schema change in this part.
 - **Measurements.** See the M127 row in `PLANS.md`.
-- **Left.** A banned user whose display name differs from the login and whose line left the 50-line ring
+- **Owner question (18).** Should TLS be required only when a login is configured? Recommendation: no, the
+  alert text itself would go out in plain text; a LAN relay can offer STARTTLS or the owner uses Discord.
+- **Left.** The web's `recover_outputs` (`apps/web/lib/server/broadcast.ts`) still writes a destination back
+  from its snapshot with `updateDestinationRecord` (short window, operator-triggered); the fix is
+  `updateDestinationStatusRecord`. The local library's scan writes its fixed row whole each cycle
+  (`name: "Local Media Library"`, `enabled: true`); the sources PUT and bulk routes accept that row, so a
+  rename or disable of it is undone within one cycle (deterministic and older than M127; the fix is an
+  insert-if-missing plus `recordSourceSyncOutcomes`). The worker logs nothing when `recordSourceSyncOutcomes`
+  or `updateDestinationStatusRecord` drops a write for a row that is gone or moved (the next cycle syncs the
+  new URL; a `source.sync.outcome.dropped` line like `twitch.connection.write.dropped` would help diagnosis).
+  The Twitch team sign-in still upserts a whole user row from its snapshot, not keyed on `twitch_user_id`
+  (no unique constraint): two overlapping first sign-ins of one account create two rows, and a sign-out then
+  advances the epoch of one of them only (narrow, older than M127; the fix is a keyed, column-scoped write
+  under the lock, or a sign-out that advances every row of that Twitch id). `failure_count` in `markDestinationFailure` stays
+  snapshot + 1, not an atomic increment. A banned user whose display name differs from the login and whose line left the 50-line ring
   stays in the staff-only recent events (no login column). A stale `writeAppState` snapshot (a whole-state
   write) can bring back chat rows that a moderation delete removed; `updateAppState` is not affected. The
   web's `recordTwitchError` and `recordTwitchBroadcasterError` still write the whole connection row from an

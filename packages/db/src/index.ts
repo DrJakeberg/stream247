@@ -6685,6 +6685,43 @@ export async function updateSourceFieldRecords(updates: SourceFieldUpdateRecord[
   });
 }
 
+export type SourceSyncOutcomeRecord = {
+  id: string;
+  /** The URL the sync read and listed; the outcome describes that URL and no other. */
+  syncedExternalUrl: string;
+  status: string;
+  notes: string;
+  lastSyncedAt: string;
+};
+
+/**
+ * Record what a worker sync found, and nothing else (M127).
+ *
+ * The sync reads its sources at the start of a cycle and writes back after yt-dlp calls of up to two
+ * minutes each. A whole-row upsert from that snapshot undid an operator's disable, URL change or delete
+ * committed in between, and put a deleted row back. This writes only the three sync columns, and only
+ * while the row still exists with the URL the sync listed. Returns the ids it wrote.
+ */
+export async function recordSourceSyncOutcomes(outcomes: SourceSyncOutcomeRecord[]): Promise<string[]> {
+  if (outcomes.length === 0) {
+    return [];
+  }
+
+  return withSerializedStateWrite("recordSourceSyncOutcomes", async (client) => {
+    const written: string[] = [];
+    for (const outcome of outcomes) {
+      const result = await client.query(
+        "UPDATE sources SET status = $3, notes = $4, last_synced_at = $5 WHERE id = $1 AND external_url = $2",
+        [outcome.id, outcome.syncedExternalUrl, outcome.status, outcome.notes, outcome.lastSyncedAt]
+      );
+      if ((result.rowCount ?? 0) > 0) {
+        written.push(outcome.id);
+      }
+    }
+    return written;
+  });
+}
+
 export type ReplaceAssetsOptions = {
   /**
    * Permit a replacement that leaves a currently populated source with no assets.
@@ -6695,6 +6732,13 @@ export type ReplaceAssetsOptions = {
    * that skipped the collection step but not the delete list) does not, and gets refused.
    */
   allowEmptyReplacement?: boolean;
+  /**
+   * The URL each source had when the caller listed it. When given, a source that no longer exists or
+   * now has another URL is left out of the replacement, checked under the write lock (M127): a sync
+   * must not bring back the assets of a source deleted during it, nor file the old URL's listing
+   * under the new one.
+   */
+  expectedSourceUrls?: ReadonlyMap<string, string>;
 };
 
 /**
@@ -6724,6 +6768,22 @@ export async function replaceAssetsForSourceIds(
   }
 
   await withSerializedStateWrite("replaceAssetsForSourceIds", async (client) => {
+    const expectedSourceUrls = options.expectedSourceUrls;
+    if (expectedSourceUrls) {
+      const currentResult = await client.query<{ id: string; external_url: string }>(
+        "SELECT id, external_url FROM sources WHERE id = ANY($1::text[])",
+        [sourceIds]
+      );
+      const unchanged = new Set(
+        currentResult.rows.filter((row) => expectedSourceUrls.get(row.id) === row.external_url).map((row) => row.id)
+      );
+      sourceIds = sourceIds.filter((sourceId) => unchanged.has(sourceId));
+      assets = assets.filter((asset) => unchanged.has(asset.sourceId));
+      if (sourceIds.length === 0) {
+        return;
+      }
+    }
+
     const existingResult = await client.query<{
       id: string;
       source_id: string;
@@ -8756,6 +8816,44 @@ export async function updateDestinationRecord(
         redactSecrets(destination.lastError)
       ]
     );
+  });
+}
+
+export type DestinationStatusUpdateRecord = Pick<StreamDestinationRecord, "id" | "status"> &
+  Partial<
+    Pick<
+      StreamDestinationRecord,
+      "notes" | "lastValidatedAt" | "lastFailureAt" | "failureCount" | "lastError" | "streamKeyPresent"
+    >
+  >;
+
+/**
+ * The worker's write of a destination's health (M127). It touches only the status columns, by id, so
+ * an owner's disable, URL change or delete committed after the worker read its snapshot survives, and
+ * a deleted destination is not inserted again. The full upsert, `updateDestinationRecord`, stays with
+ * the destinations API. Returns whether the destination still existed.
+ */
+export async function updateDestinationStatusRecord(update: DestinationStatusUpdateRecord): Promise<boolean> {
+  return withSerializedStateWrite("updateDestinationStatusRecord", async (client) => {
+    const values: unknown[] = [update.id, update.status];
+    const setClauses = ["status = $2"];
+    const optional: Array<[string, unknown]> = [
+      ["notes", update.notes],
+      ["last_validated_at", update.lastValidatedAt],
+      ["last_failure_at", update.lastFailureAt],
+      ["failure_count", update.failureCount],
+      ["last_error", update.lastError === undefined ? undefined : redactSecrets(update.lastError)],
+      ["stream_key_present", update.streamKeyPresent]
+    ];
+    for (const [column, value] of optional) {
+      if (value !== undefined) {
+        values.push(value);
+        setClauses.push(`${column} = $${values.length}`);
+      }
+    }
+
+    const result = await client.query(`UPDATE stream_destinations SET ${setClauses.join(", ")} WHERE id = $1`, values);
+    return (result.rowCount ?? 0) > 0;
   });
 }
 

@@ -119,9 +119,21 @@ export function resolveSessionUser(value: string | undefined, state: AppState): 
   return role ? { ...user, role } : null;
 }
 
+// The challenge the sign-in returns after the password alone (M127, audit finding 15). In 2.3.1 it had the
+// session's construction and key, so it worked as a session cookie. It is now signed with a key of its own,
+// so neither token verifies as the other, and it ends in a marker where 2.3.1 reads a session's issue time,
+// so a 2.3.1 image after a reverse repin refuses it as well. A challenge in the old format is refused: a
+// sign-in pending at the update enters its password again.
+const twoFactorChallengeMarker = "2fa";
+
+function signTwoFactorChallenge(payload: string): string {
+  const key = createHmac("sha256", getAuthSecret()).update("stream247:two-factor-challenge").digest();
+  return createHmac("sha256", key).update(payload).digest("hex");
+}
+
 export function buildTwoFactorChallengeValue(userId: string): string {
-  const payload = `${userId}:${Date.now()}`;
-  return `${payload}:${signValue(payload)}`;
+  const payload = `${userId}:${Date.now()}:${twoFactorChallengeMarker}`;
+  return `${payload}:${signTwoFactorChallenge(payload)}`;
 }
 
 export function parseTwoFactorChallengeValue(value: string | undefined): { userId: string; issuedAt: number } | null {
@@ -129,17 +141,19 @@ export function parseTwoFactorChallengeValue(value: string | undefined): { userI
     return null;
   }
 
+  // userId:issuedAt:2fa:signature; the user id may hold colons.
   const parts = value.split(":");
-  if (parts.length < 3) {
+  if (parts.length < 4) {
     return null;
   }
 
   const signature = parts.pop();
+  const marker = parts.pop();
   const issuedAtText = parts.pop();
   const userId = parts.join(":");
-  const payload = `${userId}:${issuedAtText}`;
+  const payload = `${userId}:${issuedAtText}:${marker}`;
 
-  if (!signature || signValue(payload) !== signature) {
+  if (marker !== twoFactorChallengeMarker || !signature || signTwoFactorChallenge(payload) !== signature) {
     return null;
   }
 

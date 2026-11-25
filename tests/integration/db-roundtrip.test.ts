@@ -55,6 +55,10 @@ import {
   updateAssetMetadataRecords,
   updateAssetPlaybackProbeRecords,
   updateDestinationRecord,
+  updateDestinationStatusRecord,
+  deleteDestinationRecord,
+  recordSourceSyncOutcomes,
+  upsertSources,
   updateEngagementSettingsRecord,
   updateOutputSettingsRecord,
   updatePoolCursor,
@@ -4158,6 +4162,165 @@ describe.sequential("database roundtrip", () => {
       expect(await stored()).toBe("m127_f1");
       expect(await executeSql("SELECT COUNT(*) FROM engagement_events WHERE kind = 'chat';")).toBe("0");
       expect(await deleteChatEngagementEvents({})).toBe(0);
+    }, 60_000);
+  });
+
+  describe("worker write-backs keep an operator's change made during the cycle (M127)", () => {
+    const syncedAt = "2026-11-25T13:00:00.000Z";
+    const youtubeSource = (id: string) => ({
+      id,
+      name: id,
+      type: "YouTube playlist",
+      connectorKind: "youtube-playlist" as const,
+      enabled: true,
+      status: "Ready",
+      externalUrl: `https://www.youtube.com/playlist?list=${id}`,
+      notes: "",
+      lastSyncedAt: "2026-11-25T12:00:00.000Z"
+    });
+    const listedAsset = (sourceId: string, videoId: string) => ({
+      id: `asset_${sourceId}_${videoId}`,
+      sourceId,
+      title: videoId,
+      path: `https://www.youtube.com/watch?v=${videoId}`,
+      folderPath: `youtube-playlist/${sourceId}`,
+      tags: [],
+      status: "ready" as const,
+      includeInProgramming: true,
+      externalId: videoId,
+      fallbackPriority: 100,
+      isGlobalFallback: false,
+      createdAt: syncedAt,
+      updatedAt: syncedAt
+    });
+
+    it("records a source sync without undoing a disable, a URL change or a delete committed during it", async () => {
+      await ensureDatabaseWithRetry();
+      const ids = ["m127_src_disabled", "m127_src_moved", "m127_src_deleted", "m127_src_untouched"];
+      await upsertSources(ids.map(youtubeSource));
+      await replaceAssetsForSourceIds(ids, ids.map((id) => listedAsset(id, `${id}_old`)));
+
+      // The worker's cycle snapshot, taken before its yt-dlp calls.
+      const snapshot = (await readAppState()).sources.filter((source) => ids.includes(source.id));
+      expect(snapshot).toHaveLength(4);
+
+      // What operators commit while yt-dlp runs.
+      const movedUrl = "https://www.youtube.com/playlist?list=m127_src_moved_new";
+      await updateSourceFieldRecords([
+        { id: "m127_src_disabled", enabled: false },
+        { id: "m127_src_moved", externalUrl: movedUrl, status: "Sync queued" }
+      ]);
+      await deleteSourceRecordAndAssets("m127_src_deleted");
+
+      // The worker's write-back, as the YouTube, Twitch and direct-media syncs make it.
+      const written = await recordSourceSyncOutcomes(
+        snapshot.map((source) => ({
+          id: source.id,
+          syncedExternalUrl: source.externalUrl ?? "",
+          status: "Ready",
+          notes: "Ingested 1 YouTube item(s) via yt-dlp.",
+          lastSyncedAt: syncedAt
+        }))
+      );
+      await replaceAssetsForSourceIds(
+        ids,
+        ids.map((id) => listedAsset(id, `${id}_new`)),
+        { allowEmptyReplacement: true, expectedSourceUrls: new Map(snapshot.map((source) => [source.id, source.externalUrl ?? ""])) }
+      );
+
+      expect(written.sort()).toEqual(["m127_src_disabled", "m127_src_untouched"]);
+      const row = (id: string) =>
+        executeSql(`SELECT enabled::text || '|' || external_url || '|' || status || '|' || last_synced_at FROM sources WHERE id = '${id}';`);
+      const assetsOf = (id: string) =>
+        executeSql(`SELECT COALESCE(string_agg(external_id, ',' ORDER BY external_id), '') FROM assets WHERE source_id = '${id}';`);
+      // The disable stays; the sync of the unchanged URL is still recorded.
+      expect(await row("m127_src_disabled")).toBe(`false|${youtubeSource("m127_src_disabled").externalUrl}|Ready|${syncedAt}`);
+      // The new URL stays, and the old URL's listing is not filed under it.
+      expect(await row("m127_src_moved")).toBe(`true|${movedUrl}|Sync queued|2026-11-25T12:00:00.000Z`);
+      expect(await assetsOf("m127_src_moved")).toBe("m127_src_moved_old");
+      // The deleted source and its assets stay deleted.
+      expect(await executeSql("SELECT COUNT(*) FROM sources WHERE id = 'm127_src_deleted';")).toBe("0");
+      expect(await assetsOf("m127_src_deleted")).toBe("");
+      // A source nobody touched gets the sync as before.
+      expect(await row("m127_src_untouched")).toBe(`true|${youtubeSource("m127_src_untouched").externalUrl}|Ready|${syncedAt}`);
+      expect(await assetsOf("m127_src_untouched")).toBe("m127_src_untouched_new");
+
+      for (const id of ids) {
+        await deleteSourceRecordAndAssets(id);
+      }
+    }, 60_000);
+
+    it("writes a destination's status without undoing a disable, a URL change or a delete committed meanwhile", async () => {
+      await ensureDatabaseWithRetry();
+      const ids = ["m127_dest_disabled", "m127_dest_moved", "m127_dest_deleted", "m127_dest_untouched"];
+      // Created through the API's full upsert, which stays the only writer of the configuration.
+      for (const [index, id] of ids.entries()) {
+        await updateDestinationRecord(
+          {
+            id,
+            provider: "custom-rtmp",
+            role: "backup",
+            priority: 10 + index,
+            name: id,
+            enabled: true,
+            rtmpUrl: `rtmp://old.example/${id}`,
+            streamKeyPresent: true,
+            status: "error",
+            notes: "",
+            lastValidatedAt: "2026-11-25T12:00:00.000Z",
+            lastFailureAt: "2026-11-25T12:00:00.000Z",
+            failureCount: 2,
+            lastError: "Connection refused"
+          },
+          { managedStreamKey: `old-key-${id}` }
+        );
+      }
+
+      // The worker's snapshot, before its awaits (syncDestinations, playout and uplink start).
+      const snapshot = (await readAppState()).destinations.filter((destination) => ids.includes(destination.id));
+      expect(snapshot).toHaveLength(4);
+      const before = (id: string) => snapshot.find((destination) => destination.id === id)!;
+
+      // What the owner saves meanwhile: a disable, a move together with a key rotation, a delete.
+      await updateDestinationRecord({ ...before("m127_dest_disabled"), enabled: false });
+      await updateDestinationRecord(
+        { ...before("m127_dest_moved"), rtmpUrl: "rtmp://new.example/m127_dest_moved" },
+        { managedStreamKey: "rotated-key" }
+      );
+      await deleteDestinationRecord("m127_dest_deleted");
+
+      // The worker's write-back of a clean start.
+      const existed: boolean[] = [];
+      for (const destination of snapshot) {
+        existed.push(
+          await updateDestinationStatusRecord({
+            id: destination.id,
+            status: "ready",
+            lastValidatedAt: syncedAt,
+            failureCount: 0,
+            lastError: "",
+            notes: "Backup destination is active in the current multi-output group."
+          })
+        );
+      }
+
+      expect(existed).toEqual([true, true, false, true]);
+      const row = (id: string) =>
+        executeSql(
+          `SELECT enabled::text || '|' || rtmp_url || '|' || status || '|' || failure_count || '|' || last_error FROM stream_destinations WHERE id = '${id}';`
+        );
+      expect(await row("m127_dest_disabled")).toBe("false|rtmp://old.example/m127_dest_disabled|ready|0|");
+      // The new URL and the rotated key stay together.
+      expect(await row("m127_dest_moved")).toBe("true|rtmp://new.example/m127_dest_moved|ready|0|");
+      expect((await readManagedDestinationStreamKeys(["m127_dest_moved"]))["m127_dest_moved"]).toBe("rotated-key");
+      expect(await executeSql("SELECT COUNT(*) FROM stream_destinations WHERE id = 'm127_dest_deleted';")).toBe("0");
+      expect(await row("m127_dest_untouched")).toBe("true|rtmp://old.example/m127_dest_untouched|ready|0|");
+      // The status write leaves the managed key alone.
+      expect((await readManagedDestinationStreamKeys(["m127_dest_untouched"]))["m127_dest_untouched"]).toBe("old-key-m127_dest_untouched");
+
+      for (const id of ids) {
+        await deleteDestinationRecord(id);
+      }
     }, 60_000);
   });
 });

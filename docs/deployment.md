@@ -1047,7 +1047,11 @@ review of the production stack of 2026-10-29 (M126); M111 changes the soak monit
   sign-in above (a session epoch of `0` signs as before, M127); from then on a sign-out ends every session of
   that account on every device, and a session lasts at most 14 days. While the stored settings do not open
   with the current `APP_SECRET` (the incident `secrets.key-mismatch`), every managed-settings form refuses to
-  save with `409` instead of saving over the stored credentials (*Operations*, M127).
+  save with `409` instead of saving over the stored credentials (*Operations*, M127). A sign-in waiting for
+  its second factor at the repin is refused at that step and enters the password again (the challenge has a
+  key of its own, M127). Alert mail requires TLS: implicit on port 465, STARTTLS on every other port, so a
+  plain-text relay without STARTTLS no longer gets the alert and the incident "Alerts are not reaching a
+  channel" opens; there is no setting to turn this off (*Operations*, M127).
 
 What changes on air in the first hours, without touching a setting:
 
@@ -1150,21 +1154,29 @@ What 2.3.1 does with what 2.4 left behind; none of it needs a step:
 - **M127.** 2.3.1 ignores `users.session_epoch`, and its first whole-state write (it deletes and inserts the
   users again without the column) sets every epoch back to `0`. While 2.3.1 runs a sign-out ends only the
   cookie in that browser, and after a roll forward a cookie that a sign-out had ended can be valid again until
-  it expires (14 days at most). The reverse repin itself signs out everyone who signed in after their last
-  sign-out under 2.4 (their cookie carries an epoch above `0`, which 2.3.1 does not stamp). Nothing is needed
+  it expires (14 days at most). The reverse repin itself signs out everyone, whatever their epoch (*M117*
+  below). Nothing is needed
   before the reverse repin. After the roll forward, end every session of every account, Twitch team members
   included, by advancing all epochs:
   `docker compose exec -T postgres psql -U stream247 -d stream247 -c "UPDATE users SET session_epoch = session_epoch + 1"`.
   Changing the owner password is not enough: it ends only the local owner's sessions, and Twitch sign-ins
   carry no password stamp. The other M127 findings apply again under 2.3.1 (a whole-row write-back of a sign-in,
-  of a grant or of the worker's Twitch connection, unbounded request bodies, a managed-settings save over
-  credentials it cannot read).
+  of a grant or of the worker's Twitch connection, the worker's source syncs and destination checks writing
+  whole rows back over an operator's disable, URL change or delete, unbounded request bodies, a
+  managed-settings save over credentials it cannot read, alert mail without STARTTLS on a port other than
+  465 in plain text). While 2.3.1 runs, the second factor of a local owner is not enforced: 2.3.1
+  signs the challenge that its sign-in returns after the password alone exactly like a session cookie, so the
+  password alone gives an owner session. A challenge that 2.4 issued has a key and a shape of its own and is
+  refused by 2.3.1 as a session. Keep a rollback short; with a password that may have leaked, change it first.
 - **M117.** 2.3.1 does not know the password stamp and reads it as the cookie's issue time. The stamp
-  depends only on the password and the installation's secret (every Twitch sign-in carries the same one),
-  and almost every stamp is not a number, so everyone signs in again at the rollback, and once more after a
-  roll forward (2.3.1's cookies carry no stamp). A stamp that happens to read as a number (the chance is
-  about one in 1 500) passes as an issue time in the future, and 2.3.1 then accepts every cookie that
-  carries it with no end, also after the password is changed: keep a rollback short.
+  depends on the password, the account's session epoch (M127) and the installation's secret (every Twitch
+  sign-in at epoch `0` carries the same one), and almost every stamp is not a number, so everyone signs in
+  again at the rollback, and once more after a roll forward (2.3.1's cookies carry no stamp). A stamp that
+  happens to read as a number (the chance is about one in 1 500) passes as an issue time in the future, and
+  2.3.1 then accepts every cookie that carries it with no end, also after the password is changed. Each
+  sign-out under 2.4 makes a new stamp, so the chance applies again for each account and each sign-out, and
+  2.3.1 accepts again a cookie that a 2.4 sign-out had ended if its stamp reads as a number: keep a rollback
+  short.
 - **M120.** A Refresh and a queue rebuild waiting together (`refresh_and_rebuild_queue`) at the rollback are
   cleared by 2.3.1's first cycle without being carried out; press them again if one was waiting.
   *Operator holds* is gone, and an admin action can clear another's waiting Refresh again.

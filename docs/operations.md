@@ -644,6 +644,18 @@ uses it.
   before the deadline (only with a stall guard set near its 60 s minimum), the syncs wait for a faster
   cycle and say so with `source.sync.deferred`
 
+### Alert mail needs TLS (since M127)
+
+- the alert e-mail (Admin → Settings, SMTP) uses implicit TLS on port 465 and requires STARTTLS on every
+  other port, with or without a login. Before M127 a server on another port that offered no STARTTLS (or a
+  path that stripped it) got the login and the alert in plain text
+- a server that offers no STARTTLS, typically a plain-text relay on the LAN on port 25, now gets neither:
+  the delivery fails, the log shows `alert.delivery` with the e-mail failed, and the warning incident
+  "Alerts are not reaching a channel" (`alerts.delivery`) names the SMTP error. A Discord webhook still
+  delivers. There is no setting to send without TLS: turn on STARTTLS at the relay, use its port 465, or
+  alert through Discord. There is no test button: the first alert after the update shows whether the
+  configured server still takes it
+
 ### Twitch asks for a reconnect (since M87)
 
 - when Twitch refuses the stored refresh token of the bot account (HTTP 400 `invalid_grant` or
