@@ -280,3 +280,78 @@ test("asks before a template replaces the schedule, and Cancel keeps the blocks 
   expect(templateRequests).toBe(0);
   expect(await blockIds()).toEqual(before);
 });
+
+// M128: the headers of what the built app really serves, the nonce on every script of /channel, and a
+// report-only policy that the page does not break (no console report while it loads and gets its stream).
+test("serves the security headers on every answer and a clean report-only policy on /channel (M128)", async ({ page, request }) => {
+  const expectedHeaders: Record<string, string> = {
+    "strict-transport-security": "max-age=31536000",
+    "x-frame-options": "DENY",
+    "content-security-policy": "frame-ancestors 'none'",
+    "x-content-type-options": "nosniff",
+    "referrer-policy": "same-origin"
+  };
+  const expectSecurityHeaders = (url: string, headers: Record<string, string>) => {
+    for (const [name, value] of Object.entries(expectedHeaders)) {
+      expect(headers[name], `${name} on ${url}`).toBe(value);
+    }
+  };
+
+  const channel = await request.get("/channel", { maxRedirects: 0 });
+  expect(channel.status()).toBe(200);
+  expectSecurityHeaders("/channel", channel.headers());
+  const html = await channel.text();
+
+  const policy = channel.headers()["content-security-policy-report-only"] ?? "";
+  const nonce = /'nonce-([^']+)'/.exec(policy)?.[1] ?? "";
+  expect(nonce.length, "a nonce in the report-only policy").toBeGreaterThanOrEqual(22);
+  const scriptTags = html.match(/<script\b[^>]*>/g) ?? [];
+  expect(scriptTags.length).toBeGreaterThan(0);
+  for (const tag of scriptTags) {
+    expect(tag, "every script carries the response's nonce").toContain(`nonce="${nonce}"`);
+  }
+
+  const staticAsset = /\/_next\/static\/[^"'\s]+\.js/.exec(html)?.[0];
+  expect(staticAsset, "a static chunk referenced by /channel").toBeTruthy();
+  for (const url of ["/", "/login", "/channel.ics", "/api/channel/live", "/api/health", staticAsset ?? "", "/no-such-page-m128", "/live?tab=control"]) {
+    const response = await request.get(url, { maxRedirects: 0 });
+    expectSecurityHeaders(url, response.headers());
+    if (url === "/no-such-page-m128") {
+      expect(response.status()).toBe(404);
+    }
+  }
+  // The legacy admin paths are redirected in middleware.ts, not in next.config redirects(): Next.js 15.5
+  // answers a redirects() entry before headers() apply (server/lib/router-utils/resolve-routes.js), but a
+  // middleware redirect carries them, and never the /channel report-only policy.
+  const legacyRedirect = await request.get("/broadcast", { maxRedirects: 0 });
+  expect(legacyRedirect.status()).toBe(307);
+  expect(legacyRedirect.headers()["location"]).toBe("/live?tab=control");
+  expectSecurityHeaders("/broadcast", legacyRedirect.headers());
+  expect(legacyRedirect.headers()["content-security-policy-report-only"]).toBeUndefined();
+
+  const cspMessages: string[] = [];
+  page.on("console", (message) => {
+    if (message.text().includes("Content Security Policy")) {
+      cspMessages.push(message.text());
+    }
+  });
+  await page.goto("/channel");
+  // One "state" event of the channel stream, read in the page like the page's own EventSource does.
+  const gotState = await page.evaluate(
+    () =>
+      new Promise<boolean>((resolve) => {
+        const source = new EventSource("/api/channel/live/stream");
+        const timer = window.setTimeout(() => {
+          source.close();
+          resolve(false);
+        }, 15_000);
+        source.addEventListener("state", () => {
+          window.clearTimeout(timer);
+          source.close();
+          resolve(true);
+        });
+      })
+  );
+  expect(gotState).toBe(true);
+  expect(cspMessages).toEqual([]);
+});

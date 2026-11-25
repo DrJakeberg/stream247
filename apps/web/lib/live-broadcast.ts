@@ -408,7 +408,7 @@ export type PublicChannelSnapshot = {
   overlay: LiveOverlaySummary;
   engagement: LiveEngagementSummary;
   activeScene: LiveSceneSummary;
-  playout: Pick<LivePlayoutSummary, "status" | "message" | "currentTitle" | "transitionState" | "overrideMode">;
+  playout: Pick<LivePlayoutSummary, "status" | "currentTitle" | "transitionState" | "overrideMode">;
   currentAsset: LiveAssetSummary | null;
   nextAsset: LiveAssetSummary | null;
   queuedAssets: LiveAssetSummary[];

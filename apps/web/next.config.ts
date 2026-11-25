@@ -1,6 +1,6 @@
 import path from "node:path";
 import type { NextConfig } from "next";
-import { buildWorkspaceHref } from "./lib/workspace-navigation";
+import { SECURITY_HEADERS } from "./lib/security-headers";
 
 const nextConfig: NextConfig = {
   output: "standalone",
@@ -25,78 +25,15 @@ const nextConfig: NextConfig = {
     };
     return config;
   },
-  async redirects() {
-    return [
-      {
-        source: "/broadcast",
-        destination: buildWorkspaceHref("live", "control"),
-        permanent: false
-      },
-      {
-        source: "/dashboard",
-        destination: buildWorkspaceHref("live", "status"),
-        permanent: false
-      },
-      {
-        source: "/moderation",
-        destination: buildWorkspaceHref("live", "moderation"),
-        permanent: false
-      },
-      {
-        source: "/schedule",
-        destination: buildWorkspaceHref("program", "schedule"),
-        permanent: false
-      },
-      {
-        source: "/pools",
-        destination: buildWorkspaceHref("program", "pools"),
-        permanent: false
-      },
-      // /assets/:id and /sources/:id are NOT redirected: they are the detail pages. Until 2026-09-06 they
-      // were sent to the library/sources tab with ?assetId=/?sourceId=, which nothing read, so every
-      // "Open asset detail" link landed back on the list. program/page.tsx forwards those old query
-      // links to the detail pages instead.
-      {
-        source: "/library",
-        destination: buildWorkspaceHref("program", "library"),
-        permanent: false
-      },
-      {
-        source: "/sources",
-        destination: buildWorkspaceHref("program", "sources"),
-        permanent: false
-      },
-      {
-        source: "/overlay-studio",
-        destination: buildWorkspaceHref("studio", "scene"),
-        permanent: false
-      },
-      {
-        source: "/overlays",
-        destination: buildWorkspaceHref("studio", "engagement"),
-        permanent: false
-      },
-      {
-        source: "/output",
-        destination: buildWorkspaceHref("studio", "output"),
-        permanent: false
-      },
-      {
-        source: "/settings",
-        destination: buildWorkspaceHref("admin", "settings"),
-        permanent: false
-      },
-      {
-        source: "/team",
-        destination: buildWorkspaceHref("admin", "team"),
-        permanent: false
-      },
-      {
-        source: "/ops",
-        destination: buildWorkspaceHref("live", "status"),
-        permanent: false
-      }
-    ];
+  // M128: the security headers on every answer, static assets included. There is no redirects() entry: Next.js
+  // 15.5 answers those before it applies headers(), so the legacy admin paths are redirected in middleware.ts
+  // (lib/legacy-redirects.ts), whose answers do get these. The values are baked in at build time
+  // (lib/security-headers.ts explains each); a reverse proxy that sets the same headers should either drop
+  // its own or overwrite these, so there is one source (docs/deployment.md). HSTS has no includeSubDomains
+  // or preload: those are the operator's choice, made in the proxy. The per-request nonce policy of /channel
+  // lives in middleware.ts too.
+  async headers() {
+    return [{ source: "/:path*", headers: SECURITY_HEADERS }];
   }
 };
 
