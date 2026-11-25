@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fork } from "node:child_process";
 import path from "node:path";
@@ -6,9 +6,12 @@ import { describe, expect, it } from "vitest";
 import {
   FROZEN_AFTER_MS,
   FrozenChildWatch,
+  PERSISTENT_TMP_DIR,
   SUPERVISOR_HEARTBEAT_MESSAGE,
+  defaultMarkerDir,
   exitCodeForChild,
   frozenMarkerPath,
+  readFrozenMarker,
   runSupervisor,
   startSupervisorHeartbeat,
   takeFrozenMarker,
@@ -152,6 +155,72 @@ setTimeout(() => process.exit(4), 400);`);
     expect(result.code).toBe(3);
     expect(result.elapsedMs).toBeGreaterThanOrEqual(900);
     expect(takeFrozenMarker(path.join(result.markerDir, "stream247-frozen-playout.json"))).toBeNull();
+  });
+});
+
+describe("the frozen-restart marker survives a tmpfs on /tmp (M126)", () => {
+  const marker = { mode: "playout", silentForMs: 302_000, killedAt: "2026-10-29T09:00:00.000Z" };
+
+  it("lives in /var/tmp without STREAM247_SUPERVISOR_MARKER_DIR", () => {
+    expect(PERSISTENT_TMP_DIR).toBe("/var/tmp");
+    const varTmp = mkdtempSync(path.join(tmpdir(), "m126-var-tmp-"));
+    expect(frozenMarkerPath("worker", {}, varTmp)).toBe(path.join(varTmp, "stream247-frozen-worker.json"));
+    expect(defaultMarkerDir(varTmp)).toBe(varTmp);
+  });
+
+  it("an explicit STREAM247_SUPERVISOR_MARKER_DIR still wins", () => {
+    const varTmp = mkdtempSync(path.join(tmpdir(), "m126-var-tmp-"));
+    const explicit = mkdtempSync(path.join(tmpdir(), "m126-explicit-"));
+    expect(frozenMarkerPath("uplink", { STREAM247_SUPERVISOR_MARKER_DIR: explicit }, varTmp)).toBe(
+      path.join(explicit, "stream247-frozen-uplink.json")
+    );
+  });
+
+  it("falls back to the temp directory when /var/tmp is missing or not a directory", () => {
+    const base = mkdtempSync(path.join(tmpdir(), "m126-base-"));
+    expect(defaultMarkerDir(path.join(base, "missing"))).toBe(tmpdir());
+    writeFileSync(path.join(base, "file"), "");
+    expect(defaultMarkerDir(path.join(base, "file"))).toBe(tmpdir());
+    expect(frozenMarkerPath("worker", {}, path.join(base, "missing"))).toBe(path.join(tmpdir(), "stream247-frozen-worker.json"));
+  });
+
+  // root writes to a read-only directory anyway, so this case only shows as another user.
+  it.skipIf(process.getuid?.() === 0)("falls back to the temp directory when /var/tmp is not writable", () => {
+    const readOnly = mkdtempSync(path.join(tmpdir(), "m126-read-only-"));
+    chmodSync(readOnly, 0o555);
+    try {
+      expect(defaultMarkerDir(readOnly)).toBe(tmpdir());
+    } finally {
+      chmodSync(readOnly, 0o755);
+    }
+  });
+
+  it("a restart with an emptied /tmp still finds the marker", () => {
+    // The temp directory stands in for the tmpfs on /tmp, a second directory for /var/tmp.
+    const fakeTmp = mkdtempSync(path.join(tmpdir(), "m126-tmpfs-"));
+    const varTmp = mkdtempSync(path.join(tmpdir(), "m126-var-tmp-"));
+    const tmpdirBefore = process.env.TMPDIR;
+    process.env.TMPDIR = fakeTmp;
+    try {
+      expect(tmpdir()).toBe(fakeTmp);
+      // The production stack sets no STREAM247_SUPERVISOR_MARKER_DIR.
+      writeFrozenMarker(frozenMarkerPath("playout", {}, varTmp), marker);
+      // The restart: the tmpfs comes back empty, the writable layer keeps /var/tmp.
+      rmSync(fakeTmp, { recursive: true, force: true });
+      mkdirSync(fakeTmp);
+      expect(readFrozenMarker(frozenMarkerPath("playout", {}, varTmp))).toEqual(marker);
+    } finally {
+      if (tmpdirBefore === undefined) {
+        delete process.env.TMPDIR;
+      } else {
+        process.env.TMPDIR = tmpdirBefore;
+      }
+    }
+  });
+
+  it("the supervisor and the next process resolve the marker the same way", () => {
+    expect(read("apps/worker/src/process-supervisor.ts")).toContain("const markerPath = frozenMarkerPath(options.mode, env);");
+    expect(read("apps/worker/src/index.ts")).toContain("const markerPath = frozenMarkerPath(mode);");
   });
 });
 

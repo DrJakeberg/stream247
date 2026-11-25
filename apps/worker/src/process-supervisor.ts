@@ -13,7 +13,7 @@
 // nothing to run a supervisor with (the relay watch in relay-watch.ts reports it instead).
 
 import { fork, type ChildProcess } from "node:child_process";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { accessSync, constants, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -65,12 +65,38 @@ export function exitCodeForChild(code: number | null, signal: NodeJS.Signals | n
 export type FrozenRestartMarker = { mode: string; silentForMs: number; killedAt: string };
 
 /**
- * Where the supervisor leaves a note for the next process. `docker restart` and the restart policy
- * keep the container's filesystem, so the next process finds it and can raise the incident; the
- * supervisor itself has no database connection.
+ * The marker's directory without STREAM247_SUPERVISOR_MARKER_DIR (M126). /var/tmp lies in the container's
+ * writable layer, which a restart keeps; /tmp does too, unless the stack mounts a tmpfs there, and the
+ * production stack does in worker, playout and uplink.
  */
-export function frozenMarkerPath(mode: string, env: NodeJS.ProcessEnv = process.env): string {
-  return path.join(env.STREAM247_SUPERVISOR_MARKER_DIR || tmpdir(), `stream247-frozen-${mode}.json`);
+export const PERSISTENT_TMP_DIR = "/var/tmp";
+
+/** `persistentDir` when it is a directory this process can write to, else the temp directory. */
+export function defaultMarkerDir(persistentDir: string = PERSISTENT_TMP_DIR): string {
+  try {
+    if (statSync(persistentDir).isDirectory()) {
+      accessSync(persistentDir, constants.W_OK | constants.X_OK);
+      return persistentDir;
+    }
+  } catch {
+    // Missing or not writable: the temp directory, as before M126.
+  }
+  return tmpdir();
+}
+
+/**
+ * Where the supervisor leaves a note for the next process. `docker restart` and the restart policy
+ * keep the container's writable layer, so the next process finds it and can raise the incident; the
+ * supervisor itself has no database connection. A tmpfs is empty again after the restart, so the
+ * default is /var/tmp, not the temp directory; an explicit STREAM247_SUPERVISOR_MARKER_DIR still wins.
+ * The supervisor writes and the next process reads through this one function.
+ */
+export function frozenMarkerPath(
+  mode: string,
+  env: NodeJS.ProcessEnv = process.env,
+  persistentDir: string = PERSISTENT_TMP_DIR
+): string {
+  return path.join(env.STREAM247_SUPERVISOR_MARKER_DIR || defaultMarkerDir(persistentDir), `stream247-frozen-${mode}.json`);
 }
 
 export function writeFrozenMarker(markerPath: string, marker: FrozenRestartMarker): void {

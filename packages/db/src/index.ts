@@ -9736,13 +9736,17 @@ export async function upsertIncident(args: {
       [createId("incident"), args.scope, args.severity, title, message, args.fingerprint, now]
     );
 
+    // Only resolved rows age out of the newest 100. An open incident stays however old it is: it is still
+    // true, and a run of new fingerprints could push an open critical one past the cut and delete it
+    // unresolved, so the operator would lose the one thing still wrong (M126).
     await client.query(`
       DELETE FROM incidents
-      WHERE id IN (
-        SELECT id FROM incidents
-        ORDER BY updated_at DESC, created_at DESC
-        OFFSET 100
-      )
+      WHERE status = 'resolved'
+        AND id IN (
+          SELECT id FROM incidents
+          ORDER BY updated_at DESC, created_at DESC
+          OFFSET 100
+        )
     `);
   });
 

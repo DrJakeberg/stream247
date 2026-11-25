@@ -185,14 +185,15 @@ entries under its *DUT checks of 2.3.1 (run)*; the M107 entry below did not run 
   `unknown` (the counts come from `docker compose ps` in the directory above `scripts/`; without the
   stack's compose project there, restarts go unseen). Without `SESSION_COOKIE` every sample logs
   `openCriticalIncidents=skipped(no-session-cookie)`, so after the soak the last command lists the critical
-  incidents of its 24 hours; each one is reported.
+  incidents of its 24 hours and every one still open; each one is reported.
 
   ```sh
   ssh dut 'grep -c "SOAK_RESTART_SERVICES=\"web worker playout uplink relay\"" <checkout>/scripts/soak-monitor.sh'
   ssh dut 'log=$(ls -t ~/logs/soak-*.log | head -1); head -1 "$log"; grep -m1 "Baseline container restarts" "$log"'
   ssh dut 'docker exec -i stream247-postgres-1 psql -U stream247 -d stream247 -At' <<'SQL'
   SELECT created_at, fingerprint, status, resolved_at FROM incidents WHERE severity = 'critical'
-    AND updated_at > to_char(now() - interval '25 hours', 'YYYY-MM-DD"T"HH24:MI:SS') ORDER BY created_at;
+    AND (status = 'open' OR updated_at > to_char(now() - interval '25 hours', 'YYYY-MM-DD"T"HH24:MI:SS'))
+    ORDER BY created_at;
   SQL
   ```
 
@@ -239,17 +240,18 @@ entries under its *DUT checks of 2.3.1 (run)*; the M107 entry below did not run 
   ssh dut 'docker logs --since 24h stream247-worker-1 2>&1 | grep -c "twitch.schedule.segment.delete_failed"'
   ```
 
-- M114, after the repin and outside a soak (a restart fails a soak): the three containers run under the
-  supervisor, and a stopped worker process restarts within six minutes. Passes when the first command
-  lists `supervisor.js` and `index.js` for each of worker, playout and uplink, the restart count after the
-  wait is one higher than before, the log has one `worker.supervisor.frozen` line and the query lists an
-  open or resolved `worker.health.frozen-restart` row. The worker is chosen because stopping it does not
-  cut the air.
+- M114, after the stack takeover (*Stack* under *Upgrading To 2.4* in `docs/deployment.md`) and outside a
+  soak (a restart fails a soak; since M126 the marker needs no setting where `/tmp` is a tmpfs): the three
+  containers run under the supervisor, and a stopped worker process restarts within six minutes. Passes when the first
+  command lists `supervisor.js` and `index.js` for each of worker, playout and uplink, the restart count
+  after the wait is one higher than before, the log has one `worker.supervisor.frozen` line and the query
+  lists an open or resolved `worker.health.frozen-restart` row. The worker is chosen because stopping it
+  does not cut the air.
 
   ```sh
   ssh dut 'for c in worker playout uplink; do docker top stream247-$c-1 -o pid,args | grep -E "supervisor.js|index.js"; done'
   ssh dut 'docker inspect -f "{{.RestartCount}}" stream247-worker-1'
-  ssh dut 'docker exec stream247-worker-1 sh -c "kill -STOP \$(pgrep -f \"dist/index.js worker\")"'
+  ssh dut 'docker exec stream247-worker-1 sh -c "kill -STOP \$(pgrep -f \"[d]ist/index.js worker\")"'
   # wait six minutes
   ssh dut 'docker inspect -f "{{.RestartCount}}" stream247-worker-1'
   ssh dut 'docker logs --since 10m stream247-worker-1 2>&1 | grep -c "worker.supervisor.frozen"'
@@ -258,17 +260,21 @@ entries under its *DUT checks of 2.3.1 (run)*; the M107 entry below did not run 
   SQL
   ```
 
-- M114 follow-up, after the repin and outside a soak, at a time when a short cut on air is acceptable
-  (the relay carries the programme to the uplink): a relay that stops answering is restarted. Passes when
-  `relay-watchdog` runs, the relay's start time after the wait is newer than before, and the log has one
-  `relay.watchdog.restart` line with `attempt` 1.
+- M114 follow-up, after the stack takeover and outside a soak, with the relay's API answering (the watchdog
+  check under *Stack* in `docs/deployment.md` prints an HTTP status; a relay that never answered is never
+  restarted), at a time when a short cut on air is acceptable (a live source on air passes through the
+  relay, and so does the programme where `STREAM247_UPLINK_INPUT_MODE=rtmp`): a relay that stops answering
+  is restarted. Passes when `relay-watchdog` runs, the relay's start time after the wait is newer than
+  before, and the log has one `relay.watchdog.restart` line with `attempt` 1. Docker reports a stopped relay
+  as running; when the start time has not moved, the last command lets it go on.
 
   ```sh
   ssh dut 'docker inspect -f "{{.State.Status}} {{.State.StartedAt}}" stream247-relay-watchdog-1 stream247-relay-1'
   ssh dut 'docker kill -s STOP stream247-relay-1'
-  # wait four minutes
+  # wait five minutes
   ssh dut 'docker inspect -f "{{.State.Status}} {{.State.StartedAt}}" stream247-relay-1'
   ssh dut 'docker logs --since 10m stream247-relay-watchdog-1 2>&1 | grep relay.watchdog.restart'
+  ssh dut 'docker kill -s CONT stream247-relay-1'
   ```
 
 - M115, after the repin: the uplink's ffmpeg asks for the global header and Twitch still takes the
@@ -316,12 +322,17 @@ entries under its *DUT checks of 2.3.1 (run)*; the M107 entry below did not run 
   its row in the as-run log (`/live?tab=status`), and the overlay's chapter title and the Next card's time match the item, not the restart.
 
   ```sh
-  ssh dut 'docker logs --since 30m stream247-worker-1 2>&1 | grep -E "playout\.resume\.(point|start|not_seekable)"'
+  ssh dut 'docker logs --since 30m stream247-playout-1 2>&1 | grep -E "playout\.resume\.(point|start|not_seekable)"'
   ```
 
-- M124, at the repin of the candidate: the item on air when the containers restart continues 10 s before
-  the restart (a cut of a local file or cached archive), not from its beginning or with the next item.
-  Passes when the first `playout.resume.start` after the repin names the asset that was on air before it.
+- M124, at the stack takeover's redeploy or the next restart of the playout container, not at the repin from
+  2.3.1 (2.3.1 kept no position, so that repin continues nothing): the item on air when the container
+  restarts continues 10 s before the restart (a cut of a local file or cached archive), not from its
+  beginning or with the next item. Run it only while a pool's local file or cached archive is on air that has
+  aired at least two minutes and has at least two minutes left (below that it starts from 0 or is dropped).
+  Passes when the first `playout.resume.start` after that restart names the asset that was on air before it
+  and its `startOffsetSeconds` is about the position at the cut less 10 s (up to one 15 s cycle earlier after
+  a kill), not 0.
 
 - M125, after the repin: the public health answer carries no destination details. Passes when the count
   is `0` and the second command prints exactly the five status fields.
@@ -331,9 +342,11 @@ entries under its *DUT checks of 2.3.1 (run)*; the M107 entry below did not run 
   ssh dut 'docker exec stream247-web-1 wget -qO- http://127.0.0.1:3000/api/health' | grep -o '"destination":{[^}]*}'
   ```
 
-- M125, after the repin: the relay still accepts its own reads and every push source (the relay check now
-  never refuses a correct key). Passes when the channel is on air with `uplink=ok` in readiness and a push
-  source in Studio publishes, and the relay log shows no refused read from the uplink since the repin.
+- M125, after the repin, on a relay that runs the shipped `docker/mediamtx.yml` (not applicable to a relay on
+  the image's own configuration without ingest ports, which never asks `web`): the relay still accepts its
+  own reads and every push source (the relay check now never refuses a correct key). Passes when the
+  channel is on air with `uplink=ok` in readiness and a push source in Studio publishes, and the relay log
+  shows no refused read from the uplink since the repin.
 
   ```sh
   ssh dut 'docker logs --since 30m stream247-relay-1 2>&1 | grep -ci "authentication failed"'
@@ -348,4 +361,85 @@ entries under its *DUT checks of 2.3.1 (run)*; the M107 entry below did not run 
 
   ```sh
   ssh dut 'docker ps --format "{{.Names}}" | grep -i traefik | xargs -r -n1 docker inspect --format "{{.Name}} {{join .Args \" \"}}" | grep -o "forwardedHeaders[^ ]*"'
+  ```
+
+- M126, after the repin of the candidate (the DUT runs program-feed mode, `STREAM247_RELAY_ENABLED=1` with the
+  `hls` input): with live sources off the worker does not watch the relay, and a `relay.unreachable` left
+  open closes. The first command prints both variables in worker and uplink; both lines must carry the
+  same (`1 hls`, or `1` alone: unset is `hls`), since the worker decides from its own. Whether live sources
+  are on is the switch *Live video from sources* under Settings; say which it was. Run the rest with the
+  M114 follow-up
+  (its relay stop): two and a half minutes after its `docker kill -s STOP`, before the watchdog's restart at
+  three, the query lists no row with status `open` (2.4.0-rc.1 raised one at two minutes); after its wait,
+  the worker's log (it starts when the repin created the container) has no `relay.unreachable` line (a
+  `relay.reachable` line with `"inUse":false` is the close of one that was open). With live sources on, the
+  worker watches the relay as before, and an open row at two and a half minutes is the expected result.
+
+  ```sh
+  ssh dut 'for c in worker uplink; do docker exec stream247-$c-1 sh -c "echo $c \$STREAM247_RELAY_ENABLED \$STREAM247_UPLINK_INPUT_MODE"; done'
+  # with the M114 follow-up, two and a half minutes after its docker kill -s STOP stream247-relay-1
+  ssh dut 'docker exec -i stream247-postgres-1 psql -U stream247 -d stream247 -At' <<'SQL'
+  SELECT status, created_at, updated_at, resolved_at FROM incidents WHERE fingerprint = 'relay.unreachable';
+  SQL
+  # after the M114 follow-up's wait
+  ssh dut 'docker logs stream247-worker-1 2>&1 | grep -E "relay\.(reachable|unreachable)"'
+  ```
+
+- M126, after the repin: the frozen-restart marker survives the tmpfs on `/tmp`. Passes when the first command
+  prints `/var/tmp 1777`, `writable` (a read-only root prints `1777` too, but not this) and a `tmpfs` line
+  for `/tmp` in each of worker, playout and uplink, and the M114 check above (a stopped worker process
+  restarts), run with the stack file's tmpfs in place and without `STREAM247_SUPERVISOR_MARKER_DIR` (the
+  second command prints nothing, or `/var/tmp` where the stack file still sets it), is followed by the next
+  process's report: after the M114 check's wait the fourth command prints `1`, and the fifth lists the
+  `worker.health.frozen-restart` row with an `updated_at` later than the time the third command printed
+  right before the M114 check's `kill -STOP`. A row an earlier restart left keeps its `created_at`, so the
+  M114 query's row alone proves nothing. Outside a soak, as the M114 check.
+
+  ```sh
+  ssh dut 'for c in worker playout uplink; do docker exec stream247-$c-1 sh -c "stat -c \"%n %a\" /var/tmp; touch /var/tmp/.m126 && rm /var/tmp/.m126 && echo writable; grep \" /tmp \" /proc/mounts"; done'
+  ssh dut 'docker exec stream247-worker-1 printenv STREAM247_SUPERVISOR_MARKER_DIR'
+  # right before the M114 check's kill -STOP
+  ssh dut 'date -u +%Y-%m-%dT%H:%M:%SZ'
+  # after the M114 check's wait
+  ssh dut 'docker logs --since 10m stream247-worker-1 2>&1 | grep -c "worker.health.frozen_restart"'
+  ssh dut 'docker exec -i stream247-postgres-1 psql -U stream247 -d stream247 -At' <<'SQL'
+  SELECT status, updated_at FROM incidents WHERE fingerprint = 'worker.health.frozen-restart';
+  SQL
+  ```
+
+- M126, after the candidate's soak: a `docker restart` (the relay watchdog's) is followed by the restart check.
+  Each `container-restart-count-reset` line is listed with its time in the result, next to the
+  `container-started-again` (or `docker-daemon-restart`) line that names the same service at the same
+  sample; a run with one is *passed with failure* at best. Passes when every reset line has such a
+  partner, and a `container-restart-check-failed` line after a reset names a service whose `RestartCount`
+  (second command) is above the reset's `restartCount`: a restart of the restart policy, which fails the
+  soak as it should, not the reset itself.
+
+  ```sh
+  ssh dut 'grep -E "Baseline container restarts|container-restart-count-reset|container-started-again|docker-daemon-restart|container-restart-check-failed" ~/logs/soak-<stamp>.log'
+  ssh dut 'docker inspect -f "{{.Name}} {{.RestartCount}}" stream247-web-1 stream247-worker-1 stream247-playout-1 stream247-uplink-1 stream247-relay-1'
+  ```
+
+- M126, right before the repin and a few hours after it: an open incident is never pruned. The check is void
+  when the fourth command's first line (the incidents open before) is `0`; say so. Passes when it prints
+  nothing after that line. A fingerprint it prints (open before, gone after) fails the check when the fifth
+  command prints a count below 100: a resolved row ages out only behind 100 rows updated no earlier than
+  it, so with fewer than 100 rows updated since the snapshot that row went while it was open. At 100 or
+  more that fingerprint is undecided (it may have resolved and aged out as it should): list it. The status
+  counts go into the result (the table may now hold more than 100 rows while old incidents are open).
+
+  ```sh
+  ssh dut 'date -u +%Y-%m-%dT%H:%M:%S.000Z > ~/m126-snapshot-at.txt; cat ~/m126-snapshot-at.txt'
+  ssh dut 'docker exec -i stream247-postgres-1 psql -U stream247 -d stream247 -At > ~/m126-open-before.txt' <<'SQL'
+  SELECT fingerprint FROM incidents WHERE status = 'open';
+  SQL
+  # a few hours after the repin
+  ssh dut 'docker exec -i stream247-postgres-1 psql -U stream247 -d stream247 -At > ~/m126-all-after.txt' <<'SQL'
+  SELECT fingerprint FROM incidents;
+  SQL
+  ssh dut 'wc -l < ~/m126-open-before.txt; grep -vxFf ~/m126-all-after.txt ~/m126-open-before.txt'
+  ssh dut 'docker exec -i stream247-postgres-1 psql -U stream247 -d stream247 -At -v since="$(cat ~/m126-snapshot-at.txt)"' <<'SQL'
+  SELECT COUNT(*) FROM incidents WHERE updated_at >= :'since';
+  SQL
+  ssh dut 'docker exec stream247-postgres-1 psql -U stream247 -d stream247 -At -c "SELECT status, COUNT(*) FROM incidents GROUP BY status"'
   ```

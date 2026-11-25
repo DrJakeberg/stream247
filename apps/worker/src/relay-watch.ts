@@ -7,8 +7,13 @@
 // incident `relay.unreachable` once it has not answered for `RELAY_UNREACHABLE_AFTER_MS` in a row;
 // the incident closes on the first answer again.
 //
-// Only while something uses the relay: relay mode (the uplink reads the programme from it) or live
-// sources (cameras publish into it). Otherwise a stopped relay changes nothing on air.
+// Only while something uses the relay: relay mode with the uplink reading the programme from it
+// (uplink input `rtmp`) or live sources (cameras publish into it). Otherwise a stopped relay takes
+// neither the programme nor a live attach off the air. Program-feed mode (M126) is relay mode with the
+// default uplink input `hls`: the playout writes HLS and the uplink reads that playlist, so no programme
+// passes through the relay.
+
+import type { UplinkInputMode } from "./ffmpeg-runtime.js";
 
 export const RELAY_UNREACHABLE_AFTER_MS = 2 * 60_000;
 export const RELAY_API_TIMEOUT_MS = 5_000;
@@ -58,10 +63,24 @@ export class RelayWatch {
     }
     return { action: "none" };
   }
+
+  /** One worker cycle (M126): the API is asked only while something uses the relay, else the watch idles. */
+  async cycle(
+    inUse: boolean,
+    probe: () => Promise<boolean>,
+    now: () => number = Date.now
+  ): Promise<RelayWatchAction> {
+    return inUse ? this.observe(await probe(), now()) : this.idle();
+  }
 }
 
-export function relayInUse(args: { relayModeEnabled: boolean; sourceLiveEnabled: boolean }): boolean {
-  return args.relayModeEnabled || args.sourceLiveEnabled;
+/** `uplinkInputMode` as `getUplinkInputMode` normalises it: anything but `rtmp` is `hls`. */
+export function relayInUse(args: {
+  relayModeEnabled: boolean;
+  uplinkInputMode: UplinkInputMode;
+  sourceLiveEnabled: boolean;
+}): boolean {
+  return (args.relayModeEnabled && args.uplinkInputMode === "rtmp") || args.sourceLiveEnabled;
 }
 
 /**

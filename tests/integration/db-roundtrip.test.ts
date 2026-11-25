@@ -3655,4 +3655,43 @@ describe.sequential("database roundtrip", () => {
       expect((await readAppState()).teamAccessGrants.some((entry) => entry.id === grant.id)).toBe(false);
     }, 60_000);
   });
+
+  describe("incident pruning keeps open incidents (M126)", () => {
+    it("deletes resolved rows beyond the newest 100 and never an open one, however old", async () => {
+      await ensureDatabaseWithRetry();
+      // The table to itself, so the counts below are exact; full-state writes replace it the same way.
+      await executeSql("DELETE FROM incidents;");
+      const iso = `'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'`;
+      await executeSql(`
+        INSERT INTO incidents (id, scope, severity, status, title, message, fingerprint, created_at, updated_at, resolved_at)
+        SELECT 'incident_m126_resolved_' || n, 'worker', 'warning', 'resolved', 'Resolved ' || n, 'Cleared.',
+               'test.m126.resolved.' || n, stamp, stamp, stamp
+        FROM (
+          SELECT n, to_char(timestamp '2025-01-01 00:00:00' + n * interval '1 minute', ${iso}) AS stamp
+          FROM generate_series(1, 110) AS n
+        ) AS seeded;
+        INSERT INTO incidents (id, scope, severity, status, title, message, fingerprint, created_at, updated_at, resolved_at)
+        VALUES
+          ('incident_m126_open', 'playout', 'critical', 'open', 'Old and still open', 'Still wrong.', 'test.m126.open',
+           '2024-06-01T00:00:00.000Z', '2024-06-01T00:00:00.000Z', ''),
+          ('incident_m126_old_resolved', 'playout', 'critical', 'resolved', 'Old and resolved', 'Cleared.',
+           'test.m126.old-resolved', '2024-06-01T00:00:00.000Z', '2024-06-01T00:00:00.000Z', '2024-06-01T00:00:00.000Z');
+      `);
+      expect(await executeSql("SELECT COUNT(*) FROM incidents;")).toBe("112");
+
+      // A new fingerprint is what runs the prune.
+      await upsertIncident({ scope: "worker", severity: "warning", title: "New", message: "New.", fingerprint: "test.m126.new" });
+
+      // Kept: the newest 100 (the new row and the 99 newest resolved) plus the old open one.
+      expect(await executeSql("SELECT status || '|' || severity FROM incidents WHERE id = 'incident_m126_open';")).toBe("open|critical");
+      expect(await executeSql("SELECT COUNT(*) FROM incidents;")).toBe("101");
+      expect(await executeSql("SELECT COUNT(*) FROM incidents WHERE status = 'resolved';")).toBe("99");
+      expect(await executeSql("SELECT COUNT(*) FROM incidents WHERE id = 'incident_m126_old_resolved';")).toBe("0");
+      expect(await executeSql("SELECT COUNT(*) FROM incidents WHERE fingerprint = 'test.m126.resolved.11';")).toBe("0");
+      expect(await executeSql("SELECT COUNT(*) FROM incidents WHERE fingerprint = 'test.m126.resolved.12';")).toBe("1");
+      expect((await readAppState()).incidents.find((incident) => incident.fingerprint === "test.m126.open")?.status).toBe("open");
+
+      await executeSql("DELETE FROM incidents WHERE fingerprint LIKE 'test.m126.%';");
+    }, 60_000);
+  });
 });
