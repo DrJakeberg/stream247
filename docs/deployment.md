@@ -339,7 +339,7 @@ Do not use `latest` for unattended production deployments.
     Without `SESSION_COOKIE` (below) every sample logs `openCriticalIncidents=skipped(no-session-cookie)`
     and open critical incidents do not fail the soak; read them afterwards instead:
     ```bash
-    docker compose exec -T postgres psql -U stream247 -d stream247 -At -c "SELECT created_at, fingerprint, status, resolved_at FROM incidents WHERE severity = 'critical' AND updated_at > to_char(now() - interval '25 hours', 'YYYY-MM-DD\"T\"HH24:MI:SS') ORDER BY created_at"
+    docker compose exec -T postgres psql -U stream247 -d stream247 -At -c "SELECT created_at, fingerprint, status, resolved_at FROM incidents WHERE severity = 'critical' AND (status = 'open' OR updated_at > to_char(now() - interval '25 hours', 'YYYY-MM-DD\"T\"HH24:MI:SS')) ORDER BY created_at"
     ```
     The soak gate fails if broadcast readiness never becomes ready, or drops and does not come back
     within the outage window (five minutes by default, below). A healed outage does not fail the soak
@@ -836,6 +836,266 @@ whole chapter list).
   an operator saves chapters marks the operator's list `ok` again; run the query of *Before the repin*
   before the roll forward. Chapters that arrive mid-item log every past boundary again (the log only: the
   Twitch category follows the current chapter either way).
+
+### Upgrading To 2.4
+
+2.4 is 2.3.1 plus M111-M125: the suggestions of 2026-10-04 (M112-M123), resuming an interrupted item (M124)
+and the closed findings of the security audit of 2026-10-27 (M125); M111 changes the soak monitor only.
+`CHANGELOG.md` lists every change. This section is the upgrade from 2.3.1 and the way back; from 2.1.0, take
+*Upgrading To 2.3* and *Upgrading To 2.3.1* first.
+
+- **Before the repin.** Back up PostgreSQL and keep the dump (two migrations, below):
+
+  ```bash
+  umask 077; docker compose exec -T postgres pg_dump -U stream247 -d stream247 -Fc > stream247-pre-2.4.dump
+  ```
+
+  On a stack without its compose file at hand (a Portainer stack), run this and the two database commands
+  below as `docker exec -i <project>-postgres-1 …` instead of `docker compose exec -T postgres …`.
+
+  Then list the addresses the overlay's scene layers name (M125). From this release on the scene renderer
+  fetches every picture itself and draws it empty unless it is http or https from a public address: a host
+  that resolves to a loopback, private, link-local or other internal address (`localhost`, `10.…`,
+  `172.16.…` to `172.31.…`, `192.168.…`, a compose service such as `web`) is refused, where 2.3.1 let the
+  renderer fetch any address. A logo or image layer listed with such an address draws empty after the
+  repin; give it an address on a public host. The list holds the address of every layer of every scene,
+  also of layers that are not pictures, in the published overlay, the unpublished draft and the stored scene
+  presets (a draft or a preset with such an address draws empty once it goes live):
+
+  ```bash
+  docker compose exec -T postgres psql -U stream247 -d stream247 -At -c "SELECT DISTINCT m[1] FROM (SELECT custom_layers_json || ' ' || scenes_json AS j FROM overlay_settings UNION ALL SELECT custom_layers_json || ' ' || scenes_json FROM overlay_drafts UNION ALL SELECT overlay_json FROM overlay_scene_presets) AS s, regexp_matches(s.j, '\"url\":\"([^\"]*)\"', 'g') AS m ORDER BY 1"
+  ```
+
+- **Stack.** The repin of the three `STREAM247_*_IMAGE` tags is enough to run 2.4: every service starts
+  with a 2.3.1 stack file. This release's `docker-compose.yml` changes four things, which a stack file of
+  one's own takes over by hand; the Portainer stack is one (it does not publish `web`'s port), and the repin
+  script changes only its three image pins:
+
+  | Change in `docker-compose.yml` | Milestone | With a stack file that lacks it |
+  | --- | --- | --- |
+  | `playout` and `uplink` run `["node", "apps/worker/dist/supervisor.js", "<mode>"]` instead of `index.js`; `worker` names no command and takes the image's, which is the supervisor from this release on | M114 | `playout` and `uplink` run without the supervisor, as in 2.3.1: when one freezes, nothing restarts it |
+  | new service `relay-watchdog`: `STREAM247_WORKER_IMAGE`, `["node", "apps/worker/dist/relay-watchdog.js"]`, `/var/run/docker.sock`, no env file | M114 | a relay that hangs is reported (`relay.unreachable`), not restarted |
+  | `web`: `mem_limit: ${STREAM247_WEB_MEMORY_LIMIT:-2g}` | M125 | no memory ceiling, as before |
+  | `web`: port `${STREAM247_WEB_BIND:-127.0.0.1}:3000:3000` instead of `3000:3000` | M125 | the port stays as the stack file has it; the Portainer stack publishes none |
+
+  Two more things matter from this release on. The table does not list them because the shipped file has
+  had them since before 2.3.1, but a stack file of one's own may lack them.
+
+  - **The relay's API.** From this release on, while relay mode or live sources are on, the worker asks the
+    relay's API (`http://relay:9997` on the stack network) every cycle, and `relay-watchdog` asks the same
+    API. The shipped file turns the API on by mounting `docker/mediamtx.yml` (`api: yes`, M57 stage 2). A
+    relay that runs on the image's own configuration (no `/mediamtx.yml` mount, no `MTX_*` variables) has
+    the API off. Then, about two minutes after the repin, the worker raises the critical `relay.unreachable`
+    and never closes it while the API stays off, and a soak run with `SESSION_COOKIE` fails on it;
+    `relay-watchdog` logs `relay.watchdog.never_answered` and never restarts the relay. The smallest change
+    is one variable on `relay`:
+
+    ```yaml
+    relay:
+      environment:
+        - MTX_API=yes
+    ```
+
+    Use the list form (in the map form, quote it: `MTX_API: "yes"`), and set it on `relay` itself: a
+    variable in an env file that `relay` does not read changes nothing, and giving `relay` the stack's env
+    file hands it every secret. The API needs neither a published port nor `expose`: services on the same
+    network reach it. With the image's default users it answers a call from another container with `401`,
+    which counts as an answer for the worker and the watchdog. RTMP publish and read stay as they are, and
+    an open `relay.unreachable` closes on the first answer. The change works with the 2.3.1 images too,
+    since 2.3.1 reads a `401` as it reads a refused connection, and the redeploy recreates only `relay`.
+    Make it in a redeploy of its own before the repin; then `relay.unreachable` never opens. Check it from
+    the worker: this prints `401`, and `docker port <project>-relay-1` lists no `9997`:
+
+    ```bash
+    docker exec <project>-worker-1 node -e "fetch('http://relay:9997/v3/paths/list?itemsPerPage=1').then((r) => console.log(r.status), (e) => console.log('unreachable', e.cause?.code ?? e.message))"
+    ```
+
+    Mounting `docker/mediamtx.yml` instead also turns on the relay's HTTP auth against `web`: every read and
+    the publish of `live/program` then need the internal key, so the uplink's `rtmp` input works only once
+    `STREAM247_RELAY_OUTPUT_URL` and `STREAM247_RELAY_INPUT_URL` carry it
+    (*Settings → Operations → Relay access*). The mount needs an absolute path to a file that exists on the
+    host, and the API then answers `200` to every container on the network without credentials.
+  - **A tmpfs on `/tmp`.** The supervisor keeps its frozen-restart marker in the temp directory. A tmpfs on
+    `/tmp` is empty again after the restart, so the next process never raises `<mode>.health.frozen-restart`;
+    the restart itself still happens. A stack file that mounts a tmpfs on `/tmp` for `worker`, `playout` or
+    `uplink` sets `STREAM247_SUPERVISOR_MARKER_DIR=/var/tmp` on those services: `/var/tmp` lies in the
+    container's writable layer, which a restart keeps. Keep the tmpfs, since the playout writes its slate
+    and ticker files there. Set the variable in the same redeploy as the commands, since it recreates the
+    three containers.
+
+  Take the table's first two rows into the stack file after the repin has run, never before: a 2.3.1 image
+  has neither `supervisor.js` nor `relay-watchdog.js`, and those containers would not start on it
+  (*Rollback to 2.3.1* below). Copy the `command` lines of `playout` and `uplink` and the whole
+  `relay-watchdog` service from this release's `docker-compose.yml` into the stack file and redeploy; a stack
+  file that names a command for `worker` takes `supervisor.js` there too. The copied service needs two
+  things from the stack file: give `relay-watchdog` the same `networks:` as `relay` (the shipped file names
+  none; in a stack file whose
+  services name a network of their own, and the DUT's stack network is `stream247_net`, not
+  `stream247_default`, a watchdog without one joins the project's default network alone and cannot reach
+  `http://relay:9997`), and keep `logging: *default-logging` only where the stack file defines the
+  `x-logging: &default-logging` anchor, else write the logging block out. The watchdog takes
+  `STREAM247_WORKER_IMAGE`, so the repin script moves it along, and it finds the relay by the Compose labels
+  of its own project and service; the DUT's containers carry them (the soak monitor's `docker compose ps`
+  reads them there).
+
+  Make this change in the redeploy right after the repin (step 7 of *Safe Upgrade Flow*) and start the soak
+  (step 10) only once `playout`, `uplink` and `relay-watchdog` run on the changed file: the redeploy
+  recreates the `playout` and `uplink` containers, a short cut on air, which a soak running across it
+  records as `container-started-again`. More than three minutes after the redeploy, check that the watchdog
+  reaches the relay: `docker logs stream247-relay-watchdog-1` has no `relay.watchdog.never_answered`, no
+  `relay.watchdog.relay_not_found` and no `relay.watchdog.docker_failed` line, and this prints an HTTP status, not `unreachable`: `200` with the
+  shipped `docker/mediamtx.yml`, `401` with `MTX_API=yes` on the image's own configuration.
+  `unreachable ECONNREFUSED` means the API is off; another `unreachable` usually means the watchdog is not on
+  the relay's network:
+
+  ```bash
+  docker exec stream247-relay-watchdog-1 node -e "fetch('http://relay:9997/v3/paths/list?itemsPerPage=1').then((r) => console.log(r.status), (e) => console.log('unreachable', e.cause?.code ?? e.message))"
+  ```
+
+  With the shipped file a browser that opened `http://<host>:3000` from another machine reaches nothing
+  after the update (*Reverse Proxy And URL Notes*). Until the 2.4.0 release moves the defaults, this
+  candidate's `docker-compose.yml` defaults to the `v2.3.1` images, which have no `supervisor.js`: start it
+  only with the three image pins set to `v2.4.0-rc.1`. `.env.production.example` still pins `v2.3.1`, so a
+  fresh install that copies it (*Deploy Steps*) sets the three pins to `v2.4.0-rc.1` by hand.
+- **Schema.** Two additive migrations, applied on the first start; the base schema has the same statements
+  for a fresh install:
+
+  | Migration | Milestone | Change |
+  | --- | --- | --- |
+  | `20261026_001_resume_interrupted_item` | M124 | `playout_runtime.current_start_offset_seconds`, default `0`: where in its item the process on air started; `playout_runtime.resume_points`, default `[]`: the positions still owed, one per pool, newest first, at most 16; `as_run_log.start_offset_seconds`, default `0`: where each run started. Empty means nothing to continue, and every existing as-run row reads as a run from the start |
+  | `20261027_001_team_grant_twitch_user_id` | M125 | `team_access_grants.twitch_user_id`, default `''`: the Twitch user id a grant is bound to; empty for every existing grant, which binds at the member's next sign-in |
+
+  After the first start the first command prints `2`. The count query of *Upgrading To 2.3* above
+  (`id >= '20261001_002'`) prints `11` from this release on: its seven migrations, the two of 2.3.1 and
+  these two.
+
+  ```bash
+  docker compose exec -T postgres psql -U stream247 -d stream247 -At -c "SELECT COUNT(*) FROM schema_migrations WHERE id IN ('20261026_001_resume_interrupted_item', '20261027_001_team_grant_twitch_user_id')"
+  ```
+
+- **Settings.** No managed setting is new, and nothing needs setting, except with the shipped file for a
+  browser that reaches `web` on port 3000 from the LAN without a proxy: `STREAM247_WEB_BIND=0.0.0.0`. New,
+  all optional:
+
+  | Variable | Read by | Default | Milestone |
+  | --- | --- | --- | --- |
+  | `STREAM247_WEB_BIND` | Compose, `web`'s port | `127.0.0.1` | M125 |
+  | `STREAM247_WEB_MEMORY_LIMIT` | Compose, `web`'s `mem_limit` | `2g` | M125 |
+  | `STREAM247_UPLOAD_MAX_BYTES` | `web`, a per-file upload limit in bytes | unset: none | M125 |
+  | `SOAK_DOCKER_TIMEOUT_SECONDS` | the soak monitor, one docker call | `10` | M111 |
+
+  The two Compose variables act only in a stack file that uses them, as the shipped one does. The supervisor
+  and the watchdog also read `STREAM247_SUPERVISOR_MARKER_DIR` (where the frozen-restart marker is kept,
+  default the temp directory) and `STREAM247_DOCKER_SOCKET` (default `/var/run/docker.sock`); their
+  defaults fit the shipped `docker-compose.yml`; a stack file with a tmpfs on `/tmp` sets the marker
+  directory (*Stack* above).
+
+- **After the repin, the operator.** Everyone is signed out once, since older session cookies carry no
+  password stamp (M117): sign in again. A `SESSION_COOKIE` the soak monitor was given before the repin is
+  refused, and its incident check then fails the soak; take a new one after signing in. A team member's
+  next Twitch sign-in binds their grant (M125). The public readiness answers no longer carry the
+  destination's name, ingest URL, notes, last error and key source, nor the feed's playlist path (M125); a
+  monitor that read them finds them only behind the sign-in (`/api/destinations`). A library upload is
+  refused (HTTP 507) when it would leave less free space on the media volume than the disk watermark's
+  trigger (Settings → Disk watermark, default 10 %).
+
+What changes on air in the first hours, without touching a setting:
+
+- **M124.** The repin from 2.3.1 itself continues nothing: a position is kept only for an item a 2.4 playout
+  started, and 2.3.1 wrote none. From then on a cut of a pool's local file or cached Twitch archive keeps its
+  position, and the next time its pool is on air (after a container restart or a repin too) the item
+  continues 10 s before the cut, up to one cycle earlier after a container kill. The log shows
+  `playout.resume.point` at the cut and `playout.resume.start` with `startOffset` when it continues, and the
+  as-run log reads "resumed at h:mm:ss". A cached archive with a position stays in the cache
+  (`vod.cache.kept`, `reason: "resume-point"`).
+- **M114.** With the stack file taken over (above), `docker top` lists `supervisor.js` and `index.js` in the
+  worker, playout and uplink containers, and `relay-watchdog` logs `relay.watchdog.started` (the check that
+  it reaches the relay is under *Stack* above). A frozen-process restart is a restart of the restart policy,
+  which raises `RestartCount` and fails a running soak. The watchdog's relay restart is a `docker restart`,
+  which does not raise `RestartCount` (it sets it back to 0): the soak monitor logs
+  `container-started-again services=relay` and counts it in `containersStartedAgain`, so a run without
+  `SESSION_COOKIE` is *passed with failure* at best; with it, the worker's critical `relay.unreachable` at two
+  minutes fails the run before the watchdog acts at three. Neither is expected on a healthy day. The worker cycle has the step `relay`, which adds at most 5 s while the relay hangs.
+- **M115.** The uplink's encoded ffmpeg command carries `-flags:v +global_header`, so Twitch gets the complete
+  header; its unplanned restart count should not move because of it.
+- **M112.** The runtime's stderr sample and the stderr incidents trail a burst of ffmpeg output by up to 2 s
+  and 10 s (the container log keeps every line). `source.sync.deferred` (a source the cycle had no room for),
+  `source.sync.paused` (a dead host, for 10 min) and `playout.selection.passed_over` (a pick that failed to
+  resolve) are not expected on a healthy day.
+- **M113.** Once the broadcast channel writes the schedule, a stale segment Twitch does not delete raises the
+  warning `twitch.schedule.delete.failed` until a later sync deletes it; the first sync after the start runs
+  at once.
+- **M125.** A refused or failed overlay picture is drawn empty and asked again after a minute (the query under
+  *Before the repin*). The relay check never refuses a correct key, the relay's own reads included. The
+  sign-in limit keys on the last `X-Forwarded-For` entry, so the proxy in front of `web` must write it
+  itself (*Reverse Proxy And URL Notes*; the Traefik check in `planning/dut-checks.md`).
+- **M118, M119, M123.** The week view, the Day lens and `/channel` plan from the end of the item on air, and in
+  real time on the two clock-change nights; only the plan changes, not what airs.
+- **M120.** *Resume schedule* of a Skip's hold, a Remove next or a Move next alone no longer restarts the
+  playout, and *Operator holds* lists what Resume clears.
+
+#### Rollback to 2.3.1
+
+The way back is the reverse repin to `v2.3.1`, after the stack file step below when the stack file was taken
+over; back to 2.1.0, take the step of *Rollback to 2.1.0* above as well. Nothing in the schema needs a step,
+and the pre-upgrade dump is not needed for it.
+
+1. **The stack file first.** A stack file that runs `supervisor.js` (this release's `docker-compose.yml`, or
+   a stack file taken over as above) needs `index.js` back in every command that names `supervisor.js`:
+   `["node", "apps/worker/dist/index.js", "playout"]`, `["node", "apps/worker/dist/index.js", "uplink"]` and,
+   where the stack file names a command for `worker`, `["node", "apps/worker/dist/index.js", "worker"]`
+   (or no command), and `relay-watchdog` goes; all of it before the repin or in the same redeploy: the 2.3.1
+   image has neither `apps/worker/dist/supervisor.js` nor `relay-watchdog.js`, so node stops at once and
+   `restart: unless-stopped` starts those containers again and again, the playout and the uplink off air.
+   With the 2.4 images `index.js` runs too, without the supervisor. A `worker` without a command of its own
+   takes the 2.3.1 image's (`index.js`). A service that leaves the stack file keeps its container when the
+   redeploy does not prune (the DUT's repin runs with `prune=False`), so remove the watchdog's as well:
+   switch on *Prune services* for that Portainer update, or run `docker rm -f stream247-relay-watchdog-1`
+   on the DUT; afterwards `docker ps` lists no `relay-watchdog`. The port binding works with any image, and
+   so does `mem_limit`, but 2.3.1 reads a library upload whole into memory (below): while 2.3.1 runs, take
+   `mem_limit` out or set `STREAM247_WEB_MEMORY_LIMIT` well above the largest upload, or such an upload
+   restarts `web`. A stack file that was never taken over needs nothing. `MTX_API=yes` on `relay` and
+   `STREAM247_SUPERVISOR_MARKER_DIR` can stay: 2.3.1 reads a `401` from the relay's API as a refused
+   connection and does not read the variable.
+2. **Repin** `v2.3.1`, redeploy, and confirm that readiness is green.
+
+What 2.3.1 does with what 2.4 left behind; none of it needs a step:
+
+- **Schema.** 2.3.1 never reads the four columns and leaves them in place: its readers map the fields they
+  know, its schema check at startup looks only for the columns it declares, and its migration runner skips
+  ids it does not know. Its runtime write names its own columns, so `resume_points` and
+  `current_start_offset_seconds` keep what 2.4 wrote last; its as-run rows get `start_offset_seconds` `0`.
+- **M124.** 2.3.1 continues nothing, as before M124. After a later roll forward a position left by 2.4 counts
+  only while it is younger than 24 h and its pool still names the item; a pool that airs under 2.3.1 moves
+  on, and its position goes.
+- **M125.** 2.3.1 finds a grant by login again, a Twitch member keeps the role of their sign-in for the
+  session, and the audit's other findings apply again (the public readiness answers carry the destination's
+  URL, notes and error text, the renderer fetches any address, an upload is read whole into memory). Its
+  whole-state write (`DELETE FROM team_access_grants`, then each grant again without the column; a
+  moderator's `!game` start or stop or a blueprint apply runs it) empties `twitch_user_id`; after a roll
+  forward an empty id binds again at the member's next sign-in. A layer 2.4 drew empty draws again.
+- **M117.** 2.3.1 does not know the password stamp and reads it as the cookie's issue time. The stamp
+  depends only on the password and the installation's secret (every Twitch sign-in carries the same one),
+  and almost every stamp is not a number, so everyone signs in again at the rollback, and once more after a
+  roll forward (2.3.1's cookies carry no stamp). A stamp that happens to read as a number (the chance is
+  about one in 1 500) passes as an issue time in the future, and 2.3.1 then accepts every cookie that
+  carries it with no end, also after the password is changed: keep a rollback short.
+- **M120.** A Refresh and a queue rebuild waiting together (`refresh_and_rebuild_queue`) at the rollback are
+  cleared by 2.3.1's first cycle without being carried out; press them again if one was waiting.
+  *Operator holds* is gone, and an admin action can clear another's waiting Refresh again.
+- **M114.** A frozen process or a hanging relay is not restarted any more, and `relay.unreachable` is not
+  raised.
+- **M113, M115.** An overlay column other than the custom layers, or a stored scene preset, that does not
+  read fails every state read again (2.4 writes only readable JSON, so only a column broken from outside
+  matters). A segment 2.4 kept for another delete is stale to 2.3.1 as well: its next sync asks Twitch once
+  more and forgets it, whatever the answer. An output on the operator's own RTMP server stops publishing
+  again.
+- **Incidents only 2.4 raises.** 2.3.1 never closes `relay.unreachable`, `twitch.schedule.delete.failed`,
+  `worker.health.frozen-restart`, `playout.health.frozen-restart` or `uplink.health.frozen-restart` (its
+  sweep closes only the event incidents it knows): one that is open at the rollback stays open until it is
+  resolved by hand under `Live → Status`.
+- Everything else (M111, M112, M116, M118, M119, M121-M123) changes behaviour or text only: 2.3.1 brings the
+  old behaviour back and misreads nothing that 2.4 stored.
 
 ### Patch vs Minor Upgrades
 
