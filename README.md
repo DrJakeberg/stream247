@@ -35,31 +35,48 @@ are not retroactively revoked.
 ## What It Does Today
 
 - Docker-first self-hosted deployment with published GHCR images
-- setup wizard with owner account bootstrap
-- local login with optional two-factor authentication, plus the Twitch bot account and channel owner connections and Twitch SSO team access
-- PostgreSQL-backed runtime state
+- setup wizard with owner account bootstrap and optional Twitch client credential capture
+- local session-based login with optional TOTP two-factor authentication for the local owner account, plus the
+  Twitch bot account and channel owner OAuth connections and Twitch SSO team access
+- role-based access with `owner`, `admin`, `operator`, `moderator`, `viewer`, and team access grants by Twitch login
+- PostgreSQL-backed runtime state and asset catalog
 - operator workspace IA with:
   - `Live` for control, status, and moderation
   - `Program` for schedule, pools, library, and sources
   - `Studio` for scene, engagement, and output configuration
   - `Admin` for access, secrets, releases, and blueprints
 - source ingestion for:
-  - local media library
+  - local media library scanned from `data/media`, keeping its relative folder structure in the catalog
   - local media uploads from the admin UI into the shared library
   - direct media URLs
   - YouTube playlists and channels via `yt-dlp`
   - Twitch VODs and channels via `yt-dlp`, with local cache-backed playout for Twitch archives
   - guided source templates for local library, direct URLs, YouTube, and Twitch inputs
+  - source metadata capture for title, natural duration, publish time, and source category where available
+- source operations with:
+  - source edit, enable/disable, and delete controls
+  - source detail pages with programming references, incidents, audit trail, and manual sync actions
+  - bulk source actions for enable, disable, and sync queueing
+  - persisted per-source sync runs with success/error summaries and last ingestion results
+  - source library health snapshots with latest sync outcome and open issue counts
+  - connector-specific troubleshooting hints for source and asset diagnostics
+  - source-side asset counts and ready counts
 - library operations with:
   - generated local thumbnails with deterministic metadata-card fallbacks
   - grouped browsing by source, folder, tag, curated set, or status
   - reusable curated sets with bulk add/remove workflows
   - per-asset folder, tag, fallback, and programming curation
+  - searchable asset library by title, source, status, and programming inclusion
+  - bulk asset actions for include, exclude, fallback promotion, folder assignment, and tag management
+  - asset detail pages with source origin, pool context, and runtime visibility
 - schedule management with:
   - weekly pool-based blocks
   - explicit repeat sets for daily, weekday, weekend, or custom recurring blocks
   - minute-accurate blocks
-  - overlap validation
+  - duration and overlap validation
+  - reusable show profiles with default title/category/duration/color
+  - weekly coverage overview
+  - quick-start program templates
   - drag-and-drop day timeline editing
   - resize-to-change-duration editing
   - duplicate existing blocks onto other weekdays
@@ -73,15 +90,26 @@ are not retroactively revoked.
     first and looping from its own persistent position
   - optional audio-lane beds that replace program audio during scheduled pool playback
 - playout operations with:
-  - FFmpeg RTMP output foundation
-  - local RTMP relay plus persistent uplink mode so program playout is separated from the external Twitch/output session
+  - FFmpeg RTMP output foundation with worker-managed playout runtime state
+  - local RTMP relay plus persistent uplink mode so program playout is separated from the external Twitch/output session;
+    in production Compose the uplink reads a buffered local program feed and owns the external output sessions
+    and scheduled reconnects
   - Multi-Output RTMP delivery with multiple primary outputs plus backup outputs
   - per-destination managed stream keys with legacy env fallback for the built-in primary and backup outputs
-  - health-aware destination fanout that keeps healthy primaries together and falls back to backups when needed
-  - staged output recovery that keeps recovered destinations out of the active group until the next natural transition or an explicit operator recovery request
+  - health-aware destination fanout that keeps healthy primaries together and falls back to backups when needed,
+    with a readiness state per destination
+  - staged output recovery that keeps recovered destinations out of the active group until the next natural transition or an explicit operator recovery request, with cooldown visibility
+  - a source circuit breaker that holds a source out of the pools after its probes fail on three different items,
+    retries one item after a cooldown and shows the hold on the source page
+  - probes that fail while the channel's own network is down count against neither the item nor its source
+  - an as-run log: one row per playout run (what aired, how it was fed, why it ended), kept 90 days and read in
+    `Live → Status` or through `GET /api/as-run`
+  - standby replay slate when no playable asset is available
+  - scheduled 48-hour reconnect window with controlled standby mode
   - Live Bridge takeover from RTMP/RTMPS or HLS inputs with controlled release back to scheduled playback
   - deterministic queue state with current, next, previous, and transition-target visibility
-  - queue-aware next-asset prefetch
+  - queue-aware next-asset probe and prefetch, with current, next and queued assets and the transition state
+    visible in the admin UI
   - operator queue actions for play now, move next, remove next, and replay previous; play now and
     insert switch straight to the chosen item once the next playout cycle has resolved it, keep the
     item on air until then, and never show the reconnect slate (after the insert the pool continues
@@ -91,10 +119,11 @@ are not retroactively revoked.
     over; a dated or one-off block cuts the item on air at its start, and its own item at its end when a
     block follows
   - safe-boundary cuepoint inserts inside schedule blocks using either pool insert assets or block-specific insert assets
-  - fallback asset selection
+  - fallback asset selection, with fallback asset priority and global fallback support
   - manual restart (with the relay the item on air starts again from its beginning; without it the
     reconnect slate shows, then a running pin or insert starts again, else a queued move next, else the
     pool's next item)
+  - refresh-overlays and rebuild-queue controls
   - temporary fallback override
   - pin asset on air
   - skip current asset, which also ends a pin or temporary fallback holding it on air; chat skip votes
@@ -104,32 +133,48 @@ are not retroactively revoked.
   - force reconnect and recover outputs for direct RTMP mode; with the relay force reconnect is
     refused (the uplink reconnects by itself) and recover outputs leaves the programme alone (the
     uplink restarts the recovered output's rendition, so the outputs sharing it reconnect once)
+  - one broadcast action API for restart, refresh, queue rebuild, fallback, skip, resume, and pin-on-air actions
+  - live admin status rail with on-air, next, destination, incident, and update state across admin pages
 - Twitch automation with:
   - title sync from active asset metadata or schedule override
-  - category sync from active asset metadata or schedule override
+  - category lookup and sync from active asset metadata or schedule override
   - upcoming Twitch schedule segment sync
-  - moderation policy support for emote-only fallback
+- moderation with:
+  - explicit moderation presence windows such as `!here 30`
+  - configurable moderation policy in the admin UI
+  - emote-only fallback when no active moderator window is present
 - ops tooling with:
-  - incidents
-  - incident history and filters
+  - incidents created from runtime failures
+  - incident history with status / severity / scope filters
   - acknowledge / resolve actions
-  - runtime drift checks
-  - recent audit trail visibility
+  - runtime drift checks for worker, playout, schedule alignment, destination readiness, and Twitch metadata
+  - recent audit trail visibility and audit events
   - worker/playout healthcheck commands
   - Discord webhook alerts
   - SMTP email alerts
   - readiness and health endpoints
-- encrypted-at-rest managed secret storage for Twitch and alert credentials
+- encrypted-at-rest managed secret storage for Twitch and alert credentials, with `.env` fallback
 - `Channel Blueprints` with:
-  - export/import of Scene, sources, curated sets, program data, moderation, and destination metadata
+  - export/import of Scene, sources, curated sets, program data, moderation, and destination metadata, without
+    exporting secrets or media files
   - selective import sections for library, program data, Scene, and operations
   - explicit import warnings when referenced media is not present locally
 - viewer-facing pages with:
-  - public schedule page
+  - public schedule page at `/channel`
+- one channel language (English or German) for everything viewers see or read: the on-air picture, the standby
+  and reconnect texts, polls, the skip bar, chat games, every chat bot reply and the public page; operator content
+  is never translated and the admin interface stays English (`docs/operations.md`, *What Viewers Read*; adding a
+  language: `docs/architecture.md`, *Viewer Language*)
 - one canonical Scene payload shared across the studio preview, scene APIs, and the playout renderer, with:
   - on-air scene renderer that draws the published scene natively into the FFmpeg playout path, with a text-overlay fallback; the studio preview is the same drawing
   - overlay studio with draft-save, reusable scene preset library, preview, per-mode scene presets/headlines, layer ordering, layer visibility toggles, built-in typography presets, conservative local font-stack overrides, positioned text/logo/image/game/source layers, and publish-live scene controls (embed and widget layers from older scenes are kept but not drawn on air)
   - admin-managed replay branding, scene presets, and ticker/badge styling
+  - `Scene` in the Studio workspace, with a configurable replay label, channel name, headline, accent color,
+    emergency banner, and now/next teaser toggles
+- guided setup and launch with:
+  - a guided readiness view in setup and status, with launch guidance for destination, assets, pools, schedule,
+    and overlay
+  - a settings-side update center with pinned-tag visibility, release channel hints, and preflight/runbook guidance
 
 ## What Is Not Done Yet
 
@@ -140,7 +185,9 @@ Open milestones and known gaps are tracked in [PLANS.md](PLANS.md) (*Open*, *Own
 ## Quick Start
 
 The one-page path from an empty host to a green channel, with the traps where they bite, is
-[`docs/getting-started.md`](docs/getting-started.md). The steps below are the short form.
+[`docs/getting-started.md`](docs/getting-started.md). The steps below are what a first run needs; the guide
+has the rest: the two Twitch accounts, the Twitch application, the optional settings, the stream key, media
+and a first programme.
 
 1. Get `docker-compose.yml` and `docker/mediamtx.yml` from the newest release tag on
    <https://github.com/DrJakeberg/stream247/releases>, either with
@@ -158,72 +205,27 @@ The one-page path from an empty host to a green channel, with the traps where th
 3. The database password is fixed when `data/postgres` is first created. Changing it later leaves
    every service failing with "password authentication failed" and a bare error page; either keep
    the password or remove `data/postgres` before real data exists.
-4. Optional now, or later in the wizard and `/settings`:
-   - `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET` (from an application registered at
-     <https://dev.twitch.tv/console/apps>)
-   - `TWITCH_STREAM_KEY` (later: the wizard's *Where the stream goes* step, or the primary destination's stream key under `Studio → Output`)
-   - `CHANNEL_TIMEZONE` (leave unset to let the wizard manage it)
-   - `CHANNEL_LANGUAGE` (`en` or `de`, the language viewers are addressed in; leave unset to choose it in
-     the wizard or under `Admin → Settings → Channel language`)
-5. Start the stack:
+4. Start the stack:
    ```bash
    docker compose up -d
    ```
-6. Open:
+   With the built-in Traefik HTTPS profile, set `TRAEFIK_HOST` (and `TRAEFIK_ACME_EMAIL` for Let's Encrypt)
+   first and start it with `docker compose --profile proxy up -d`; the guide's section 5.
+5. Open:
    - `http://localhost:3000/setup` on the host itself. Port 3000 is published on `127.0.0.1` only; from
      another machine use HTTPS (`--profile proxy` or your own proxy) or an SSH tunnel
      (`ssh -L 3000:localhost:3000 <user>@<host>`), see the guide's section 5
-7. Create the owner account; that signs you in. The wizard then walks through the public URL,
+6. Create the owner account; that signs you in. The wizard then walks through the public URL,
    Twitch app credentials, the Twitch connection, the stream key and a first programme (a pool from your
    media that plays all week), each step skippable, and ends in a readiness checklist that links to
    wherever something is still missing.
-8. `Live → Status` shows the same readiness afterwards.
-9. Optional during bootstrap:
-   - enter `TWITCH_CLIENT_ID`
-   - enter `TWITCH_CLIENT_SECRET`
-10. Or add/update encrypted managed credentials later in:
-   - `/settings`
-11. Open `Admin → Settings → Twitch accounts`: set the broadcast channel and connect the bot account (and the channel owner for title, category and schedule sync). See `docs/twitch-setup.md`.
-12. Paste the broadcast channel's stream key (Twitch Creator Dashboard → Settings → Stream) into the
-    wizard's *Where the stream goes* step or the primary destination under
-    `Studio → Output → Output destinations`; the guide's section 7 has the steps.
-13. Add media by either:
-   - placing files into `data/media`
-   - adding direct media URLs
-   - adding a YouTube playlist or channel source
-   - adding a Twitch VOD or channel source
-14. Build pools and weekly schedule blocks and let the worker ingest assets.
+7. `Live → Status` shows the same readiness afterwards.
 
-For local-development builds instead of GHCR images:
-
-```bash
-docker compose -f docker-compose.dev.yml up -d --build
-```
-
-For pinned production deployment, start from:
-
-```bash
-cp .env.production.example .env
-```
-
-`pnpm release:preflight` now rejects untouched example values, quoted-empty secrets/passwords, and proxy placeholders such as `TRAEFIK_HOST=stream247.example.com`. It also rejects `TRAEFIK_ACME_EMAIL=admin@example.com` when the built-in Let's Encrypt path is configured, so replace those defaults before using it as a release gate.
-
-In most cases you only need to set these before first start:
-
-- `APP_URL`
-- `APP_SECRET`
-- `POSTGRES_PASSWORD`
-- `DATABASE_URL`
-- `TRAEFIK_HOST`, plus `TRAEFIK_ACME_EMAIL` when you use the built-in Let's Encrypt Traefik profile
-- `TWITCH_STREAM_KEY` if you want real Twitch output immediately
-
-Twitch client credentials, SMTP, and Discord can also be entered later in the setup wizard or `/settings`.
-
-For Traefik-based HTTPS deployment:
-
-```bash
-docker compose --profile proxy up -d
-```
+After the first run, the guide continues: Twitch client credentials from an application registered at
+<https://dev.twitch.tv/console/apps> (section 3, or later in `/settings`), the broadcast channel and the bot
+account under `Admin → Settings → Twitch accounts` (section 6, `docs/twitch-setup.md`), the stream key
+(section 7), media in `data/media` or as sources (section 8), and pools and weekly schedule blocks
+(section 9).
 
 ## Configuration
 
@@ -416,129 +418,6 @@ are clean. The full order, the script settings (`CHECK_BASE_URL`, `--follow-web`
 *Release Flow*).
 
 
-## Feature Overview
-
-### Authentication And Access
-
-- owner bootstrap via setup wizard
-- local session-based authentication
-- optional TOTP-based two-factor authentication for the local owner account
-- Twitch SSO team login
-- role-based access with `owner`, `admin`, `operator`, `moderator`, `viewer`
-- team access grants by Twitch login
-- optional Twitch client credential capture during setup
-
-### Sources And Assets
-
-- local media scan from `data/media`
-- direct media URL sources
-- YouTube playlist ingestion via `yt-dlp`
-- YouTube channel ingestion via `yt-dlp`
-- Twitch VOD ingestion via `yt-dlp`
-- Twitch channel ingestion via `yt-dlp`
-- PostgreSQL-backed asset catalog
-- source metadata capture for title, natural duration, publish time, and source category where available
-- fallback asset priority and global fallback support
-- source edit, enable/disable, and delete controls
-- source detail pages with programming references, incidents, audit trail, and manual sync actions
-- bulk source actions for enable, disable, and sync queueing
-- persisted per-source sync runs with success/error summaries and last ingestion results
-- source library health snapshots with latest sync outcome and open issue counts
-- connector-specific troubleshooting hints for source and asset diagnostics
-- playout runtime visibility for current / next / queued assets in the admin UI
-- source-side asset counts and ready counts
-- asset detail pages with source origin, pool context, and runtime visibility
-- searchable asset library by title, source, status, and programming inclusion
-- asset curation controls for include/exclude from automatic programming, folder paths, and tags
-- bulk asset actions for include, exclude, fallback promotion, folder assignment, and tag management
-- local-library assets retain their relative folder structure in the catalog
-- `Channel Blueprints` can export and import Scene, program data, moderation, and destination metadata without exporting secrets or media files
-
-### Scheduling
-
-- weekly schedule block CRUD
-- pool-based programming
-- minute-accurate start times
-- duration validation
-- overlap detection
-- reusable show profiles with default title/category/duration/color
-- multi-day block creation
-- weekly coverage overview
-- quick-start program templates
-- day timeline with drag-and-drop rescheduling
-- resize-to-change-duration editing
-- filterable programming editor with search, pool/show filters, and conflict focus
-- public-facing schedule page
-
-### Playout And Live Ops
-
-- FFmpeg-based RTMP playout foundation
-- buffered local program-feed/uplink split for production Compose, with the uplink owning external output sessions and scheduled reconnects
-- pool-based round-robin playout selection that alternates between a pool's sources, each in its own stable order
-- a source circuit breaker that holds a source out of the pools after its probes fail on three different items, retries one item after a cooldown and shows the hold on the source page
-- probes that fail while the channel's own network is down count against neither the item nor its source
-- an as-run log: one row per playout run (what aired, how it was fed, why it ended), kept 90 days and read in `Live → Status` or through `GET /api/as-run`
-- standby replay slate when no playable asset is available
-- scheduled 48-hour reconnect window with controlled standby mode
-- Live Bridge RTMP/HLS takeover with safe release back to the scheduled queue
-- destination readiness state
-- staged destination recovery with cooldown visibility and an explicit operator-triggered rejoin path
-- unified broadcast action API for restart, refresh, queue rebuild, fallback, skip, resume, and pin-on-air actions
-- live admin status rail with on-air, next, destination, incident, and update state across admin pages
-- playout transition state with next-asset probe / prefetch visibility
-- operator restart control
-- operator refresh-overlays control
-- operator rebuild-queue control
-- operator pin-asset override
-- operator skip-current control
-- temporary fallback override
-- resume-schedule control
-- worker-managed playout runtime state
-
-### Twitch Automation
-
-- bot account and channel owner OAuth connections
-- title sync from active asset metadata or schedule override
-- category lookup and sync from active asset metadata or schedule override
-- Twitch schedule segment sync for upcoming blocks
-- Twitch SSO for team members
-- moderation policy automation for emote-only fallback windows
-
-### Moderation
-
-- explicit moderation presence windows such as `!here 30`
-- configurable moderation policy in admin UI
-- emote-only fallback when no active moderator window is present
-
-### Alerts And Incident Management
-
-- incident creation from runtime failures
-- incident history with status / severity / scope filters
-- incident acknowledgement
-- incident resolution
-- runtime drift reporting for worker, playout, schedule alignment, destination readiness, and Twitch metadata
-- recent audit trail visibility in the ops view
-- Discord webhook alerts
-- SMTP email alerts
-- audit events
-- encrypted-at-rest managed integration secrets with `.env` fallback
-
-### Overlay And Viewer Pages
-
-- public schedule page at `/channel`
-- one channel language (English or German) for everything viewers see or read: the on-air picture, the standby and reconnect texts, polls, the skip bar, chat games, every chat bot reply and the public page; operator content is never translated and the admin interface stays English (`docs/operations.md`, *What Viewers Read*; adding a language: `docs/architecture.md`, *Viewer Language*)
-- on-air overlay drawn by the playout renderer; the studio preview is the same drawing
-- `Scene` in the Studio workspace
-- configurable replay label, channel name, headline, accent color, emergency banner, and now/next teaser toggles
-
-### Guided Setup And Launch
-
-- owner bootstrap wizard
-- optional Twitch client credential capture during setup
-- guided readiness view in setup and status
-- readiness-oriented launch guidance for destination, assets, pools, schedule, and overlay
-- settings-side update center with pinned-tag visibility, release channel hints, and preflight/runbook guidance
-
 ## Local Development
 
 1. Copy `.env.example` to `.env`.
@@ -565,6 +444,12 @@ are clean. The full order, the script settings (`CHECK_BASE_URL`, `--follow-web`
    pnpm dev
    ```
 
+For local-development builds with plain Compose instead of GHCR images:
+
+```bash
+docker compose -f docker-compose.dev.yml up -d --build
+```
+
 ## Validation
 
 The intended validation path is:
@@ -578,14 +463,15 @@ The intended validation path is:
 - `pnpm test:runtime-parity`
 - `pnpm test:broadcast-path`
 - `pnpm test:e2e:smoke`
-- `scripts/design-baseline.sh` (design and wording baselines, needs Docker; `pnpm test:design-baseline` builds the web image first)
+- `scripts/design-baseline.sh` (design and wording baselines, needs Docker; `pnpm test:design-baseline` builds the web image first; `--update` or `pnpm test:design-baseline:update` re-records them, on a fresh `DEV_STACK_STATE_DIR` with no dev stack already running)
 - `pnpm release:preflight`
 - Docker image build
 - container smoke test
 
 Current validation covers:
 
-- lint
+- lint (ESLint on `apps/web` only)
+- CSS token lint
 - typecheck
 - unit tests
 - integration tests

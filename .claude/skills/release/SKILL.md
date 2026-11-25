@@ -29,8 +29,16 @@ Exactly one commit titled `release: vX.Y.Z` on its own branch. It changes only:
 5. `CHANGELOG.md`: the section for the version (`scripts/release-notes.mjs` builds the GitHub
    release text from it).
 
+A release candidate (`release: vX.Y.Z-rc.N`) changes only 1, 5 and, when it brings the *Upgrading To X.Y*
+section, 4: the image defaults in `docker-compose.yml` and `.env.production.example` stay at the last
+final release, so a fresh install still pins a final tag (`v2.3.0-rc.2`, `v2.3.1-rc.1` and `c0148bb`
+did exactly that).
+
 Then `pnpm validate` and the preflight the way CI runs it (a plain `pnpm release:preflight` reads `.env`):
 `RELEASE_PREFLIGHT_ENV_FILE="$(./scripts/prepare-release-preflight-env.sh)" RELEASE_PREFLIGHT_SKIP_VALIDATE=1 pnpm release:preflight`.
+Then `scripts/clean-checkout-build.sh`: it builds every image from a clean clone of HEAD, the way CI
+does, and catches a Dockerfile that only builds with the workspace's `node_modules` (also run it after
+touching a Dockerfile, `.dockerignore` or how dependencies are installed). It checks HEAD, so commit first.
 Then push, pull request, green CI, merge on the owner's word.
 
 ## The tag

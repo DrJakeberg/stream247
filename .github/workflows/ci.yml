@@ -49,6 +49,11 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile=false
       - run: pnpm lint
+      # Part of `pnpm validate`, which this job does not run as one command, so until the order audit
+      # of 2026-11-25 the ratchet on raw colour literals ran only in the Release workflow, after the
+      # merge. Here it runs on every pull request, cheap and before the long suites, under its own name.
+      - name: CSS token lint
+        run: pnpm lint:css-tokens
       - run: pnpm typecheck
       # Every image this job pulls from a registry we do not own, fetched once with a retry, before
       # anything depends on it. Run 33710726231 died at `pnpm test:fresh-compose` on

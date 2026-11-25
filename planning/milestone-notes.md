@@ -710,6 +710,28 @@ under `planning/archive/`, text unchanged.
   Pull request #56 was then merged into this milestone's branch (`7cd9b0a`) with M126's wording kept in
   both places.
 
+### M130 The Smoke Scripts Share Their Helpers
+
+- **Source.** Item C5 of the order audit of 2026-11-25 (pull request #61); the owner chose it the same day.
+- **What moved.** `psql_query` (four smoke scripts, identical copies) and `read_env_value` and
+  `normalize_env_value` (`release-preflight.sh` and `portainer-stack-check.sh`; the preflight's copy had lost
+  its `local`) now live in `scripts/lib/script-helpers.sh`. The smoke scripts source it from their own
+  directory (`$(dirname -- "$0")`, made absolute); the two scripts that already set `ROOT_DIR` source it as
+  `$ROOT_DIR/scripts/lib/script-helpers.sh`. The library stays POSIX sh apart from `local`, because `release-preflight.sh` runs under `sh`.
+  Every call of the env readers sits in a command substitution, so adding `local` leaks nothing that a
+  caller read before.
+  `psql_query` still calls the `compose` each smoke script defines for its own project.
+- **Proof.** `tests/unit/script-helpers.test.ts` fails when any `.sh` under `scripts/` other than the
+  library defines one of the three again (a copy put back into `resume-smoke.sh` gave
+  `scripts/resume-smoke.sh: psql_query`, 1 failed), checks that the six users source the library and runs
+  the env readers under `sh`.
+  `portainer-stack-check.sh --dry-run`, run from `/` with the old and the new script, printed the same nine
+  lines. With images rebuilt from the branch: the release preflight the way CI runs it ("Release preflight
+  succeeded."), `pnpm test:queue-continuity`, `test:resume`, `test:runtime-parity` and `test:broadcast-path`
+  passed.
+- **Left alone.** `scripts/soak-monitor.sh` had no copy, so it is unchanged; it already needs `scripts/lib`
+  from the checkout for its readiness classifier (`docs/deployment.md`, step 10 of *Safe Upgrade Flow*).
+
 ### Suggestions 2026-10-04 to M112-M124, then M125
 
 Moved out of `PLANS.md`, text unchanged apart from the archive path.

@@ -13,10 +13,12 @@ The rules are in `AGENTS.md`; this is the order of work. Stop at any hard blocke
 2. **Branch.** `git fetch origin` and branch from `origin/main`: `claude/<mxx>-<short-slug>`.
 3. **Implement.** Keep the diff to the milestone. Tests for changed behaviour; docs in the same commit;
    schema changes additive with a downgrade note in `docs/deployment.md`. UI text changes re-record
-   the baselines with `scripts/design-baseline.sh` on a fresh stack.
+   the baselines: rebuild `stream247-web:test` from the branch, no dev stack running on `DEV_STACK_PORT`,
+   a new empty `DEV_STACK_STATE_DIR`, then `scripts/design-baseline.sh --update` (details in `AGENTS.md`,
+   *Scope and quality*).
 4. **Validate.** `pnpm validate` and quote its decisive line. Run the CI steps outside `validate`
-   that the diff touches (list in `AGENTS.md`, *Validation*). In a cloud container only the three
-   known failures may be red.
+   that the diff touches (list in `AGENTS.md`, *Validation*). In a cloud container only the one
+   known failure named there may be red.
 5. **Plan file.** Set the row to Complete in `PLANS.md`; decisions, measurements and follow-ups go
    into a section of `planning/milestone-notes.md`; DUT-only checks into `planning/dut-checks.md`.
    `PLANS.md` stays under 300 lines.

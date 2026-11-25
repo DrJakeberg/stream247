@@ -12,9 +12,11 @@ import path from "node:path";
  * or a deletion has to take its references along.
  *
  * Checked: `AGENTS.md`, `PLANS.md` with the two files it points to since M121 (`planning/dut-checks.md`,
- * `planning/milestone-notes.md`), `README.md`, `CONTRIBUTING.md` and `docs/*.md`. Not checked: the
- * archive under `planning/archive/`, which records history as it was, and `CHANGELOG.md`, whose
- * release sections describe the tree of their release.
+ * `planning/milestone-notes.md`), `README.md`, `CONTRIBUTING.md`, `docs/*.md` and, since the order
+ * audit of 2026-11-25, the session skills (`SKILL.md` under `.claude/skills/`). Paths under `.claude/`
+ * count as repo paths too, so a renamed hook or skill fails here and not in the next session that
+ * follows the rule. Not checked: the archive under `planning/archive/`, which records history as it was,
+ * and `CHANGELOG.md`, whose release sections describe the tree of their release.
  *
  * A path exists when git knows it (tracked, or new and not ignored) and it is on disk. Until the
  * 2026-10-05 review the test asked the disk alone, so it depended on gitignored build output: a
@@ -28,7 +30,7 @@ const ROOT = process.cwd();
 /** Paths that appear in the docs but exist only at run time, inside a container or data volume. */
 const RUNTIME_PATHS = new Set(["data/app/state.json"]);
 
-const TOP_LEVEL_DIR = /^(apps|packages|docs|scripts|tests|docker|planning|\.github)\//;
+const TOP_LEVEL_DIR = /^(apps|packages|docs|scripts|tests|docker|planning|\.github|\.claude)\//;
 const FILE_EXTENSION = /\.(md|ts|tsx|mts|mjs|cjs|js|json|ya?ml|sh|sql|css|Dockerfile|example|toml)$/;
 const PATH_CHARACTERS = /^[A-Za-z0-9_.@\-/[\]]+$/;
 
@@ -36,6 +38,9 @@ function checkedFiles() {
   const docs = readdirSync(path.join(ROOT, "docs"))
     .filter((name) => name.endsWith(".md"))
     .map((name) => `docs/${name}`);
+  const skills = readdirSync(path.join(ROOT, ".claude/skills"))
+    .map((name) => `.claude/skills/${name}/SKILL.md`)
+    .filter((skill) => existsSync(path.join(ROOT, skill)));
   return [
     "AGENTS.md",
     "PLANS.md",
@@ -43,7 +48,8 @@ function checkedFiles() {
     "planning/milestone-notes.md",
     "README.md",
     "CONTRIBUTING.md",
-    ...docs
+    ...docs,
+    ...skills
   ];
 }
 
@@ -133,7 +139,7 @@ function missingReferences(relativeFile: string, index: Set<string>) {
 describe("doc references", () => {
   it("recognises repo paths and skips what is not one", () => {
     const sample = [
-      "Read `AGENTS.md` and `docs/operations.md:12`, then `apps/web`.",
+      "Read `AGENTS.md` and `docs/operations.md:12`, then `apps/web` and `.claude/hooks/session-start.sh`.",
       "Not paths: `pnpm validate`, `/root/stream247`, `https://x.y/z.md`, `~/logs/soak-<stamp>.log`, `v2.2.0`.",
       "Anchored: `docs/deployment.md#upgrading`, glob `docs/*.md`, quoted `` `docs/quoted.md` ``."
     ].join("\n");
@@ -142,6 +148,7 @@ describe("doc references", () => {
       "AGENTS.md",
       "docs/operations.md",
       "apps/web",
+      ".claude/hooks/session-start.sh",
       "docs/deployment.md"
     ]);
   });
@@ -161,6 +168,12 @@ describe("doc references", () => {
     // Built (or left over from an old build) on this disk, but from no source in the repo.
     expect(resolvesInRepo("apps/worker/dist/index.js", index)).toBe(false);
     expect(resolvesInRepo("docs/deployment.md", index)).toBe(false);
+  });
+
+  it("checks the session skills", () => {
+    expect(checkedFiles()).toEqual(
+      expect.arrayContaining([".claude/skills/milestone-pr/SKILL.md", ".claude/skills/release/SKILL.md"])
+    );
   });
 
   const index = gitRepoIndex();

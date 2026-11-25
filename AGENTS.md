@@ -32,24 +32,31 @@ the conflict in the report.
 - Docs stay in sync with behaviour, in the same commit.
 - No new dependency without a one-line reason in the report. The package manager is pnpm
   (`packageManager` in `package.json`); there is no npm lockfile.
-- UI text changes need the design and wording baselines re-recorded on a fresh stack through
-  `scripts/design-baseline.sh` (snapshots are not portable). Without Docker, say so; CI checks them.
+- UI text changes need the design and wording baselines re-recorded with `scripts/design-baseline.sh --update`
+  (snapshots are not portable). First rebuild `stream247-web:test` from the branch (the dev stack runs only
+  postgres and web; `pnpm test:design-baseline:update` builds it and runs the script), stop any dev stack on
+  `DEV_STACK_PORT` (the script reuses a running one) and point `DEV_STACK_STATE_DIR` at a new, empty directory
+  (the default `.dev-stack` keeps its database through `dev-stack.sh down`). Without Docker, say so; CI checks them.
 - What you notice outside the milestone goes into the report as a list, not into the diff.
 
 ## Validation
 
-- `pnpm validate` (lint, CSS token lint, typecheck, unit and integration tests, build) before every
-  commit. Quote its decisive output line in the report.
+- `pnpm validate` (lint of `apps/web` only, CSS token lint, typecheck, unit and integration tests, build) before
+  every commit. Quote its decisive output line in the report.
 - The integration tests need Docker (they start `postgres:16-alpine`). In a cloud container the
   SessionStart hook (`.claude/hooks/session-start.sh`) starts `dockerd` and runs `pnpm install`; if
   `docker info` still fails, run lint, typecheck, unit tests and build one by one and say that CI covers the rest.
-- Three tests fail only in cloud containers and pass in CI: the process-group test in `tests/unit/process-utils.test.ts`
-  and the two ICU "GMT" zone-name tests in `tests/unit/ops-state.test.ts` and `tests/unit/viewer-messages.test.ts`.
-  Locally the bar is no failure beyond these three; the pull request's CI run decides.
+- One test may fail in a cloud container and pass in CI: the process-group test in `tests/unit/process-utils.test.ts`.
+  Whether it still fails there could not be re-measured from a local machine. The two ICU "GMT" zone-name tests
+  in `tests/unit/ops-state.test.ts` and `tests/unit/viewer-messages.test.ts` no longer fail on ICU 77's bare
+  "GMT" (commit `13474d6`, pinned by an ICU-independent test; both pass locally on ICU 78.3, not re-measured in
+  a cloud container). Locally the bar is no failure beyond that one; the pull request's CI run decides.
 - `pnpm validate` does not cover these CI steps (`.github/workflows/ci.yml`): `pnpm test:fresh-db`,
   `test:fresh-compose`, `test:media`, `test:queue-continuity`, `test:resume`, `test:runtime-parity`,
   `test:broadcast-path`, `test:e2e:smoke`, `release:preflight` and `scripts/design-baseline.sh`. Run the ones your diff
-  touches; `docker/smoke-test.sh` for image changes.
+  touches; `docker/smoke-test.sh` for image changes. `scripts/clean-checkout-build.sh` (every image from a
+  clean clone of HEAD) runs before a release and after touching a Dockerfile, `.dockerignore` or how
+  dependencies are installed.
 
 ## Commits, branches, merges
 
@@ -85,6 +92,9 @@ The steps are in `.claude/skills/release/SKILL.md`. The rules:
 - The release commit is exactly one `release: vX.Y.Z` commit. It changes `package.json`, the image
   defaults in `docker-compose.yml`, `.env.production.example`, `docs/deployment.md` and the
   `CHANGELOG.md` section.
+- A release candidate (`release: vX.Y.Z-rc.N`) changes only `package.json`, the `CHANGELOG.md` section and,
+  when it brings the upgrade section, `docs/deployment.md`; the image defaults in `docker-compose.yml` and
+  `.env.production.example` stay at the last final release (as in `v2.3.0-rc.2`, `v2.3.1-rc.1` and `c0148bb`).
 - Tags go only on a `main` commit whose push CI run is green. The release workflow retags that commit's
   `main-<sha>` images and creates the GitHub release.
 - When a release ships, its milestone rows move to "Shipped" and its sections to `planning/archive/`.

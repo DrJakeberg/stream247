@@ -12,7 +12,8 @@ usage() {
   cat <<'EOF'
 Usage: scripts/portainer-stack-check.sh [--dry-run] [--env-file <path>]
 
-Read-only verification for the DT Portainer-managed Stream247 stack.
+Read-only verification for the Portainer-managed Stream247 stack (Portainer runs on DT,
+the stack on the DUT).
 
 Required environment variables for a real check:
   PORTAINER_URL
@@ -60,42 +61,7 @@ require_command() {
   fi
 }
 
-read_env_value() {
-  local key="$1"
-  local file_path="$2"
-  awk -v key="$key" '
-    $0 ~ "^[[:space:]]*" key "=" {
-      line = $0
-      sub("^[[:space:]]*" key "=", "", line)
-      print line
-      found = 1
-      exit
-    }
-    END {
-      if (!found) {
-        exit 1
-      }
-    }
-  ' "$file_path"
-}
-
-normalize_env_value() {
-  local value
-  value="$(printf '%s' "$1" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-
-  case "$value" in
-    \"*\")
-      value="${value#\"}"
-      value="${value%\"}"
-      ;;
-    \'*\')
-      value="${value#\'}"
-      value="${value%\'}"
-      ;;
-  esac
-
-  printf '%s' "$value" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
-}
+. "$ROOT_DIR/scripts/lib/script-helpers.sh"
 
 extract_image_repo() {
   local image_ref="$1"
