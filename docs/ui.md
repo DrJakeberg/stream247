@@ -13,7 +13,8 @@ The admin UI exists for Stream247's internal 24/7 stream product.
 - Workspace navigation is optimized for desktop operator use, not for touch-first mobile operation.
   The exception is the on-call check on a phone (M90): `Live → Control` and `Live → Status` must
   answer "what is wrong and what do I press" at 390 px. On `Live → Control` the "Open problems" panel
-  is the first panel, above y = 1 400 px at 390 px wide (`tests/e2e/workspace-layout.spec.ts`).
+  is the first panel, above y = 1 400 px at 390 px wide (`tests/e2e/workspace-layout.spec.ts`); at
+  1440 x 900 its heading is above the fold (M129).
 
 ## Workspace Model
 
@@ -56,6 +57,9 @@ and every post-owner step is skippable.
 ## Layout Rules
 
 - Every admin page uses a `PageHeader`-style top band for title, subtitle, state, and actions.
+- A page has exactly one such header (one `.hero`, one level-2 heading). A panel inside a workspace tab does
+  not open with a header or a metric rail of its own: on `Live → Control` the shared top strip is the only
+  Feed / Current / Next / Destination / Incidents / Updates strip (M129, `tests/e2e/workspace-layout.spec.ts`).
 - Workspace content defaults to a stacked form layout, with a two-column grid only when the surface needs a supporting aside.
 - Nested panels do not go deeper than two levels.
 - The admin shell stays mounted across internal navigation so SSE-backed surfaces survive route changes.
@@ -89,6 +93,22 @@ Required current additions:
   - The text is a `data-tip` attribute drawn with CSS `::after` and exposed through `aria-description`; it is never an element, because anything inside a `<label>` is part of the label's text and would make label matching ambiguous.
 
 New surfaces should build from those primitives instead of bespoke styled HTML controls.
+
+State badges and button tiers (M129):
+
+- A row that stands for an output or a source starts with its state as a `Badge` (`RowStateBadge`,
+  `apps/web/lib/row-state.ts`): `Ready` (`.badge-ready`), `Needs setup` (`.badge-action`) or `Failing`
+  (`.badge-critical`, on the critical tone tokens). The state is in the words; the tone only repeats it.
+  This covers every output row in *Sending to Twitch* on `Live → Control`, every row of *Source connectors*
+  and the header of the source detail page.
+  - An output's state is its stored routing status: ready → Ready, missing-config → Needs setup, error and
+    recovering → Failing.
+  - A source is Failing when its breaker holds it, its newest sync run failed or its drought alert is on;
+    Needs setup when it is disabled or its address is not usable; Ready otherwise (also before its first scan).
+- An action that deletes or removes uses `.button-danger` (for example *Remove next*, *Delete curated set*).
+- A disabled `.button` recedes: lower opacity, no border, a not-allowed cursor.
+- An action group (the controls sharing one parent) has at most one primary `.button`; the others are
+  secondary, ghost or danger.
 
 ## Text Handling Rules
 

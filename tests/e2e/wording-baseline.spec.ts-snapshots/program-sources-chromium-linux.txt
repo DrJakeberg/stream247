@@ -85,7 +85,7 @@ Sync selected
 Enable selected
 Disable selected
 Clear selection
-Local Media Library
+Ready Local Media Library
 Filesystem scan
 Pending scan
 Enabled

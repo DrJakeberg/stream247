@@ -96,4 +96,144 @@ test.describe("workspace layout", () => {
     const m = await measure(page);
     expect(m.scrollWidth, "Live control wider than a phone").toBeLessThanOrEqual(m.clientWidth);
   });
+
+  // M129 (suggestion 23): one page header per page. Live control used to stack the Live workspace
+  // header and a second control-room hero whose metric rail repeated the shared top strip cell for cell.
+  test("one page header on Live control and Program library", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await signIn(page);
+    for (const path of ["/live?tab=control", "/program?tab=library"]) {
+      await page.goto(path);
+      const stack = page.locator(".content-stack");
+      await expect(stack).toBeVisible();
+      await expect(stack.locator(".hero"), `${path}: page headers`).toHaveCount(1);
+      await expect(stack.getByRole("heading", { level: 2 }), `${path}: level-2 headings`).toHaveCount(1);
+    }
+    // The shared top strip is the page's one Feed/Current/Next/Destination strip.
+    await page.goto("/live?tab=control");
+    await expect(page.locator(".content-stack span.label").filter({ hasText: /^Current$/ })).toHaveCount(1);
+  });
+
+  // M129: at the baseline desktop size the panel an operator needs first starts without scrolling.
+  test("at 1440x900 Open problems is above the fold", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await signIn(page);
+    await page.goto("/live?tab=control");
+    const panel = page.getByTestId("open-problems");
+    await expect(panel).toBeVisible();
+    expect(await page.evaluate(() => window.scrollY), "page scrolled before measuring").toBe(0);
+    const box = await panel.boundingBox();
+    expect(box, "Open problems has no box").not.toBeNull();
+    expect(box!.y, "Open problems starts below the 900 px fold").toBeLessThan(900);
+    const heading = await panel.getByRole("heading", { name: "Open problems" }).boundingBox();
+    expect(heading, "Open problems heading has no box").not.toBeNull();
+    expect(heading!.y + heading!.height, "Open problems heading below the 900 px fold").toBeLessThanOrEqual(900);
+  });
+
+  // M129 (suggestion 24): every output row and every source row starts with a badge whose words say the
+  // state; the class only repeats it. Pixel tolerance hides a pill, so this reads the DOM.
+  test("output and source rows start with a state badge", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await signIn(page);
+    const rowsOf = (heading: string) =>
+      page.locator(".panel").filter({ has: page.locator("h3", { hasText: new RegExp(`^${heading}$`) }) }).locator(".list > .item");
+    const leadingBadges = (rows: ReturnType<typeof rowsOf>) =>
+      rows.evaluateAll((items) =>
+        items.map((item) => {
+          let first: Element = item;
+          while (first.firstElementChild && !first.matches(".badge")) {
+            first = first.firstElementChild;
+          }
+          const text = first.textContent?.trim() ?? "";
+          return {
+            text,
+            className: first.matches(".badge") ? first.className : "",
+            startsTheRow: (item.textContent ?? "").trimStart().startsWith(text)
+          };
+        })
+      );
+    const BADGE_CLASS: Record<string, string> = {
+      Ready: "badge badge-ready",
+      "Needs setup": "badge badge-action",
+      Failing: "badge badge-critical"
+    };
+    const expectStateBadges = (badges: Awaited<ReturnType<typeof leadingBadges>>, where: string) => {
+      expect(badges.length, `${where}: no rows`).toBeGreaterThan(0);
+      for (const badge of badges) {
+        expect(Object.keys(BADGE_CLASS), `${where}: badge words`).toContain(badge.text);
+        expect(badge.className, `${where}: ${badge.text} badge class`).toBe(BADGE_CLASS[badge.text]);
+        expect(badge.startsTheRow, `${where}: ${badge.text} badge is not first`).toBe(true);
+      }
+      return badges.map((badge) => badge.text);
+    };
+
+    await page.goto("/live?tab=control");
+    const outputs = expectStateBadges(await leadingBadges(rowsOf("Sending to Twitch")), "Sending to Twitch");
+    // The fixture: the primary Twitch output is ready, the relay and the backup are not set up.
+    expect(outputs).toContain("Ready");
+    expect(outputs).toContain("Needs setup");
+
+    await page.goto("/program?tab=sources");
+    expectStateBadges(await leadingBadges(rowsOf("Source connectors")), "Source connectors");
+
+    // The detail page leads with the same badge, outside the heading, so the heading still names only the source.
+    const firstRow = rowsOf("Source connectors").first();
+    const name = (await firstRow.locator("strong").first().textContent())?.trim() ?? "";
+    const listBadge = (await firstRow.locator(".badge").first().textContent())?.trim() ?? "";
+    await firstRow.getByRole("link", { name: "Open detail" }).click();
+    await expect(page).toHaveURL(/\/sources\//);
+    const hero = page.locator(".content-stack .hero");
+    await expect(hero.getByRole("heading", { level: 2 })).toHaveText(name);
+    const beforeHeading = await hero.locator("h2").evaluate((heading) => {
+      const badge = heading.previousElementSibling;
+      return { className: badge?.className ?? "", text: badge?.textContent?.trim() ?? "" };
+    });
+    expect(beforeHeading.text).toBe(listBadge);
+    expect(beforeHeading.className).toBe(BADGE_CLASS[listBadge]);
+  });
+
+  // M129 (suggestion 25): destructive actions look destructive, disabled buttons recede, and an action
+  // group never offers two primary buttons. Folded controls count too: they are measured in the DOM.
+  test("danger, disabled and primary buttons", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await signIn(page);
+    const disabledStyles: { opacity: number; borderWidth: string; borderColor: string }[] = [];
+    for (const [path, danger] of [
+      ["/live?tab=control", "Remove next"],
+      ["/program?tab=library", "Delete curated set"],
+      ["/program?tab=sources", ""]
+    ] as const) {
+      await page.goto(path);
+      await expect(page.locator(".content-stack")).toBeVisible();
+      if (danger) {
+        await expect(page.locator("button", { hasText: new RegExp(`^${danger}$`) }), `${path}: ${danger}`).toHaveClass(
+          "button button-danger"
+        );
+      }
+      disabledStyles.push(
+        ...(await page.locator(".content-stack button.button:disabled").evaluateAll((buttons) =>
+          buttons.map((button) => {
+            const style = getComputedStyle(button);
+            return { opacity: Number(style.opacity), borderWidth: style.borderTopWidth, borderColor: style.borderTopColor };
+          })
+        ))
+      );
+      const crowdedGroups = await page.locator(".content-stack").evaluate((stack) => {
+        const primaries = new Map<Element, number>();
+        for (const control of Array.from(stack.querySelectorAll("button.button, a.button"))) {
+          if (control.className.trim() === "button" && control.parentElement) {
+            primaries.set(control.parentElement, (primaries.get(control.parentElement) ?? 0) + 1);
+          }
+        }
+        return [...primaries.entries()].filter(([, count]) => count > 1).map(([group]) => group.textContent?.slice(0, 80));
+      });
+      expect(crowdedGroups, `${path}: action groups with more than one primary button`).toEqual([]);
+    }
+    expect(disabledStyles.length, "no disabled button on these pages").toBeGreaterThan(0);
+    for (const style of disabledStyles) {
+      expect(style.opacity).toBeLessThanOrEqual(0.5);
+      const borderHidden = style.borderWidth === "0px" || style.borderColor === "transparent" || /,\s*0\)$/.test(style.borderColor);
+      expect(borderHidden, `disabled border ${style.borderWidth} ${style.borderColor}`).toBe(true);
+    }
+  });
 });

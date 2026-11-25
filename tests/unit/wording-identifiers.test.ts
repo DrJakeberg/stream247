@@ -34,7 +34,6 @@ const PLACEHOLDER = /<(timestamp|time|version|digest|id|age|runtime)>/g;
  */
 const ENGLISH_COMPOUNDS = new Set([
   "auto-selected",
-  "backup-and-restore",
   "broadcast-style",
   "browser-based",
   "channel-point",

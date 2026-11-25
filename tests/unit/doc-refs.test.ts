@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
+import { ADMIN_RUNBOOKS, describeAdminRunbooks } from "../../apps/web/lib/admin-runbooks";
 
 /**
  * No rule file or doc points at a file that does not exist.
@@ -130,6 +131,40 @@ function missingReferences(relativeFile: string, index: Set<string>) {
     .map(({ line, path: reference }) => `${relativeFile}:${line} \`${reference}\``);
 }
 
+/** Where the web app's own text lives; a doc it names reaches the operator on a page or in an error. */
+const WEB_SOURCE_DIRS = ["apps/web/app", "apps/web/components", "apps/web/lib"];
+const WEB_SOURCE_FILE = /\.(ts|tsx|css)$/;
+
+function webSourceFiles(relativeDir: string): string[] {
+  return readdirSync(path.join(ROOT, relativeDir), { withFileTypes: true }).flatMap((entry) => {
+    const relative = path.posix.join(relativeDir, entry.name);
+    if (entry.isDirectory()) {
+      return entry.name === "node_modules" || entry.name === ".next" ? [] : webSourceFiles(relative);
+    }
+    return WEB_SOURCE_FILE.test(entry.name) ? [relative] : [];
+  });
+}
+
+/**
+ * Every `docs/<name>.md` the web source names, with `file:line`, that does not exist. Until M129 the
+ * Runbooks line in Admin settings pointed the operator at three docs that were never written.
+ */
+function missingWebDocReferences(index: Set<string>) {
+  return WEB_SOURCE_DIRS.flatMap(webSourceFiles).flatMap((relativeFile) =>
+    readFileSync(path.join(ROOT, relativeFile), "utf8")
+      .split("\n")
+      .flatMap((text, lineIndex) =>
+        [...text.matchAll(/\bdocs\/[\w.-]+\.md\b/g)]
+          .filter((match) => !resolvesInRepo(match[0], index))
+          .map((match) => `${relativeFile}:${lineIndex + 1} \`${match[0]}\``)
+      )
+  );
+}
+
+function escapeRegExp(text: string) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 describe("doc references", () => {
   it("recognises repo paths and skips what is not one", () => {
     const sample = [
@@ -166,5 +201,24 @@ describe("doc references", () => {
   const index = gitRepoIndex();
   it.each(checkedFiles())("%s names only files that exist", (relativeFile) => {
     expect(missingReferences(relativeFile, index)).toEqual([]);
+  });
+
+  it("web source names only docs that exist", () => {
+    expect(missingWebDocReferences(index)).toEqual([]);
+  });
+
+  it("Admin settings renders the Runbooks line from the checked list", () => {
+    const settingsPage = readFileSync(path.join(ROOT, "apps/web/app/(admin)/settings/page.tsx"), "utf8");
+    expect(settingsPage).toContain("{describeAdminRunbooks()}");
+    expect(describeAdminRunbooks()).toBe(
+      'See "Safe Upgrade Flow" and "Release Channels And Tags" in docs/deployment.md, and "Backup And Restore" in docs/operations.md.'
+    );
+    expect(describeAdminRunbooks()).not.toMatch(/[*`]/);
+  });
+
+  it.each(ADMIN_RUNBOOKS)("the Runbooks line names $doc with its heading $heading", ({ doc, heading }) => {
+    expect(resolvesInRepo(doc, index)).toBe(true);
+    const markdown = readFileSync(path.join(ROOT, doc), "utf8");
+    expect(markdown).toMatch(new RegExp(`^#{2,4} ${escapeRegExp(heading)}\\s*$`, "m"));
   });
 });

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { AdminPageHeader } from "@/components/admin-page-header";
 import {
   getBroadcastLiveStatusLabel,
@@ -10,6 +11,7 @@ import {
 import { StatusChip, type StatusChipProps } from "@/components/ui/StatusChip";
 import { useLiveSnapshot } from "@/components/use-live-snapshot";
 import type { BroadcastSnapshot } from "@/lib/live-broadcast";
+import { buildWorkspaceHref } from "@/lib/workspace-navigation";
 
 function getPlayoutStatusChip(playoutStatus: string): { label: string; status: StatusChipProps["status"] } {
   const normalized = playoutStatus.trim().toLowerCase();
@@ -47,6 +49,19 @@ export function LiveWorkspaceHeader(props: { initialSnapshot: BroadcastSnapshot 
           status={getBroadcastLiveStatusTone(snapshot.twitch)}
         />
         <StatusChip label={playoutChip.label} status={playoutChip.status} />
+        {snapshot.presence.active ? (
+          <Link
+            className="subtle-link"
+            href={buildWorkspaceHref("live", "moderation")}
+            title={
+              snapshot.presence.actor
+                ? `${snapshot.presence.actor} active for ${snapshot.presence.remainingMinutes} more minute(s)`
+                : "Moderation presence active"
+            }
+          >
+            <StatusChip status="ok" label={`Here ${snapshot.presence.remainingMinutes}m`} />
+          </Link>
+        ) : null}
       </div>
       <div className="status-rail">
         <div>

@@ -23,9 +23,11 @@ describe("broadcast control room", () => {
     );
   });
 
-  it("links the active moderation presence chip to the moderation workspace", () => {
-    expect(broadcastControlRoomSource).toContain('href={buildWorkspaceHref("live", "moderation")}');
-    expect(broadcastControlRoomSource).toContain("snapshot.presence.active");
-    expect(broadcastControlRoomSource).toContain('label={`Here ${snapshot.presence.remainingMinutes}m`}');
+  // M129 (suggestion 23): the Live workspace header is the page's one header; the control room no longer
+  // repeats it with a second hero and a metric rail that duplicated the shared top strip.
+  it("renders no page header of its own", () => {
+    expect(broadcastControlRoomSource).not.toContain("AdminPageHeader");
+    expect(broadcastControlRoomSource).not.toContain("Operate the live 24/7");
+    expect(broadcastControlRoomSource).toContain('<div className="stack-form live-control">');
   });
 });

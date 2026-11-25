@@ -22,4 +22,11 @@ describe("live workspace header", () => {
     expect(liveWorkspaceHeaderSource).toContain('<span className="label">Twitch uptime</span>');
     expect(liveWorkspaceHeaderSource).toContain('<span className="label">Viewers</span>');
   });
+
+  // Moved from the control room's header with M129, so it shows on every Live tab.
+  it("links the active moderation presence chip to the moderation workspace", () => {
+    expect(liveWorkspaceHeaderSource).toContain('href={buildWorkspaceHref("live", "moderation")}');
+    expect(liveWorkspaceHeaderSource).toContain("snapshot.presence.active");
+    expect(liveWorkspaceHeaderSource).toContain('label={`Here ${snapshot.presence.remainingMinutes}m`}');
+  });
 });

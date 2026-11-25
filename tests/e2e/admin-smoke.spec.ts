@@ -179,7 +179,12 @@ test("bootstraps the workspace, verifies the operator IA, enables 2FA, and publi
   await page.getByLabel("One-time code").fill(generateTotpCode(secret));
   await page.getByRole("button", { name: "Verify code" }).click();
   await expect(page).toHaveURL(/\/live(?:\?tab=control)?$/);
-  await expect(page.getByRole("heading", { name: /Operate the live 24\/7 output from one workspace/i })).toBeVisible();
+  // Since M129 Live control has one page header, the Live workspace header; the control room itself
+  // starts with its Open problems panel, which only Live control renders.
+  await expect(
+    page.getByRole("heading", { name: /Keep channel and playout state visible across the whole Live workspace/i })
+  ).toBeVisible();
+  await expect(page.getByTestId("open-problems").getByRole("heading", { name: "Open problems" })).toBeVisible();
 
   // The repair actions moved behind a disclosure: they are for when something is wrong, and having
   // six of them open in front of the everyday controls was the reason the live page showed

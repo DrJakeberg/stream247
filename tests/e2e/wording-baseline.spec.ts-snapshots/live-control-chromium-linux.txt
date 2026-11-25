@@ -46,20 +46,6 @@ UPDATES
 Control
 Status
 Moderation
-Live
-Operate the live 24/7 output from one workspace.
-Use Live control for on-air actions. Current item, next queue, destination health, and scene state update continuously without reloading the page.
-Live · 128
-FEED
-<runtime>
-CURRENT
-<runtime>
-NEXT
-<runtime>
-DESTINATION
-<runtime>
-UPDATES
-<runtime>
 INCIDENTS
 Open problems
 CRITICAL · worker · The worker has never reported
@@ -116,24 +102,24 @@ Status idle · no input type
 No live input configured.
 DESTINATION
 Sending to Twitch
-Primary Twitch Output
+Ready Primary Twitch Output
 primary lead · ready · /tmp/stream-output
 1 active · 0 staged · 0 cooling down
 PID 4242 · restarts 0 · crash loop clear
 Last transition <timestamp>
 The encoder has not reported any errors.
-Lokales Relay
+Needs setup Lokales Relay
 Primary · priority 0 · Not set up yet
 No RTMP URL configured · Stream key stored here
 Recovery: Not set up yet
 Configure a valid RTMP URL and stream key before this output can join the live destination group.
-Primary Twitch Output
+Ready Primary Twitch Output
 Primary · priority 0 · Ready · in use
 /tmp/stream-output · Stream key set in the server configuration
 Primary RTMP destination for the broadcast runtime.
 Recovery: In use
 Output is currently carrying the live broadcast.
-Backup RTMP Output
+Needs setup Backup RTMP Output
 Backup · priority 10 · Not set up yet
 No RTMP URL configured · Stream key missing
 Backup RTMP destination used when the primary output is unavailable or disabled.

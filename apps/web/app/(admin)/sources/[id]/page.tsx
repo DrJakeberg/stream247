@@ -4,6 +4,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { formatSourceBreakerTime, SOURCE_BREAKER_MAX_COOLDOWN_SECONDS } from "@stream247/core";
 import { Panel } from "@/components/panel";
+import { RowStateBadge } from "@/components/row-state-badge";
 import { SourceActionsForm } from "@/components/source-actions-form";
 import { SourceBreakerCloseForm } from "@/components/source-breaker-close-form";
 import { SourceSyncForm } from "@/components/source-sync-form";
@@ -18,6 +19,7 @@ import {
   readAppState
 } from "@/lib/server/state";
 import { requireAuthenticatedUser } from "@/lib/server/auth";
+import { sourceRowStateOf } from "@/lib/row-state";
 
 const dayLabels = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
@@ -52,7 +54,11 @@ export default async function SourceDetailPage({ params }: { params: Promise<{ i
     <>
       <section className="hero">
         <span className="badge">Source detail</span>
-        <h2>{source.name}</h2>
+        {/* M129: the same state badge as the source's row in the list, outside the heading's name. */}
+        <div className="stats-row">
+          <RowStateBadge state={sourceRowStateOf(source, health, diagnostics)} />
+          <h2>{source.name}</h2>
+        </div>
         <p>
           Review source health, imported assets, pool references, and recent sync activity in one place instead of
           working from the flat library view only.

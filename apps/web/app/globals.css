@@ -297,6 +297,15 @@ main {
   letter-spacing: -0.04em;
 }
 
+/* M129: a heading that shares its line with a state badge (source detail) keeps its gap below the row. */
+.hero .stats-row:has(> h2) {
+  margin-bottom: 10px;
+}
+
+.hero .stats-row > h2 {
+  margin: 0;
+}
+
 .hero-compact {
   margin-bottom: 0;
 }
@@ -394,6 +403,12 @@ main {
 .badge-optional {
   background: var(--tone-neutral-bg);
   color: var(--tone-neutral-fg);
+}
+
+/* M129: an outage ("Failing") looks different from "Needs setup", which wears .badge-action. */
+.badge-critical {
+  background: var(--tone-critical-bg);
+  color: var(--tone-critical-fg);
 }
 
 .warning {
@@ -536,9 +551,15 @@ textarea {
   cursor: pointer;
 }
 
+/*
+ * M129: a disabled button recedes, with lower contrast and no border. The border is only coloured away,
+ * so a ghost button keeps its size while it switches between enabled and disabled.
+ */
 .button:disabled {
-  opacity: 0.7;
-  cursor: wait;
+  opacity: 0.45;
+  cursor: not-allowed;
+  border-color: transparent;
+  box-shadow: none;
 }
 
 .button.secondary,
@@ -1893,10 +1914,11 @@ button.collection-chip {
  * The on-call check on a phone (M90, U9; docs/ui.md). Measured at 390 px, "Open problems" sat at
  * y = 5 723 of a 6 256 px Live page: the sidebar's explanation card, three rails saying FEED /
  * CURRENT / NEXT / DESTINATION and two headlines came first. On the Live workspace, below 640 px:
- * the sidebar keeps the brand and the four workspaces in two columns, the shared rail and the Live
- * header's rail give way to the control room's own (one rail), and the two headers drop their
- * explanations and shrink their titles. Everything else on the phone is as before (mobile is a
- * non-goal elsewhere).
+ * the sidebar keeps the brand and the four workspaces in two columns, and the Live header drops its
+ * rail and explanation and shrinks its title. Since M129 that header is the page's one header (the
+ * control room's own hero and rail are gone), so the control tab shows the header's chips, the tabs,
+ * then Open problems: the shared rail gives way there too. Everything else on the phone is as before
+ * (mobile is a non-goal elsewhere).
  */
 @media (max-width: 640px) {
   .shell:has(.live-workspace-header) .sidebar {
@@ -1916,20 +1938,17 @@ button.collection-chip {
     min-height: 0;
   }
 
-  .content-stack:has(.live-control-header) > .admin-status-rail,
+  .content-stack:has(.live-control) > .admin-status-rail,
   .live-workspace-header > .status-rail,
-  .live-workspace-header > p,
-  .live-control-header > p {
+  .live-workspace-header > p {
     display: none;
   }
 
-  .live-workspace-header,
-  .live-control-header {
+  .live-workspace-header {
     padding: 18px;
   }
 
-  .live-workspace-header h2,
-  .live-control-header h2 {
+  .live-workspace-header h2 {
     font-size: 1.25rem;
   }
 }

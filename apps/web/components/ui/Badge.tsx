@@ -28,9 +28,11 @@ export function Badge({ variant = "neutral", children, className = "" }: BadgePr
   const variantClassName =
     variant === "ready" || variant === "live"
       ? "badge-ready"
-      : variant === "warning" || variant === "danger"
+      : variant === "warning"
         ? "badge-action"
-        : "badge-optional";
+        : variant === "danger"
+          ? "badge-critical"
+          : "badge-optional";
 
   return <span className={["badge", variantClassName, className].filter(Boolean).join(" ")}>{content}</span>;
 }
