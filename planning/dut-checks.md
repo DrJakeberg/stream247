@@ -445,3 +445,10 @@ entries under its *DUT checks of 2.3.1 (run)*; the M107 entry below did not run 
   SQL
   ssh dut 'docker exec stream247-postgres-1 psql -U stream247 -d stream247 -At -c "SELECT status, COUNT(*) FROM incidents GROUP BY status"'
   ```
+
+- M129, after the repin, on a desktop browser at 1440 x 900 or larger: the state badges match the real outputs
+  and sources. On Live → *Control*, the page shows one header and the *Open problems* heading without
+  scrolling. While `jimpanse247` is live, the *Sending to Twitch* row of the output that carries the broadcast
+  starts with *Ready*, and an output that is not set up starts with *Needs setup*. On Program → *Sources*, every
+  row starts with *Ready*, *Needs setup* or *Failing*, and a source whose last sync failed reads *Failing*,
+  on its detail page too. Passes when no badge contradicts the status line under it.

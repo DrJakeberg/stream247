@@ -13,7 +13,8 @@ For the design part only: 23, 24 and 25 together (one header, state badges, the 
 because they reuse tokens and classes that already exist.
 
 Status: on 2026-11-25 the owner asked for the list to be filed here, and for 23 to 47 to be appended;
-no item is named yet.
+the same day the owner named 3, 23, 24 and 25 (choice for 24: a fourth badge variant on the critical
+tone for "failing"). 3, 23, 24 and 25 are done by M129.
 
 ## Viewers and platform rules
 

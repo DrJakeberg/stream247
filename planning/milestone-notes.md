@@ -710,6 +710,50 @@ under `planning/archive/`, text unchanged.
   Pull request #56 was then merged into this milestone's branch (`7cd9b0a`) with M126's wording kept in
   both places.
 
+### M129 Admin Pages Lead With One Header, States Wear A Badge, Dangerous Buttons Look Dangerous
+
+- **Source.** Suggestions 3, 23, 24 and 25 of `planning/suggestions-2026-11-25.md`, named by the owner on
+  2026-11-25. For 24 the owner chose a fourth badge variant for "failing" on the existing critical tone
+  tokens, so an outage looks different from "needs setup" (`.badge-action`).
+- **Runbooks (3).** The line is built from `ADMIN_RUNBOOKS` (`apps/web/lib/admin-runbooks.ts`): *Safe
+  Upgrade Flow* and *Release Channels And Tags* in `docs/deployment.md`, *Backup And Restore* in
+  `docs/operations.md`. `tests/unit/doc-refs.test.ts` now walks `apps/web/{app,components,lib}` for every
+  `docs/*.md` it names and checks each runbook heading; renaming a heading turns it red. The page shows plain
+  text, so the sentence quotes the headings and leaves the paths bare (review: no Markdown marks on screen).
+- **One header (23).** The control room's own `AdminPageHeader` ("Operate the live 24/7 output from one
+  workspace.") and its Feed / Current / Next / Destination / Updates rail are gone; the shared top strip
+  and the Live workspace header remain. The moderation presence chip moved into the Live header's chips;
+  the Twitch chip was already there. Program library already had one header and only got the guard.
+  At 1440 x 900 *Open problems* moved from about y = 993 to about y = 685 (the design baseline image).
+  On a phone the control tab no longer shows a metric rail at all; the header's Feed chip keeps the feed
+  state in view, and the phone test (top below 1 400 px) stays green.
+- **State badges (24).** `apps/web/lib/row-state.ts` decides; `RowStateBadge` renders the `Badge`
+  primitive, whose `danger` variant now maps to `.badge-critical` (no other caller used it). An output
+  reads only its stored routing status (recovering is Failing: it is staged, not carrying the broadcast).
+  A source reads its breaker, its newest run and its drought alert, then `enabled` and the connector
+  address; open incidents are not read because one can stay open after its cause ended. The source row's
+  free-text worker status moved from a pill to plain text, so each row has one state pill.
+- **Buttons (25).** *Remove next* and *Delete curated set* are `.button-danger`. `.button:disabled` is
+  opacity 0.45, cursor not-allowed, border colour transparent (the border keeps its width, so a ghost
+  button does not change size) and no shadow. No group had two primaries; the e2e guard keeps it so.
+- **Baselines.** Recorded on a fresh stack with the default port 3020: the first recording used port 3129
+  and wrote it into the live-status wording baseline (`APP_URL is set to http://…:3129`), which CI would
+  fail, so it was discarded and recorded again. Changed: the live-control design images (desktop and
+  mobile) and the admin-settings, live-control and program-sources wording baselines. The program-library,
+  program-sources and admin-settings images stayed within the pixel tolerance, so the gate kept the old
+  look; they were deleted and recorded again on a third fresh stack, so the baseline shows the badges and
+  buttons. After review the Runbooks line lost its Markdown marks; the admin-settings images and wording
+  were recorded once more on a fourth fresh stack, then the gate without `--update`: `84 passed (7.7m)`.
+  The DOM checks in `tests/e2e/workspace-layout.spec.ts` carry every acceptance point.
+- **Wording exception.** `backup-and-restore` left the exception list of
+  `tests/unit/wording-identifiers.test.ts`: it was there only for the dead doc name, and the test fails on
+  an exception no surface uses any more.
+- **Left.** No design baseline covers the source detail page; its badge is checked in the DOM only. Review
+  questions for the owner, left as built: the top strip's Destination cell shows the lead output only (the
+  output count is in the *Sending to Twitch* lead row); a phone's control tab no longer shows *Updates:
+  Live / Polling*; a source before its first scan reads Ready, a disabled one Needs setup, and a disabled one
+  with an old failure stays Failing; the filled *Remove next* sits beside the filled primary *Pin on air*.
+
 ### Suggestions 2026-10-04 to M112-M124, then M125
 
 Moved out of `PLANS.md`, text unchanged apart from the archive path.

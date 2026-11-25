@@ -352,7 +352,7 @@ export function PlayoutActionForm(props: {
           Play insert
         </button>
         <button
-          className="button button-secondary"
+          className="button button-danger"
           disabled={isPending || !props.nextAssetId}
           onClick={() => startTransition(() => void runAction({ type: "remove_next" }))}
           type="button"

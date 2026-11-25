@@ -35,6 +35,7 @@ import { SourceLiveSoundForm } from "@/components/source-live-sound-form";
 import { TwoFactorSettingsForm } from "@/components/two-factor-settings-form";
 import { ChangePasswordForm } from "@/components/change-password-form";
 import { WatchdogThresholdsForm } from "@/components/watchdog-thresholds-form";
+import { describeAdminRunbooks } from "@/lib/admin-runbooks";
 import { requireAuthenticatedUser } from "@/lib/server/auth";
 import { getSystemReadiness } from "@/lib/server/readiness";
 import { getManagedAlertConfig, getManagedTwitchConfig, readAppState } from "@/lib/server/state";
@@ -117,7 +118,7 @@ export default async function SettingsPage() {
             </div>
             <div className="item">
               <strong>Runbooks</strong>
-              <div className="subtle">See `docs/upgrading.md`, `docs/backup-and-restore.md`, `docs/operations.md`, and `docs/versioning.md`.</div>
+              <div className="subtle">{describeAdminRunbooks()}</div>
             </div>
           </div>
         </Panel>

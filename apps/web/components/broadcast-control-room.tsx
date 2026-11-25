@@ -1,15 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { AdminPageHeader } from "@/components/admin-page-header";
-import { getBroadcastLiveStatusLabel, getBroadcastLiveStatusTone } from "@/components/broadcast-live-status";
 import { buildWorkspaceHref } from "@/lib/workspace-navigation";
 import type { BroadcastSnapshot } from "@/lib/live-broadcast";
 import { OpenProblemsPanel } from "@/components/open-problems-panel";
 import { PlayoutActionForm } from "@/components/playout-action-form";
-import { StatusChip } from "@/components/ui/StatusChip";
+import { RowStateBadge } from "@/components/row-state-badge";
 import { useLiveSnapshot } from "@/components/use-live-snapshot";
-import { getChannelStatusLabel } from "@/lib/channel-status";
 import {
   DESTINATION_RECOVERY_LABELS,
   DESTINATION_ROLE_LABELS,
@@ -17,6 +14,7 @@ import {
   describeStreamKey
 } from "@/lib/destination-wording";
 import { describePlayoutReason } from "@/lib/playout-reason";
+import { destinationRowState } from "@/lib/row-state";
 import { describeScenePreset } from "@/lib/scene-preset-names";
 import { describeOverlayHeadlines } from "@/lib/overlay-headline-wording";
 import { describePendingPlayoutRequests, listOperatorHolds, resumeHasSomethingToClear } from "@/lib/operator-holds";
@@ -39,7 +37,7 @@ type AssetOption = {
 };
 
 export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot; assets: AssetOption[] }) {
-  const { snapshot, connected } = useLiveSnapshot({
+  const { snapshot } = useLiveSnapshot({
     initialSnapshot: props.initialSnapshot,
     stateUrl: "/api/broadcast/state",
     streamUrl: "/api/broadcast/stream"
@@ -63,66 +61,12 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
   const pendingRequests = describePendingPlayoutRequests(snapshot.playout.pendingAction);
 
   return (
-    <div className="stack-form">
-      <AdminPageHeader
-        className="live-control-header"
-        compact
-        description="Use Live control for on-air actions. Current item, next queue, destination health, and scene state update continuously without reloading the page."
-        eyebrow="Live"
-        title="Operate the live 24/7 output from one workspace."
-      >
-        <div className="stats-row">
-          <StatusChip status={getBroadcastLiveStatusTone(snapshot.twitch)} label={getBroadcastLiveStatusLabel(snapshot.twitch)} />
-          {snapshot.presence.active ? (
-            <Link
-              className="subtle-link"
-              href={buildWorkspaceHref("live", "moderation")}
-              title={
-                snapshot.presence.actor
-                  ? `${snapshot.presence.actor} active for ${snapshot.presence.remainingMinutes} more minute(s)`
-                  : "Moderation presence active"
-              }
-            >
-              <StatusChip status="ok" label={`Here ${snapshot.presence.remainingMinutes}m`} />
-            </Link>
-          ) : null}
-        </div>
-        <div className="status-rail">
-          <div>
-            <span className="label">Feed</span>
-            {/* The same words the public page uses, rather than the value the runtime stores. */}
-            <strong>{getChannelStatusLabel(snapshot.playout.status)}</strong>
-          </div>
-          <div>
-            <span className="label">Current</span>
-            <strong>{currentQueueItem?.title || snapshot.currentAsset?.title || snapshot.playout.currentTitle || "Standby"}</strong>
-          </div>
-          <div>
-            <span className="label">Next</span>
-            <strong>{nextQueueItem?.title || snapshot.nextAsset?.title || snapshot.nextScheduleItem?.title || "Pending"}</strong>
-          </div>
-          <div>
-            <span className="label">Destination</span>
-            <strong>
-              {activeDestinationCount > 0
-                ? `${activeDestinationCount} in use`
-                : snapshot.destination
-                  ? DESTINATION_STATUS_LABELS[snapshot.destination.status]
-                  : "None set up"}
-            </strong>
-          </div>
-          <div>
-            <span className="label">Updates</span>
-            <strong>{connected ? "Live" : "Polling"}</strong>
-          </div>
-        </div>
-      </AdminPageHeader>
-
+    <div className="stack-form live-control">
       <section className="grid two">
         {/*
           First on purpose (M90, U7/U9): the answer to "what is wrong and what do I press" leads the
-          page, on a phone above everything else but the header. A dead worker or playout cannot
-          report itself, so those two come from the heartbeats and go first.
+          page, right after the Live workspace header and tabs (the page's one header since M129). A
+          dead worker or playout cannot report itself, so those two come from the heartbeats and go first.
         */}
         <OpenProblemsPanel
           heartbeatProblems={snapshot.heartbeatProblems}
@@ -298,7 +242,12 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
           <span className="label">Destination</span>
           <h3>Sending to Twitch</h3>
           <div className="list">
+            {/*
+              M129: every output row starts with its state in a badge. The lines under it keep the
+              four-way status wording, so Recovering stays distinguishable from Not working.
+            */}
             <div className="item">
+              <RowStateBadge state={snapshot.destination ? destinationRowState(snapshot.destination.status) : "needs-setup"} />{" "}
               <strong>{snapshot.destination?.name || "No destination configured"}</strong>
               <div className="subtle">
                 {snapshot.destination
@@ -317,7 +266,7 @@ export function BroadcastControlRoom(props: { initialSnapshot: BroadcastSnapshot
             </div>
             {snapshot.destinations.map((destination) => (
               <div className="item" key={destination.id}>
-                <strong>{destination.name}</strong>
+                <RowStateBadge state={destinationRowState(destination.status)} /> <strong>{destination.name}</strong>
                 <div className="subtle">
                   {DESTINATION_ROLE_LABELS[destination.role]} · priority {destination.priority} ·{" "}
                   {DESTINATION_STATUS_LABELS[destination.status]}

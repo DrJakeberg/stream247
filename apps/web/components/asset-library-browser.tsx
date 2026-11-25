@@ -640,7 +640,7 @@ export function AssetLibraryBrowser(props: {
               Remove selected from set
             </button>
             <button
-              className="button secondary"
+              className="button button-danger"
               disabled={isPending || !activeCollectionId}
               onClick={() => {
                 setError("");

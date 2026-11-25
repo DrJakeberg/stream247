@@ -9,7 +9,9 @@ import { SourceActionsForm } from "@/components/source-actions-form";
 import { SourceBulkActionsForm } from "@/components/source-bulk-actions-form";
 import { SourceCreateForm } from "@/components/source-create-form";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { getSourceHealthSnapshot, type AppState } from "@/lib/server/state";
+import { RowStateBadge } from "@/components/row-state-badge";
+import { sourceRowStateOf } from "@/lib/row-state";
+import { getSourceConnectorDiagnostics, getSourceHealthSnapshot, type AppState } from "@/lib/server/state";
 
 /** "1 pool", "2 pools" — the row read "In 1 pools" until a source happened to sit in exactly one. */
 function countOf(count: number, noun: string): string {
@@ -54,16 +56,18 @@ export function SourcesWorkspacePanels({ state }: { state: AppState }) {
         <div className="list">
           {state.sources.map((source) => {
             const snapshot = getSourceHealthSnapshot(state, source.id);
+            const rowState = sourceRowStateOf(source, snapshot, getSourceConnectorDiagnostics(state, source.id));
             return (
               <div className="item" key={source.id}>
                 <div className="stack-form">
                   <div>
-                    <strong>{source.name}</strong>
+                    {/* M129: the row starts with its state; the worker's own status text stays below. */}
+                    <RowStateBadge state={rowState} /> <strong>{source.name}</strong>
                     <div className="subtle">{source.type}</div>
                     {source.externalUrl ? <div className="subtle source-url">{source.externalUrl}</div> : null}
                   </div>
                   <div className="stats-row">
-                    <span className="badge">{source.status}</span>
+                    <span className="subtle">{source.status}</span>
                     <span className="subtle">{source.enabled ?? true ? "Enabled" : "Disabled"}</span>
                     <span className="subtle">{assetCountBySource.get(source.id) ?? 0} assets</span>
                     <span className="subtle">{readyAssetCountBySource.get(source.id) ?? 0} ready</span>

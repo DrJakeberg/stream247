@@ -84,7 +84,7 @@ Images are pinned away from latest.
 Something needed to go on air is missing.
 Run `pnpm release:preflight` before upgrades and `pnpm release:rehearse vX.Y.Z` before major changes.
 Runbooks
-See `docs/upgrading.md`, `docs/backup-and-restore.md`, `docs/operations.md`, and `docs/versioning.md`.
+See "Safe Upgrade Flow" and "Release Channels And Tags" in docs/deployment.md, and "Backup And Restore" in docs/operations.md.
 CREDENTIALS
 Managed credentials
 Stream247 can now store integration credentials encrypted at rest in PostgreSQL. Environment variables still work as fallback values, but these settings let you manage Twitch and alert credentials from the UI.
