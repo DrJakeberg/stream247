@@ -1018,6 +1018,11 @@ What counts time counts real time:
     watch for the `uplink.encoder_stall.restart` and `uplink.encoder.no_progress` events.
   - `TWITCH_VOD_CACHE_LIMIT_RATE` — caps download bandwidth (yt-dlp notation, e.g. `8M`). Unset means
     unlimited, which lets a background download saturate the same line the uplink pushes through.
+    A value outside that notation (`8Mbps`, `8 Mbit/s`) is dropped, not passed to yt-dlp, so the
+    cache runs unthrottled; while that env value is in force (no managed value set on the settings
+    page) the worker logs `twitch.vod-cache.limit_rate.rejected` once with the refused text. The
+    event waits for the first managed-config load of the process and stays quiet while the cache
+    is disabled.
   - `TWITCH_VOD_CACHE_FAILURE_COOLDOWN_SECONDS`
 - keep remote Twitch fallback disabled unless you intentionally accept direct remote VOD playback risk
 - confirm fallback assets exist

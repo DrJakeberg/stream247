@@ -471,6 +471,14 @@ export type ResolvedVodCacheTuning = {
   failureCooldownSeconds: number;
   /** yt-dlp rate notation ("8M"), or "" for unlimited. */
   limitRate: string;
+  /**
+   * The env ceiling (TWITCH_VOD_CACHE_LIMIT_RATE) when it is the one in force but was not in
+   * yt-dlp's notation and had to be dropped, otherwise "". Dropping keeps yt-dlp from exiting on
+   * its arguments, but leaves the cache unthrottled -- the exact condition the ceiling exists to
+   * prevent -- so the worker needs the refused text to tell the operator. "" whenever a managed
+   * value decides the ceiling, since the env value is then not in effect.
+   */
+  limitRateRejected: string;
 };
 
 const GIB = 1024 * 1024 * 1024;
@@ -516,6 +524,8 @@ function readPositiveEnvNumber(value: string | undefined, fallback: number): num
 
 export function resolveVodCacheTuning(managed: ManagedVodCacheInput, env: EnvLike): ResolvedVodCacheTuning {
   const managedLimitRate = text(managed?.vodCacheLimitRate);
+  const managedLimitRateInForce = managedLimitRate !== "" && isValidVodCacheLimitRate(managedLimitRate);
+  const envLimitRate = text(env.TWITCH_VOD_CACHE_LIMIT_RATE);
   const gbToBytes = (gb: number) => Math.round(gb * GIB);
 
   return {
@@ -558,10 +568,10 @@ export function resolveVodCacheTuning(managed: ManagedVodCacheInput, env: EnvLik
     // A managed "0" is an explicit "unlimited", overriding an env cap; malformed notation reads
     // as "not set" so a corrupted value can never make the downloader exit on its arguments. The
     // env fallback goes through the same normalisation the worker has always applied.
-    limitRate:
-      managedLimitRate !== "" && isValidVodCacheLimitRate(managedLimitRate)
-        ? normalizeVodCacheLimitRate(managedLimitRate)
-        : normalizeVodCacheLimitRate(env.TWITCH_VOD_CACHE_LIMIT_RATE)
+    limitRate: managedLimitRateInForce
+      ? normalizeVodCacheLimitRate(managedLimitRate)
+      : normalizeVodCacheLimitRate(env.TWITCH_VOD_CACHE_LIMIT_RATE),
+    limitRateRejected: !managedLimitRateInForce && !isValidVodCacheLimitRate(envLimitRate) ? envLimitRate : ""
   };
 }
 
