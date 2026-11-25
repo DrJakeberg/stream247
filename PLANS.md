@@ -12,8 +12,9 @@ The research (R1-R3), the proposal, the review and the suggestions of October 20
 
 How this file works:
 
-- **Open** lists every milestone whose release commit is not yet on `main`. A row leaves the table when
-  its release commit lands and is entered under **Shipped**.
+- **Open** lists every milestone whose release has not shipped yet (no final `vX.Y.Z` tag). A row leaves
+  the table when its release ships and is entered under **Shipped**; a release-candidate commit on `main`
+  does not move it.
 - A milestone that needs more than its row (decisions, measurements, follow-ups) gets a section in
   `planning/milestone-notes.md`. When its release ships, the section moves to an archive file under
   `planning/archive/`, text unchanged.
@@ -54,9 +55,9 @@ Never started by a session on its own. The gate says what has to happen first.
 
 | Milestone | Gate | State | Details |
 | --- | --- | --- | --- |
-| M66 Live Bridge Rehearsal | Needs a live source pushed by the owner and replaces the programme on air: never without the owner | In progress since 2.0: live-bridge takeover and release observed on the DT stack with the operator present; findings recorded | archive, section *M66 Live Bridge Rehearsal* |
-| M57 Embedded Video Sources As Scene Layers, soak part | Needs a live source pushed by the owner and overlays the programme on air: never without the owner | Stages 1 and 2 (A-E) done; open: a mandatory DT soak gate before any deploy, plus per-layer cadence | archive, section *M57 Embedded Video Sources As Scene Layers* |
-| M81 Admin Interface Language | Deferred by the owner on 2026-10-01 (viewer side first, M80): start only when the owner asks | The admin interface in the channel language | archive, row M81 |
+| M66 Live Bridge Rehearsal | Needs a live source pushed by the owner and replaces the programme on air: never without the owner | In progress since 2.0: live-bridge takeover and release observed on the DT stack with the operator present; findings recorded | `planning/archive/plans-m0-m83.md`, section *M66 Live Bridge Rehearsal* |
+| M57 Embedded Video Sources As Scene Layers, soak part | Needs a live source pushed by the owner and overlays the programme on air: never without the owner | Stages 1 and 2 (A-E) done; open: a mandatory DT soak gate before any deploy, plus per-layer cadence | `planning/archive/plans-m0-m83.md`, section *M57 Embedded Video Sources As Scene Layers* |
+| M81 Admin Interface Language | Deferred by the owner on 2026-10-01 (viewer side first, M80): start only when the owner asks | The admin interface in the channel language | `planning/archive/plans-m0-m83.md`, row M81 |
 
 ## Known follow-ups
 
@@ -65,6 +66,7 @@ follow-ups*, *Open*) of that milestone's section in `planning/archive/plans-m0-m
 means a planned milestone above takes it on.
 For M84-M106 and M109 that section is in `planning/archive/plans-m84-m109.md`.
 For M107, M108 and M110 it is in `planning/archive/plans-m107-m110.md`.
+For M111-M126 it is the milestone's section in `planning/milestone-notes.md` (*Left* items) until 2.4.0 ships.
 
 Playout and pools:
 
@@ -87,7 +89,9 @@ Playout and pools:
   the refusal (M74).
 - Force reconnect and Recover outputs do not know the relay mode (M74).
 - Per-item quarantine counts a queued or running Twitch download as a failed probe (M75).
-- Deleting a source leaves its `playout.source-unplayable.<sourceId>` incident open (M75).
+- Deleting a source leaves its keyed state incidents (`source.<kind>.<id>`, `playout.source-unplayable.<id>`,
+  `playout.source-breaker.<id>`) open; since M126 the prune no longer removes them, so they stay open for
+  good (M75, M126).
 - A pool with only a broken source can stay stuck on one item that fails inline every cycle (M75).
 - The previews apply the breaker as it stands to the whole week (M75).
 - A block mapped to a source by name and the global fallback asset ignore the breaker (M75).
@@ -164,8 +168,11 @@ Repository and operations:
   `tests/unit/ops-state.test.ts`); a Node build with ICU 77 would turn them red (proposal section 6).
 - The design baselines lag the code in wording; the 1 % pixel tolerance hides it (proposal section 6).
 - `docs/deployment.md`: *Upgrading To 2.3* says the release carries "M84-M105", but it carries M109 too;
-  *Operating Policy (since v1.5.19)* and the *Production Default* example still name v1.5.19 as the
-  production baseline (M106).
+  *Operating Policy* named v1.5.19 as the production baseline (M106) until the order pass of 2026-11-25
+  rewrote it to today's practice (done); the *Production Default* example uses `<tag>` since the tidy-up.
+- Owner steps 26 and 27 of `planning/archive/suggestions-2026-10-04.md` are open: check the Twitch labels
+  the guide names; delete the branches `claude/proposal-2026-10-te1vlg` and
+  `claude/r1-scheduling-competitors-v5o5zi` (both still on origin).
 
 ## DUT checks for the next release candidate
 
@@ -178,10 +185,10 @@ after the next candidate is deployed.
 | --- | --- | --- | --- |
 | 2.3.1 | 2026-10-20 | M107, M108 (release M110) | archive `planning/archive/plans-m107-m110.md`, sections M107, M108, M110; `CHANGELOG.md` |
 | 2.3.0 | 2026-10-15 | M84-M105, M109 (release M106; M83 superseded by M106) | archive `planning/archive/plans-m84-m109.md`, sections M85-M104, M106 and M109; `CHANGELOG.md` |
-| (2.2.0) | Not released: release commit `e81b6f4` never tagged, `v2.2.0-rc.1` never deployed; these milestones shipped with 2.3.0 (M106, owner decision 2026-10-05) | M64, M75, M76, M78, M79, M80, M82 | archive, sections M64, M75, M76, M78-M80, M82 and the M83 row; `CHANGELOG.md`, *2.2.0-rc.1* |
-| 2.1.0 | 2026-10-02 | M68, M69, M70, M72, M73, M74 (release M71) | archive, sections M68-M74; `CHANGELOG.md` |
-| 2.0.0 | 2026-09-09 | M59, M60, M61, M62, M63, M65 (release M67) | archive, sections M59-M67; `CHANGELOG.md` |
-| 1.x | 2026-03-27 (1.0.0) to 2026-09-05 (1.5.47) | M0-M58 | archive, milestone tables, phase sections and *Progress Notes*; `CHANGELOG.md` |
+| (2.2.0) | Not released: release commit `e81b6f4` never tagged, `v2.2.0-rc.1` never deployed; these milestones shipped with 2.3.0 (M106, owner decision 2026-10-05) | M64, M75, M76, M78, M79, M80, M82 | `planning/archive/plans-m0-m83.md`, sections M64, M75, M76, M78-M80, M82 and the M83 row (superseded in `plans-m84-m109.md`); `CHANGELOG.md`, *2.2.0-rc.1* |
+| 2.1.0 | 2026-10-02 | M68, M69, M70, M72, M73, M74 (release M71) | `planning/archive/plans-m0-m83.md`, sections M68-M74; `CHANGELOG.md` |
+| 2.0.0 | 2026-09-09 | M59, M60, M61, M62, M63, M65 (release M67) | `planning/archive/plans-m0-m83.md`, sections M59-M67; `CHANGELOG.md` |
+| 1.x | 2026-03-27 (1.0.0) to 2026-09-05 (1.5.47) | M0-M58 | `planning/archive/plans-m0-m83.md`, milestone tables, phase sections and *Progress Notes*; `CHANGELOG.md` |
 
 ## Milestone notes
 

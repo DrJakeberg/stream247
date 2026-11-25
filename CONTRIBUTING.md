@@ -17,6 +17,6 @@
 ## Development
 
 - `pnpm install`
-- `pnpm dev`
+- `pnpm dev` (needs a reachable PostgreSQL: `README.md`, *Local Development*, uses `scripts/dev-stack.sh`)
 - `pnpm validate`
 

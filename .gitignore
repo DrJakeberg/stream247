@@ -15,8 +15,11 @@ test-results
 # data/media was missing: the program feed, thumbnails and rehearsal media accumulate there and sat
 # in git status as twenty megabytes of untracked noise, one "git add ." away from being committed.
 # It is the same content .dockerignore keeps out of images for the same reason.
-data/
-apps/web/data
+#
+# Anchored to the two places the stack writes to (the compose stack at the root, `pnpm dev` in apps/web);
+# a bare "data/" also hid every directory named data at any depth, such as a source module.
+/data/
+/apps/web/data/
 *.tsbuildinfo
 .dev-stack/
 .claude/settings.local.json

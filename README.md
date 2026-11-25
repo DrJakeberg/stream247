@@ -126,9 +126,9 @@ are not retroactively revoked.
   - explicit import warnings when referenced media is not present locally
 - viewer-facing pages with:
   - public schedule page
-- one canonical Scene payload shared across the studio preview, scene APIs, and the playout renderer
+- one canonical Scene payload shared across the studio preview, scene APIs, and the playout renderer, with:
   - on-air scene renderer that draws the published scene natively into the FFmpeg playout path, with a text-overlay fallback; the studio preview is the same drawing
-  - overlay studio with draft-save, reusable scene preset library, preview, per-mode scene presets/headlines, layer ordering, layer visibility toggles, built-in typography presets, conservative local font-stack overrides, positioned text/logo/image/embed/widget layers, metadata-driven scene widgets, and publish-live scene controls
+  - overlay studio with draft-save, reusable scene preset library, preview, per-mode scene presets/headlines, layer ordering, layer visibility toggles, built-in typography presets, conservative local font-stack overrides, positioned text/logo/image/game/source layers, and publish-live scene controls (embed and widget layers from older scenes are kept but not drawn on air)
   - admin-managed replay branding, scene presets, and ticker/badge styling
 
 ## What Is Not Done Yet
@@ -170,8 +170,9 @@ The one-page path from an empty host to a green channel, with the traps where th
    docker compose up -d
    ```
 6. Open:
-   - `http://localhost:3000/setup` — from another machine use HTTPS; over plain HTTP the session cookie
-     only holds on `localhost`
+   - `http://localhost:3000/setup` on the host itself. Port 3000 is published on `127.0.0.1` only; from
+     another machine use HTTPS (`--profile proxy` or your own proxy) or an SSH tunnel
+     (`ssh -L 3000:localhost:3000 <user>@<host>`), see the guide's section 5
 7. Create the owner account; that signs you in. The wizard then walks through the public URL,
    Twitch app credentials, the Twitch connection, the stream key and a first programme (a pool from your
    media that plays all week), each step skippable, and ends in a readiness checklist that links to
@@ -273,6 +274,12 @@ docker compose --profile proxy up -d
 - `DISCORD_WEBHOOK_URL`: Discord alert target
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, `ALERT_EMAIL_TO`: email alerting
 - `TRAEFIK_CERT_RESOLVER`: Traefik certificate resolver name, defaults to `letsencrypt`
+- `STREAM247_WEB_BIND`: host address port 3000 is published on; default `127.0.0.1`, `0.0.0.0` opens it to the LAN
+- `STREAM247_WEB_MEMORY_LIMIT`: memory limit of `web`; default `2g`
+- `STREAM247_UPLOAD_MAX_BYTES`: per-file upload limit; unset means no limit
+- `TWITCH_BROADCAST_CHANNEL_LOGIN`, `TWITCH_BOT_LOGIN`: env fallbacks for the two Twitch account logins (`docs/twitch-setup.md`)
+- `STREAM247_SUPERVISOR_MARKER_DIR`: see `docs/deployment.md`, *Upgrading To 2.4*
+- `SOAK_DOCKER_TIMEOUT_SECONDS`: read by `scripts/soak-monitor.sh`, see `docs/deployment.md`
 
 ### What Belongs In `.env`
 
@@ -379,15 +386,15 @@ For production pinning, use `.env.production.example` or set the image tags expl
 
 ### Release Behavior
 
-- `push` to `main` validates, runs fresh-stack bootstrap checks, the real ffmpeg/ffprobe tests, queue continuity, runtime parity, the relay-on broadcast path smoke, production-config release preflight, and browser smoke checks, and then publishes current images
+- `push` to `main` validates, runs fresh-stack bootstrap checks, the real ffmpeg/ffprobe tests, queue continuity, resume, runtime parity, the relay-on broadcast path smoke, production-config release preflight, browser smoke checks and the design and wording baselines, and then publishes current images
 - `push` of `v*` tags pulls the CI-published `main-<sha>` candidate images for the tagged commit, smoke-validates them, and only then retags and publishes those same tested images as versioned GHCR artifacts
-- CI uses the public ECR mirror for `node:22-alpine` to avoid Docker Hub rate limits on GitHub-hosted runners
+- the Dockerfiles take `node:22-alpine` from `public.ecr.aws`; CI test builds pull the same image from `mirror.gcr.io` and retag it, because `public.ecr.aws` rate-limits for hours at a time (M125)
 - production should pin explicit release tags and not follow `latest`
 - release rehearsal helpers are available:
   - `pnpm release:preflight`
   - `pnpm test:runtime-parity`
   - `pnpm test:e2e:smoke`
-  - `./scripts/upgrade-rehearsal.sh v1.5.7`
+  - `./scripts/upgrade-rehearsal.sh <target-version>`
   - `./scripts/soak-monitor.sh --hours 24`
 
 Operational docs:
@@ -535,15 +542,25 @@ are clean. The full order, the script settings (`CHECK_BASE_URL`, `--follow-web`
 ## Local Development
 
 1. Copy `.env.example` to `.env`.
-2. Start dependencies:
-   ```bash
-   docker compose up -d postgres
-   ```
-3. Install dependencies:
+2. Install dependencies:
    ```bash
    pnpm install
    ```
-4. Start the web app:
+3. Build the test images the development stack runs (the worker image only for `--with-runtime`):
+   ```bash
+   docker build -f docker/web.Dockerfile -t stream247-web:test .
+   docker build -f docker/worker.Dockerfile -t stream247-worker:test .
+   ```
+4. Start the development stack (`scripts/dev-stack.sh` lists `seed`, `status`, `logs`, `reset`, `down`):
+   ```bash
+   scripts/dev-stack.sh up
+   ```
+   It serves the app on `http://localhost:3020` (`DEV_STACK_PORT`) and publishes its PostgreSQL on
+   `127.0.0.1:55432` (`DEV_STACK_DB_PORT`). The production compose `postgres` publishes no port, so
+   `docker compose up -d postgres` alone does not serve a host `pnpm dev`.
+5. To run the web app on the host instead, point `DATABASE_URL` in `.env` at the stack's PostgreSQL,
+   `postgresql://stream247:stream247@127.0.0.1:55432/stream247`, and `APP_SECRET` at the stack's value
+   (`STREAM247_DEV_APP_SECRET` in `scripts/dev-stack.sh`), then:
    ```bash
    pnpm dev
    ```
@@ -557,9 +574,11 @@ The intended validation path is:
 - `pnpm test:fresh-compose`
 - `pnpm test:media` (the tests with real ffmpeg and ffprobe, required; without host ffmpeg they use the worker image `stream247-worker:test`)
 - `pnpm test:queue-continuity`
+- `pnpm test:resume`
 - `pnpm test:runtime-parity`
 - `pnpm test:broadcast-path`
 - `pnpm test:e2e:smoke`
+- `scripts/design-baseline.sh` (design and wording baselines, needs Docker; `pnpm test:design-baseline` builds the web image first)
 - `pnpm release:preflight`
 - Docker image build
 - container smoke test
@@ -574,9 +593,11 @@ Current validation covers:
 - fresh database bootstrap smoke
 - fresh compose bootstrap smoke
 - queue continuity smoke across short local-library assets
+- resume smoke
 - runtime parity smoke for Multi-Output fanout, audio-lane playback, cuepoint inserts, and Live Bridge takeover/release on a fresh Compose stack
 - broadcast path smoke with the relay on: the program feed and the uplink output both grow over 60 s (and the check fails with the uplink stopped), a broken source opens and closes its circuit breaker, and a 90 s network outage of the playout is counted neither by the breaker nor by quarantine
 - browser smoke for bootstrap, operator IA navigation, secondary-output creation, local 2FA login, live controls, and Scene publish
+- design and wording baselines
 - production-config release preflight against pinned image tags and required Compose settings
 - Docker builds
 - smoke test for the web image
@@ -586,7 +607,7 @@ Current validation covers:
 ### Twitch OAuth does not work
 
 - check that `APP_URL` matches the externally reachable URL exactly
-- confirm both redirect URLs are registered in the Twitch developer application
+- confirm all three redirect URLs from `docs/twitch-setup.md` (*Required Redirect URLs*) are registered in the Twitch developer application
 - verify `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET`
 
 ### No assets are available
@@ -618,11 +639,16 @@ Current validation covers:
 
 ## Monorepo Layout
 
-- `apps/web`: Next.js admin UI, public pages, and API routes
-- `apps/worker`: background ingestion, reconciliation, and playout logic
-- `packages/core`: scheduling and moderation domain logic
+- `apps/web`: Next.js admin UI, public pages (`/channel`, `/channel.ics`), and API routes
+- `apps/worker`: background ingestion, reconciliation, and playout logic, plus the uplink, chat and the worker loop
+- `packages/core`: scheduling, rotation, moderation, scene and viewer-language logic
 - `packages/db`: PostgreSQL-backed application state layer
-- `docs`: architecture, deployment, and Twitch setup docs
+- `packages/render`: native on-air scene renderer (`@stream247/overlay-render`)
+- `scripts`: smoke tests, release preflight, upgrade rehearsal, soak monitor, dev stack
+- `docker`: Dockerfiles, mediamtx config, image smoke test
+- `tests`: unit, integration, e2e tests and their support code
+- `docs`: getting started, architecture, deployment, operations, Twitch setup, UI, moderation
+- `PLANS.md`, `planning/`: the plan and milestone notes; `AGENTS.md`: rules for contributors and agent sessions (imported by `CLAUDE.md`); `.claude/`: agent skills, hooks, settings
 - `.github`: CI, release, issues, and PR templates
 
 ## License

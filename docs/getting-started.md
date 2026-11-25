@@ -281,7 +281,8 @@ every control there carries an (i) that says what it does.
 
 Production pins exact `v*` image tags. Upgrade by changing the three `STREAM247_*_IMAGE` tags and
 redeploying; roll back by putting the previous tags back, after reading the release's rollback notes
-first (since 2.3, dated and one-off blocks are deleted before a reverse repin: *Rollback to 2.1.0* in
+first (a reverse repin can need a step before it: from 2.4 to 2.3.1 the stack file, *Rollback to 2.3.1*;
+to an image older than M93 the dated and one-off blocks, *Rollback to 2.1.0*; both in
 `docs/deployment.md`). Take a PostgreSQL backup before every upgrade. The full flow, including the
 rehearsal and soak scripts, is in `docs/deployment.md`.
 

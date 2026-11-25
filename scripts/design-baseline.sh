@@ -27,10 +27,10 @@ cd "$ROOT_DIR"
 PORT="${DEV_STACK_PORT:-3020}"
 BASE_URL="http://127.0.0.1:${PORT}"
 IMAGE="${E2E_PLAYWRIGHT_IMAGE:-mcr.microsoft.com/playwright:v1.56.1-noble}"
-# Eight specs, one stack, one container. The screenshots catch layout, and the others catch
-# what screenshots cannot: wording changes hide under the pixel tolerance on a tall page, a page
-# that changes height between loads fails with a size mismatch that explains nothing, and control
-# count is a number nobody eyeballs.
+# Every gated spec in DESIGN_BASELINE_SPEC, one stack, one container. The screenshots catch layout,
+# and the others catch what screenshots cannot: wording changes hide under the pixel tolerance on a
+# tall page, a page that changes height between loads fails with a size mismatch that explains
+# nothing, and control count is a number nobody eyeballs.
 #
 # layout-stability runs alongside the snapshots on purpose. When a page changes height between two
 # loads, the snapshot fails with "140336 pixels are different" and a size mismatch, which says

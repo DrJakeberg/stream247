@@ -8,9 +8,9 @@ Checks a milestone could not run in the cloud. The owner runs them on the DUT af
 deployed; the release that ships them records the results.
 2.3.0's results are in the M106 notes of `planning/archive/plans-m84-m109.md`, the entries that
 passed under its *DUT checks of 2.3.0 (run)*; the entries below are still to run. Still to run as well:
-the 2.2.0-rc.1 entries of M78, M79 and the M80 chat part (`planning/archive/plans-m0-m83.md`, last item
-below), and the last part of the M100 entry (the Next card's `in N min` on the picture), which moved
-with M100 but has no recorded result.
+the 2.2.0-rc.1 entries of M78, M79 and the M80 chat part (`planning/archive/plans-m0-m83.md`, the
+2.2.0-rc.1 item below), and the last part of the M100 entry (the Next card's `in N min` on the picture),
+which moved with M100 but has no recorded result.
 2.3.1's results are in the M110 notes of `planning/archive/plans-m107-m110.md`, the two M108
 entries under its *DUT checks of 2.3.1 (run)*; the M107 entry below did not run (owner decision
 2026-10-20).
@@ -312,8 +312,10 @@ entries under its *DUT checks of 2.3.1 (run)*; the M107 entry below did not run 
   weiter mit: <title>" (English: "switching to the next video: <title>") or, once the next video runs, its
   title, and never "gerade läuft nichts".
 
-- The checks of 2.2.0-rc.1 are in the archive, sections M75-M82. That candidate never reached the DUT, so
-  the 2.3.0 candidate runs them too.
+- The 2.2.0-rc.1 checks still to run, M78, M79 and the M80 chat part, are in
+  `planning/archive/plans-m0-m83.md`, sections M78-M80 (M75, M76 and M82 passed on 2.3.0-rc.2, the M80
+  `/channel` part on 2.3.0-rc.1; `planning/archive/plans-m84-m109.md`, M106 notes). That candidate never
+  reached the DUT, so the next candidate runs them.
 
 - M124, on the deployed candidate (it touches the seam chain, so it is soaked like a release): while a
   pool's local file or cached Twitch archive has aired for more than 5 minutes, press Live → *Play now*

@@ -409,7 +409,8 @@ Reading the rows:
 
 - `vod.cache.job.start` carries `timeoutMs` (effective), `configuredTimeoutMs` and `durationSeconds`:
   a background download gets at least the replay's running time, capped at one day, so a five-hour
-  VOD is not killed at the two-hour floor.
+  VOD is not killed at the configured floor (`TWITCH_VOD_CACHE_DOWNLOAD_TIMEOUT_SECONDS`, 1800 s in
+  `.env.production.example`).
 - `vod.cache.kept` with `reason: scheduled-within-retention` means a replay that just finished stays on
   disk because a block within `retentionHours` draws from its pool; `vod.cache.released` is the old
   path and still runs for everything else.
@@ -1363,7 +1364,7 @@ queue or fallback tier still references is never touched.
   1` in its log) and the output never published again, while Twitch accepted it. If that line still shows
   on your server, the uplink runs an image older than M115
 - use `STREAM247_RELAY_ENABLED=0` only as a rollback because it returns external publishing to the playout process
-- since the relay checks credentials (M57 stage 2), the rtmp rollback paths (`STREAM247_RELAY_ENABLED=1`, `STREAM247_UPLINK_INPUT_MODE=rtmp`) additionally require the internal relay key embedded in `STREAM247_RELAY_OUTPUT_URL` / `STREAM247_RELAY_INPUT_URL`; get both lines ready to paste from Settings → Operations → **Relay access** (owner/admin, one click, audited as `relay.internal_key.revealed`), copy them into the deployment environment, then restart — see the push ingest section in `docs/deployment.md`
+- since the relay checks credentials (M57 stage 2), the rtmp rollback paths (`STREAM247_RELAY_ENABLED=1`, `STREAM247_UPLINK_INPUT_MODE=rtmp`) additionally require the internal relay key embedded in `STREAM247_RELAY_OUTPUT_URL` / `STREAM247_RELAY_INPUT_URL`; get both lines ready to paste from Settings → Operations → **Relay access** (owner/admin, one click, audited as `relay.internal_key.revealed`), copy them into the deployment environment, then restart — see *Portainer Stack Check* in `docs/deployment.md` (the paragraphs on pushed video sources and the relay key)
 - the key never appears in a listing, a log, a scene payload or an error message, so a lost copy is re-fetched from that same group rather than recovered from anywhere else; if the group answers that the lines are unavailable, the workspace database is unreachable and that is the incident to fix first
 
 ## Seam Skew At Boundaries (since M61)
@@ -1429,8 +1430,16 @@ Minimum expectation:
    for the restore.
 2. Restore the active env file.
 3. Restore the PostgreSQL dump into an empty database: a `pg_dump -Fc` archive goes through `pg_restore`,
-   and a restore over the newer database leaves the tables only the newer version has. The commands are
-   under *Rollback to 2.1.0* in `docs/deployment.md`.
+   and a restore over the newer database leaves the tables only the newer version has. With
+   `docker compose stop web worker playout uplink` done in step 1:
+
+   ```bash
+   docker compose exec -T postgres dropdb -U stream247 stream247
+   docker compose exec -T postgres createdb -U stream247 -O stream247 stream247
+   docker compose exec -T postgres pg_restore -U stream247 -d stream247 --no-owner < <dump>
+   ```
+
+   *Rollback to 2.1.0* in `docs/deployment.md` has the same commands for the 2.3 dump.
 4. Restore `data/media` if needed.
 5. Start the previously known-good image tags.
 6. Confirm:
