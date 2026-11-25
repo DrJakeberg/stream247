@@ -10,10 +10,13 @@ import { findTeamGrantForTwitchUser, findUserById, readAppState, type AppState, 
 const sessionCookieName = "stream247_session";
 const twoFactorChallengeMaxAgeSeconds = 60 * 5;
 
-// Sessions are stateless HMACs, so an unbounded lifetime means a leaked cookie is valid forever.
+const sessionCookieMaxAgeSeconds = 60 * 60 * 24 * 14;
+
+// Sessions are stateless HMACs, so an unbounded lifetime means a leaked cookie is valid forever. The
+// default is the cookie's own lifetime (M127): a browser drops the cookie then anyway, only a copy outlived it.
 const sessionMaxAgeSeconds = (() => {
   const parsed = Number.parseInt(process.env.SESSION_MAX_AGE_SECONDS ?? "", 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 30 * 24 * 60 * 60;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : sessionCookieMaxAgeSeconds;
 })();
 
 function getAuthSecret(): string {
@@ -41,12 +44,18 @@ export function sessionPasswordHash(user: Pick<UserRecord, "authProvider" | "pas
   return user.authProvider === "local" ? user.passwordHash || state.owner?.passwordHash || "" : "";
 }
 
-function passwordStamp(passwordHash: string): string {
-  return signValue(`password:${passwordHash}`).slice(0, 16);
+/**
+ * The stamp also carries the user's session epoch (M127), which a sign-out advances, so the sign-out ends
+ * every session of that account. Epoch 0 signs exactly what it signed before, so cookies issued before the
+ * update stay valid.
+ */
+function passwordStamp(passwordHash: string, sessionEpoch: number): string {
+  const stamped = sessionEpoch === 0 ? `password:${passwordHash}` : `password:${passwordHash}:epoch:${sessionEpoch}`;
+  return signValue(stamped).slice(0, 16);
 }
 
-export function buildSessionValue(userId: string, passwordHash: string): string {
-  const payload = `${userId}:${Date.now()}:${passwordStamp(passwordHash)}`;
+export function buildSessionValue(userId: string, passwordHash: string, sessionEpoch = 0): string {
+  const payload = `${userId}:${Date.now()}:${passwordStamp(passwordHash, sessionEpoch)}`;
   return `${payload}:${signValue(payload)}`;
 }
 
@@ -93,14 +102,14 @@ export function currentTwitchRole(user: Pick<UserRecord, "twitchUserId" | "twitc
   return findTeamGrantForTwitchUser(state, twitchUserId, user.twitchLogin ?? "")?.role ?? null;
 }
 
-/** The user a session cookie names, or null when it is invalid, expired, signed in with an older password, or a Twitch sign-in that lost its access. */
+/** The user a session cookie names, or null when it is invalid, expired, signed in with an older password, signed out, or a Twitch sign-in that lost its access. */
 export function resolveSessionUser(value: string | undefined, state: AppState): UserRecord | null {
   const session = parseSessionValue(value);
   if (!session) {
     return null;
   }
   const user = findUserById(state, session.userId);
-  if (!user || passwordStamp(sessionPasswordHash(user, state)) !== session.passwordStamp) {
+  if (!user || passwordStamp(sessionPasswordHash(user, state), user.sessionEpoch ?? 0) !== session.passwordStamp) {
     return null;
   }
   if (user.authProvider !== "twitch") {
@@ -194,15 +203,18 @@ export async function requireRoles(roles: UserRole[]): Promise<UserRecord> {
   return user;
 }
 
-/** passwordHash is sessionPasswordHash(user, state), with the new hash right after a password change. */
-export async function setSessionCookie(userId: string, passwordHash: string): Promise<void> {
+/**
+ * passwordHash is sessionPasswordHash(user, state), with the new hash right after a password change;
+ * sessionEpoch is the user's stored epoch (M127).
+ */
+export async function setSessionCookie(userId: string, passwordHash: string, sessionEpoch = 0): Promise<void> {
   const cookieStore = await cookies();
-  cookieStore.set(sessionCookieName, buildSessionValue(userId, passwordHash), {
+  cookieStore.set(sessionCookieName, buildSessionValue(userId, passwordHash, sessionEpoch), {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     path: "/",
-    maxAge: 60 * 60 * 24 * 14
+    maxAge: sessionCookieMaxAgeSeconds
   });
 }
 

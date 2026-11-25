@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireApiRoles } from "@/lib/server/auth";
+import { managedConfigSaveRefusal } from "@/lib/server/managed-config-save";
 import { appendAuditEvent, readAppState, updateManagedConfigRecord } from "@/lib/server/state";
 
 /**
@@ -29,12 +30,16 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ message: "Provide the Twitch application's client secret." }, { status: 400 });
   }
 
-  await updateManagedConfigRecord({
-    ...state.managedConfig,
-    twitchClientId,
-    twitchClientSecret: twitchClientSecret || state.managedConfig.twitchClientSecret,
-    updatedAt: new Date().toISOString()
-  });
+  try {
+    await updateManagedConfigRecord((current) => ({
+      ...current,
+      twitchClientId,
+      twitchClientSecret: twitchClientSecret || current.twitchClientSecret,
+      updatedAt: new Date().toISOString()
+    }));
+  } catch (error) {
+    return managedConfigSaveRefusal(error);
+  }
 
   await appendAuditEvent("settings.twitch-app.updated", "Twitch application credentials were updated from setup.");
   return NextResponse.json({ ok: true, message: "Twitch app credentials saved." });

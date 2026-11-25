@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { FEED_TUNING_LIMITS, isWithinFeedTuningLimits } from "@stream247/core";
 import { requireApiRoles } from "@/lib/server/auth";
-import { appendAuditEvent, readAppState, updateManagedConfigRecord } from "@/lib/server/state";
+import { managedConfigSaveRefusal } from "@/lib/server/managed-config-save";
+import { appendAuditEvent, updateManagedConfigRecord } from "@/lib/server/state";
 
 // The feed-tuning half of M56 part 2: the planned encoder reconnect cadence and the program
 // feed's segment geometry. Whole numbers only — these become process arguments and schedule
@@ -47,13 +48,11 @@ export async function PUT(request: NextRequest) {
     updates[key] = trimmed;
   }
 
-  const state = await readAppState();
-
-  await updateManagedConfigRecord({
-    ...state.managedConfig,
-    ...updates,
-    updatedAt: new Date().toISOString()
-  });
+  try {
+    await updateManagedConfigRecord((current) => ({ ...current, ...updates, updatedAt: new Date().toISOString() }));
+  } catch (error) {
+    return managedConfigSaveRefusal(error);
+  }
 
   await appendAuditEvent("settings.feed_tuning.updated", "Managed feed tuning was updated.");
   return NextResponse.json({ ok: true, message: "Feed tuning saved." });

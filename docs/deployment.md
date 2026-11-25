@@ -136,8 +136,9 @@ wizard-managed and `APP_SECRET` is generated and persisted on the data volume wh
 - optional deployment-level output overrides (`STREAM_OUTPUT_WIDTH`, `STREAM_OUTPUT_HEIGHT`, `STREAM_OUTPUT_FPS`)
 - optional engagement flags (`STREAM_CHAT_OVERLAY_ENABLED`, `STREAM_ALERTS_ENABLED`, `TWITCH_EVENTSUB_SECRET`)
 - optional `SESSION_MAX_AGE_SECONDS` (read by `web`): how long a sign-in stays valid, in seconds from the
-  sign-in; default `2592000` (30 days), and a value that is not a positive integer falls back to it. The
-  browser keeps the session cookie for 14 days at most, so only a value below `1209600` shortens sessions
+  sign-in; default `1209600` (14 days, since M127; 30 days before), and a value that is not a positive
+  integer falls back to it. The browser keeps the session cookie for 14 days at most, so only a value below
+  the default shortens sessions; a longer one keeps only a copied cookie valid longer
 - optional `SOURCE_SYNC_LIMIT` (read by `worker`): how many entries one sync of a YouTube playlist, YouTube
   channel or Twitch archive lists (yt-dlp `--playlist-end`); default `200`. Each successful sync replaces
   the source's library entries with what the listing returned, so entries past the limit are not imported
@@ -859,13 +860,13 @@ whole chapter list).
 
 ### Upgrading To 2.4
 
-2.4 is 2.3.1 plus M111-M126: the suggestions of 2026-10-04 (M112-M123), resuming an interrupted item (M124),
-the closed findings of the security audit of 2026-10-27 (M125) and the fixes of the review of the production
-stack of 2026-10-29 (M126); M111 changes the soak monitor only.
+2.4 is 2.3.1 plus M111-M127: the suggestions of 2026-10-04 (M112-M123), resuming an interrupted item (M124),
+the closed findings of the security audits of 2026-10-27 (M125) and 2026-11-25 (M127) and the fixes of the
+review of the production stack of 2026-10-29 (M126); M111 changes the soak monitor only.
 `CHANGELOG.md` lists every change. This section is the upgrade from 2.3.1 and the way back; from 2.1.0, take
 *Upgrading To 2.3* and *Upgrading To 2.3.1* first.
 
-- **Before the repin.** Back up PostgreSQL and keep the dump (two migrations, below):
+- **Before the repin.** Back up PostgreSQL and keep the dump (three migrations, below):
 
   ```bash
   umask 077; docker compose exec -T postgres pg_dump -U stream247 -d stream247 -Fc > stream247-pre-2.4.dump
@@ -990,20 +991,22 @@ stack of 2026-10-29 (M126); M111 changes the soak monitor only.
   candidate's `docker-compose.yml` defaults to the `v2.3.1` images, which have no `supervisor.js`: start it
   only with the three image pins set to `v2.4.0-rc.1`. `.env.production.example` still pins `v2.3.1`, so a
   fresh install that copies it (*Deploy Steps*) sets the three pins to `v2.4.0-rc.1` by hand.
-- **Schema.** Two additive migrations, applied on the first start; the base schema has the same statements
+- **Schema.** Three additive migrations, applied on the first start; the base schema has the same statements
   for a fresh install:
 
   | Migration | Milestone | Change |
   | --- | --- | --- |
   | `20261026_001_resume_interrupted_item` | M124 | `playout_runtime.current_start_offset_seconds`, default `0`: where in its item the process on air started; `playout_runtime.resume_points`, default `[]`: the positions still owed, one per pool, newest first, at most 16; `as_run_log.start_offset_seconds`, default `0`: where each run started. Empty means nothing to continue, and every existing as-run row reads as a run from the start |
   | `20261027_001_team_grant_twitch_user_id` | M125 | `team_access_grants.twitch_user_id`, default `''`: the Twitch user id a grant is bound to; empty for every existing grant, which binds at the member's next sign-in |
+  | `20261125_001_user_session_epoch` | M127 | `users.session_epoch`, default `0`: part of every session cookie's stamp, which a sign-out advances; a constant default, so PostgreSQL 16 adds it without rewriting the table, and `0` keeps every existing session valid |
 
-  After the first start the first command prints `2`. The count query of *Upgrading To 2.3* above
-  (`id >= '20261001_002'`) prints `11` from this release on: its seven migrations, the two of 2.3.1 and
-  these two.
+  After the first start the first command prints `3`, and the second prints one row per user, each `0` until
+  that user's first sign-out. The count query of *Upgrading To 2.3* above (`id >= '20261001_002'`) prints `12`
+  from this release on: its seven migrations, the two of 2.3.1 and these three.
 
   ```bash
-  docker compose exec -T postgres psql -U stream247 -d stream247 -At -c "SELECT COUNT(*) FROM schema_migrations WHERE id IN ('20261026_001_resume_interrupted_item', '20261027_001_team_grant_twitch_user_id')"
+  docker compose exec -T postgres psql -U stream247 -d stream247 -At -c "SELECT COUNT(*) FROM schema_migrations WHERE id IN ('20261026_001_resume_interrupted_item', '20261027_001_team_grant_twitch_user_id', '20261125_001_user_session_epoch')"
+  docker compose exec -T postgres psql -U stream247 -d stream247 -At -c "SELECT session_epoch FROM users"
   ```
 
 - **Settings.** No managed setting is new, and nothing needs setting, except with the shipped file for a
@@ -1024,6 +1027,15 @@ stack of 2026-10-29 (M126); M111 changes the soak monitor only.
   `docker-compose.yml` and a stack file with a tmpfs on `/tmp` alike, but not a read-only root file system,
   which sets the marker directory to a volume (*Stack* above).
 
+  One default changes (M127): `SESSION_MAX_AGE_SECONDS`, the longest a session cookie is accepted after the
+  sign-in, is 14 days (`1209600`) when unset, instead of 30. The browser already dropped the cookie after 14
+  days, so only a copied cookie notices; a value that is set still wins. Fixed limits, not configurable and
+  without a variable (M127): a request body to the routes that answer without a session (sign-in, its
+  second-factor step, first-run setup, the relay's auth check) is read only up to 16 KiB, and a Twitch
+  EventSub delivery up to 64 KiB; a larger one is refused with `413` (the relay's auth check answers its
+  usual `403`) before anything else runs. An overlay picture is drawn only up to 8192 px on a side and
+  16 777 216 px (4096 × 4096) in total, by the size its header declares (*What changes on air*, M127).
+
 - **After the repin, the operator.** Everyone is signed out once, since older session cookies carry no
   password stamp (M117): sign in again. A `SESSION_COOKIE` the soak monitor was given before the repin is
   refused, and its incident check then fails the soak; take a new one after signing in. A team member's
@@ -1031,7 +1043,11 @@ stack of 2026-10-29 (M126); M111 changes the soak monitor only.
   destination's name, ingest URL, notes, last error and key source, nor the feed's playlist path (M125); a
   monitor that read them finds them only behind the sign-in (`/api/destinations`). A library upload is
   refused (HTTP 507) when it would leave less free space on the media volume than the disk watermark's
-  trigger (Settings → Disk watermark, default 10 %).
+  trigger (Settings → Disk watermark, default 10 %). The update itself signs nobody out beyond the M117
+  sign-in above (a session epoch of `0` signs as before, M127); from then on a sign-out ends every session of
+  that account on every device, and a session lasts at most 14 days. While the stored settings do not open
+  with the current `APP_SECRET` (the incident `secrets.key-mismatch`), every managed-settings form refuses to
+  save with `409` instead of saving over the stored credentials (*Operations*, M127).
 
 What changes on air in the first hours, without touching a setting:
 
@@ -1079,6 +1095,17 @@ What changes on air in the first hours, without touching a setting:
   more." A new incident deletes only resolved incidents beyond the newest 100: an open one stays however
   old it is (before, a run of new incidents could push an open critical one out unresolved), so the table
   can hold more than 100 rows while old incidents are open.
+- **M127.** An overlay picture over the size limit (*Settings* above), or a raster picture whose header does
+  not give its size, is drawn empty like a refused address and asked again after a minute, in the studio
+  preview and on air; an SVG picture is not measured. A studio preview no longer waits behind another
+  preview's slow picture; at most two previews fetch and draw at once, one per user, and a user's next
+  preview waits for their last one. A failed team sign-in with Twitch shows in the audit log as
+  `twitch.login_rejected` (at most one per kind of failure per minute, with the number left out since the
+  last row), no longer as `twitch.error` on the bot connection. The worker
+  logs `twitch.connection.write.dropped` when a disconnect or reconnect made while it talked to Twitch wins
+  over its write; not expected on a healthy day. A chat line that Twitch moderation deletes, or of a user
+  banned or timed out, leaves the stored recent events, and the public `/api/channel/live` carries no chat
+  lines (nothing on `/channel` showed them).
 
 #### Rollback to 2.3.1
 
@@ -1107,7 +1134,7 @@ and the pre-upgrade dump is not needed for it.
 
 What 2.3.1 does with what 2.4 left behind; none of it needs a step:
 
-- **Schema.** 2.3.1 never reads the four columns and leaves them in place: its readers map the fields they
+- **Schema.** 2.3.1 never reads the five columns and leaves them in place: its readers map the fields they
   know, its schema check at startup looks only for the columns it declares, and its migration runner skips
   ids it does not know. Its runtime write names its own columns, so `resume_points` and
   `current_start_offset_seconds` keep what 2.4 wrote last; its as-run rows get `start_offset_seconds` `0`.
@@ -1120,6 +1147,18 @@ What 2.3.1 does with what 2.4 left behind; none of it needs a step:
   whole-state write (`DELETE FROM team_access_grants`, then each grant again without the column; a
   moderator's `!game` start or stop or a blueprint apply runs it) empties `twitch_user_id`; after a roll
   forward an empty id binds again at the member's next sign-in. A layer 2.4 drew empty draws again.
+- **M127.** 2.3.1 ignores `users.session_epoch`, and its first whole-state write (it deletes and inserts the
+  users again without the column) sets every epoch back to `0`. While 2.3.1 runs a sign-out ends only the
+  cookie in that browser, and after a roll forward a cookie that a sign-out had ended can be valid again until
+  it expires (14 days at most). The reverse repin itself signs out everyone who signed in after their last
+  sign-out under 2.4 (their cookie carries an epoch above `0`, which 2.3.1 does not stamp). Nothing is needed
+  before the reverse repin. After the roll forward, end every session of every account, Twitch team members
+  included, by advancing all epochs:
+  `docker compose exec -T postgres psql -U stream247 -d stream247 -c "UPDATE users SET session_epoch = session_epoch + 1"`.
+  Changing the owner password is not enough: it ends only the local owner's sessions, and Twitch sign-ins
+  carry no password stamp. The other M127 findings apply again under 2.3.1 (a whole-row write-back of a sign-in,
+  of a grant or of the worker's Twitch connection, unbounded request bodies, a managed-settings save over
+  credentials it cannot read).
 - **M117.** 2.3.1 does not know the password stamp and reads it as the cookie's issue time. The stamp
   depends only on the password and the installation's secret (every Twitch sign-in carries the same one),
   and almost every stamp is not a number, so everyone signs in again at the rollback, and once more after a

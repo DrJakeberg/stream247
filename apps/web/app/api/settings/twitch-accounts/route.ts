@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { isValidTwitchLogin } from "@stream247/core";
 import { requireApiRoles } from "@/lib/server/auth";
 import { resolveTwitchAccountsForState } from "@stream247/db";
+import { managedConfigSaveRefusal } from "@/lib/server/managed-config-save";
 import { appendAuditEvent, readAppState, updateManagedConfigRecord } from "@/lib/server/state";
 
 // The two Twitch accounts of the Twitch accounts panel (2.1, M69): the broadcast channel (where the
@@ -30,10 +31,19 @@ export async function PUT(request: NextRequest) {
 
   const has = (key: "broadcastChannelLogin" | "botLogin") => typeof body[key] === "string";
   const state = await readAppState();
-  const channel = has("broadcastChannelLogin") ? body.broadcastChannelLogin!.trim() : state.managedConfig.twitchBroadcastChannelLogin;
-  const bot = has("botLogin") ? body.botLogin!.trim() : state.managedConfig.twitchBotLogin;
-  const managedConfig = { ...state.managedConfig, twitchBroadcastChannelLogin: channel, twitchBotLogin: bot, updatedAt: new Date().toISOString() };
-  await updateManagedConfigRecord(managedConfig);
+  let managedConfig: typeof state.managedConfig;
+  try {
+    managedConfig = await updateManagedConfigRecord((current) => ({
+      ...current,
+      twitchBroadcastChannelLogin: has("broadcastChannelLogin")
+        ? body.broadcastChannelLogin!.trim()
+        : current.twitchBroadcastChannelLogin,
+      twitchBotLogin: has("botLogin") ? body.botLogin!.trim() : current.twitchBotLogin,
+      updatedAt: new Date().toISOString()
+    }));
+  } catch (error) {
+    return managedConfigSaveRefusal(error);
+  }
 
   // What is now in effect, not what was typed: an empty field falls back to TWITCH_BROADCAST_CHANNEL_LOGIN
   // / TWITCH_BOT_LOGIN when the server sets them (M69 review).

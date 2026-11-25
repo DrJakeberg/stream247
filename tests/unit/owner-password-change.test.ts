@@ -83,7 +83,8 @@ describe("POST /api/auth/password (M91, I7)", () => {
     const response = await POST(requestWith({ currentPassword: OLD_PASSWORD, newPassword: NEW_PASSWORD }));
     expect(await response.json()).toMatchObject({ message: "Password changed. Every other signed-in session is signed out." });
     expect(mocks.setSessionCookie).toHaveBeenCalledTimes(1);
-    expect(mocks.setSessionCookie).toHaveBeenCalledWith("user_owner", String(mocks.setOwnerPasswordHash.mock.calls[0]?.[0]));
+    // The third argument is the session epoch (M127); a password change keeps it.
+    expect(mocks.setSessionCookie).toHaveBeenCalledWith("user_owner", String(mocks.setOwnerPasswordHash.mock.calls[0]?.[0]), 0);
   });
 
   it("refuses a new password under 10 characters", async () => {

@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { getAuthenticatedUserId, requireApiRoles } from "@/lib/server/auth";
 import { normalizeScenePreviewRequest } from "@/lib/scene-preview-request";
-import { checkScenePreviewRenderer, renderScenePreviewSvg } from "@/lib/server/scene-preview-renderer";
+import {
+  checkScenePreviewRenderer,
+  renderScenePreviewSvg,
+  ScenePreviewAbortedError
+} from "@/lib/server/scene-preview-renderer";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -57,7 +61,8 @@ export async function POST(request: Request) {
   // by any state, so there is nothing to look up — and the image smoke test depends on it: it runs
   // the web image with no Postgres behind it, and a 401 there proves this module (satori and its
   // bundled layout engine included) really loaded inside the standalone build.
-  if (!(await getAuthenticatedUserId())) {
+  const userId = await getAuthenticatedUserId();
+  if (!userId) {
     return NextResponse.json({ message: "Authentication required." }, { status: 401 });
   }
 
@@ -80,8 +85,13 @@ export async function POST(request: Request) {
 
   let svg: string;
   try {
-    svg = await renderScenePreviewSvg(scene);
+    svg = await renderScenePreviewSvg(scene, { userId, signal: request.signal });
   } catch (error) {
+    if (error instanceof ScenePreviewAbortedError) {
+      // Nobody is listening any more; not a renderer failure, so not logged either.
+      return NextResponse.json({ message: "The preview request was abandoned." }, { status: 503 });
+    }
+
     // Never the renderer's own text (M125): it could carry what a fetched address answered.
     console.error("[scene-preview] render failed:", error instanceof Error ? error.message : error);
     return NextResponse.json({ message: "The overlay renderer could not draw this scene." }, { status: 500 });

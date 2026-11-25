@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isValidTwitchLogin } from "@stream247/core";
 import { requireApiRoles } from "@/lib/server/auth";
-import { appendAuditEvent, readAppState, updateManagedConfigRecord } from "@/lib/server/state";
+import { managedConfigSaveRefusal } from "@/lib/server/managed-config-save";
+import { appendAuditEvent, updateManagedConfigRecord } from "@/lib/server/state";
 
 export async function PUT(request: NextRequest) {
   const unauthorized = await requireApiRoles(["owner", "admin"]);
@@ -40,30 +41,33 @@ export async function PUT(request: NextRequest) {
     );
   }
 
-  const state = await readAppState();
-  await updateManagedConfigRecord({
-    ...state.managedConfig,
-    twitchClientId: trim(body.twitchClientId),
-    twitchClientSecret: trim(body.twitchClientSecret) || state.managedConfig.twitchClientSecret,
-    twitchDefaultCategoryId: trim(body.twitchDefaultCategoryId),
-    // Only when the request carries the field. Since 2.1 the broadcast channel is edited in the Twitch
-    // accounts panel, and a credentials save that does not send it must not blank the channel --
-    // that would silently turn a split setup into "the bot's own channel".
-    twitchBroadcastChannelLogin:
-      "twitchBroadcastChannelLogin" in body ? broadcastChannelLogin : state.managedConfig.twitchBroadcastChannelLogin,
-    // A secret like the client secret and the SMTP password: an empty field keeps the stored
-    // value. The webhook signature check and the worker's subscription sync both resolve it
-    // managed-first with TWITCH_EVENTSUB_SECRET as fallback.
-    twitchEventsubSecret: trim(body.twitchEventsubSecret) || state.managedConfig.twitchEventsubSecret,
-    discordWebhookUrl: trim(body.discordWebhookUrl) || state.managedConfig.discordWebhookUrl,
-    smtpHost: trim(body.smtpHost),
-    smtpPort: trim(body.smtpPort),
-    smtpUser: trim(body.smtpUser),
-    smtpPassword: trim(body.smtpPassword) || state.managedConfig.smtpPassword,
-    smtpFrom: trim(body.smtpFrom),
-    alertEmailTo: trim(body.alertEmailTo),
-    updatedAt: new Date().toISOString()
-  });
+  try {
+    await updateManagedConfigRecord((current) => ({
+      ...current,
+      twitchClientId: trim(body.twitchClientId),
+      twitchClientSecret: trim(body.twitchClientSecret) || current.twitchClientSecret,
+      twitchDefaultCategoryId: trim(body.twitchDefaultCategoryId),
+      // Only when the request carries the field. Since 2.1 the broadcast channel is edited in the
+      // Twitch accounts panel, and a credentials save that does not send it must not blank the
+      // channel -- that would silently turn a split setup into "the bot's own channel".
+      twitchBroadcastChannelLogin:
+        "twitchBroadcastChannelLogin" in body ? broadcastChannelLogin : current.twitchBroadcastChannelLogin,
+      // A secret like the client secret and the SMTP password: an empty field keeps the stored
+      // value. The webhook signature check and the worker's subscription sync both resolve it
+      // managed-first with TWITCH_EVENTSUB_SECRET as fallback.
+      twitchEventsubSecret: trim(body.twitchEventsubSecret) || current.twitchEventsubSecret,
+      discordWebhookUrl: trim(body.discordWebhookUrl) || current.discordWebhookUrl,
+      smtpHost: trim(body.smtpHost),
+      smtpPort: trim(body.smtpPort),
+      smtpUser: trim(body.smtpUser),
+      smtpPassword: trim(body.smtpPassword) || current.smtpPassword,
+      smtpFrom: trim(body.smtpFrom),
+      alertEmailTo: trim(body.alertEmailTo),
+      updatedAt: new Date().toISOString()
+    }));
+  } catch (error) {
+    return managedConfigSaveRefusal(error);
+  }
 
   await appendAuditEvent("settings.managed-config.updated", "Managed encrypted integration settings were updated.");
   return NextResponse.json({ ok: true, message: "Managed settings updated." });

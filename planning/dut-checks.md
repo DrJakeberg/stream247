@@ -445,3 +445,50 @@ entries under its *DUT checks of 2.3.1 (run)*; the M107 entry below did not run 
   SQL
   ssh dut 'docker exec stream247-postgres-1 psql -U stream247 -d stream247 -At -c "SELECT status, COUNT(*) FROM incidents GROUP BY status"'
   ```
+
+- M127, after the repin: the migration ran and kept every session. Passes when the first command prints `1`
+  and the second prints only `0` lines (one per user; a value above `0` is fine only for a user who signed
+  out since the repin), and a browser that was signed in before the repin (after the M117 sign-in) is still
+  signed in.
+
+  ```sh
+  ssh dut 'docker exec stream247-postgres-1 psql -U stream247 -d stream247 -At -c "SELECT COUNT(*) FROM schema_migrations WHERE id = '"'"'20261125_001_user_session_epoch'"'"'"'
+  ssh dut 'docker exec stream247-postgres-1 psql -U stream247 -d stream247 -At -c "SELECT session_epoch FROM users"'
+  ```
+
+- M127, after the repin, by hand: a sign-out ends the account's other sessions. Sign in as the owner in two
+  browsers (or a normal and a private window), sign out in one, then reload an admin page in the other.
+  Passes when the other one lands on the sign-in page and the owner's `session_epoch` went up by one. A
+  `SESSION_COOKIE` the soak monitor holds for that account ends too: take a new one before a soak.
+
+- M127, after the repin: the pre-auth body limit holds behind Traefik. Passes when the command prints `413`
+  (a 20 KiB sign-in body; `000` or a proxy error page means the proxy refused it first, also a pass, say
+  which). Replace `<host>` with the public host name.
+
+  ```sh
+  ssh dut 'head -c 20000 /dev/zero | tr "\0" a | sed "s/^/{\"email\":\"x@y.z\",\"password\":\"/; s/$/\"}/" | curl -s -o /dev/null -w "%{http_code}\n" -H "Content-Type: application/json" --data-binary @- https://<host>/api/auth/login'
+  ```
+
+- M127, a few hours after the repin: the worker's Twitch writes still land. Passes when the first command
+  shows a `last_refresh_at` of the identity row younger than its token's lifetime (about four hours) and a
+  `last_metadata_sync_at` from the last hour, and the second prints `0` (a drop is expected only right after
+  a disconnect or reconnect under Admin → Settings → Twitch accounts; name any such change).
+
+  ```sh
+  ssh dut 'docker exec stream247-postgres-1 psql -U stream247 -d stream247 -At -c "SELECT status, last_refresh_at, last_metadata_sync_at FROM twitch_connection"'
+  ssh dut 'docker logs --since 6h stream247-worker-1 2>&1 | grep -c twitch.connection.write.dropped'
+  ```
+
+- M127, after the repin: overlay pictures still draw under the new size limit. Passes when the studio
+  preview of the live scene shows every logo and image layer it showed before the repin. A layer that is
+  now empty is either over 8192 px on a side or 16 megapixels or a raster whose size cannot be read: name its
+  address.
+
+- M127, once, by hand with a moderator of `jimpanse247` (never the bot `3JakeC` as the channel): a deleted chat
+  line leaves the stored recent events. Write a test line in the `jimpanse247` chat, check that it shows under
+  Admin → Overlays recent events, delete it on Twitch as a moderator, reload. Passes when the line is gone and
+  the command prints `0`.
+
+  ```sh
+  ssh dut 'docker exec stream247-web-1 node -e "fetch(\"http://127.0.0.1:3000/api/channel/live\").then((r) => r.json()).then((j) => console.log(j.engagement.recentEvents.length))"'
+  ```

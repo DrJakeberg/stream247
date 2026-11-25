@@ -1,11 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parseTwoFactorChallengeValue, sessionPasswordHash, setSessionCookie } from "@/lib/server/auth";
-import { findUserById, readAppState, upsertUserRecord } from "@/lib/server/state";
+import { findUserById, readAppState, recordUserSignIn } from "@/lib/server/state";
 import { verifyTotpCode } from "@/lib/server/two-factor";
 import { TWO_FACTOR_RATE_LIMIT, consumeRateLimit, resetRateLimit } from "@/lib/server/rate-limit";
+import { PREAUTH_BODY_LIMIT_BYTES, bodyTooLargeResponse, readBoundedText } from "@/lib/server/bounded-body";
 
 export async function POST(request: NextRequest) {
-  const body = (await request.json()) as { challengeToken?: string; code?: string };
+  // Anonymous callers reach this, so the body is bounded before anything else reads or counts it.
+  const rawBody = await readBoundedText(request, PREAUTH_BODY_LIMIT_BYTES);
+  if (rawBody === null) {
+    return bodyTooLargeResponse();
+  }
+  const body = JSON.parse(rawBody) as { challengeToken?: string; code?: string };
   const challenge = parseTwoFactorChallengeValue(body.challengeToken);
   const code = body.code ?? "";
 
@@ -36,11 +42,12 @@ export async function POST(request: NextRequest) {
 
   resetRateLimit(limitKey);
 
-  await upsertUserRecord({
-    ...user,
-    lastLoginAt: new Date().toISOString()
-  });
+  // Only the sign-in time (M127): the row read above may be older than a password or 2FA change
+  // committed since, and writing it back undid that change.
+  if (!(await recordUserSignIn(user.id, new Date().toISOString()))) {
+    return NextResponse.json({ message: "Two-factor authentication is not available for this account." }, { status: 400 });
+  }
 
-  await setSessionCookie(user.id, sessionPasswordHash(user, state));
+  await setSessionCookie(user.id, sessionPasswordHash(user, state), user.sessionEpoch ?? 0);
   return NextResponse.json({ ok: true });
 }

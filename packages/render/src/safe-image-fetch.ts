@@ -11,9 +11,9 @@
 // private, link-local, carrier-grade NAT, multicast or reserved ranges, IPv4-mapped forms included),
 // the connection goes to exactly the address that was checked (no second lookup a rebinding name
 // could answer differently), redirects are followed by hand and checked the same way, and the body
-// is bounded in time (5 s for the whole fetch, redirects included) and size. A picture that cannot be
-// fetched under these rules is drawn as a transparent pixel of its declared size, which is what an
-// unreachable emote already looked like.
+// is bounded in time (5 s for the whole fetch, redirects included), in size and in the pixel size its
+// header declares (M127). A picture that cannot be fetched under these rules is drawn as a transparent
+// pixel of its declared size, which is what an unreachable emote already looked like.
 
 import { lookup as dnsLookup } from "node:dns/promises";
 import http from "node:http";
@@ -23,6 +23,11 @@ import { BlockList, isIP } from "node:net";
 export const REMOTE_IMAGE_TIMEOUT_MS = 5_000;
 export const REMOTE_IMAGE_MAX_BYTES = 4 * 1024 * 1024;
 export const REMOTE_IMAGE_MAX_REDIRECTS = 3;
+// The bytes bound the download, not the decode (M127): resvg allocates the full RGBA pixmap of every
+// picture it draws, and a few hundred bytes of PNG can declare 16000 x 16000, a gibibyte. A side of
+// 8192 covers a 4K frame with margin and a wide banner; the product caps one decode at 64 MiB.
+export const REMOTE_IMAGE_MAX_SIDE = 8192;
+export const REMOTE_IMAGE_MAX_PIXELS = 4096 * 4096;
 const REMOTE_IMAGE_CACHE_TTL_MS = 10 * 60_000;
 // A picture that failed is asked again sooner: one network blip must not blank a logo for long.
 const REMOTE_IMAGE_FAILURE_TTL_MS = 60_000;
@@ -117,6 +122,136 @@ type FetchedImage = { contentType: string; body: Buffer };
 
 class RemoteImageRefused extends Error {}
 
+function gifFrameSize(body: Buffer): { width: number; height: number } | null {
+  // The first frame is what gets drawn, and its descriptor may declare more than the logical screen.
+  let offset = 13;
+  const packed = body[10] ?? 0;
+  if (packed & 0x80) {
+    offset += 3 * 2 ** ((packed & 7) + 1);
+  }
+  while (offset < body.length) {
+    const block = body[offset];
+    if (block === 0x2c) {
+      if (offset + 9 > body.length) {
+        return null;
+      }
+      return {
+        width: body.readUInt16LE(offset + 1) + body.readUInt16LE(offset + 5),
+        height: body.readUInt16LE(offset + 3) + body.readUInt16LE(offset + 7)
+      };
+    }
+    if (block !== 0x21) {
+      return null;
+    }
+    // An extension: label, then sub-blocks until an empty one.
+    offset += 2;
+    while (offset < body.length && body[offset] !== 0) {
+      offset += (body[offset] ?? 0) + 1;
+    }
+    offset += 1;
+  }
+  return null;
+}
+
+function jpegSize(body: Buffer): { width: number; height: number } | null {
+  let offset = 2;
+  while (offset + 4 <= body.length) {
+    if (body[offset] !== 0xff) {
+      return null;
+    }
+    const marker = body[offset + 1] ?? 0;
+    if (marker === 0xff) {
+      offset += 1;
+      continue;
+    }
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+      offset += 2;
+      continue;
+    }
+    // SOF0 to SOF15, except DHT (C4), JPG (C8) and DAC (CC), which share the range.
+    if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+      if (offset + 9 > body.length) {
+        return null;
+      }
+      return { width: body.readUInt16BE(offset + 7), height: body.readUInt16BE(offset + 5) };
+    }
+    if (marker === 0xd9 || marker === 0xda) {
+      return null;
+    }
+    offset += 2 + body.readUInt16BE(offset + 2);
+  }
+  return null;
+}
+
+function webpSize(body: Buffer): { width: number; height: number } | null {
+  const chunk = body.toString("latin1", 12, 16);
+  if (chunk === "VP8X" && body.length >= 30) {
+    return { width: body.readUIntLE(24, 3) + 1, height: body.readUIntLE(27, 3) + 1 };
+  }
+  if (chunk === "VP8 " && body.length >= 30 && body[23] === 0x9d && body[24] === 0x01 && body[25] === 0x2a) {
+    return { width: body.readUInt16LE(26) & 0x3fff, height: body.readUInt16LE(28) & 0x3fff };
+  }
+  if (chunk === "VP8L" && body.length >= 25 && body[20] === 0x2f) {
+    const bits = body.readUInt32LE(21);
+    return { width: (bits & 0x3fff) + 1, height: ((bits >>> 14) & 0x3fff) + 1 };
+  }
+  return null;
+}
+
+function avifSize(body: Buffer): { width: number; height: number } | null {
+  // Every ispe box (whole picture and grid tiles alike); the largest is what a decoder allocates.
+  let width = 0;
+  let height = 0;
+  for (let at = body.indexOf("ispe", 0, "latin1"); at >= 0 && at + 16 <= body.length; at = body.indexOf("ispe", at + 4, "latin1")) {
+    width = Math.max(width, body.readUInt32BE(at + 8));
+    height = Math.max(height, body.readUInt32BE(at + 12));
+  }
+  return { width, height };
+}
+
+/**
+ * The pixel size a raster picture declares in its header, read from the bytes whatever type the
+ * server claimed; null when the bytes are no PNG, JPEG, GIF, WebP or AVIF, or the header is cut off.
+ */
+export function readPictureSize(body: Buffer): { width: number; height: number } | null {
+  let size: { width: number; height: number } | null = null;
+  if (body.length >= 24 && body.readUInt32BE(0) === 0x89504e47 && body.toString("latin1", 12, 16) === "IHDR") {
+    size = { width: body.readUInt32BE(16), height: body.readUInt32BE(20) };
+  } else if (body.length >= 4 && body[0] === 0xff && body[1] === 0xd8) {
+    size = jpegSize(body);
+  } else if (body.length >= 13 && /^GIF8[79]a$/.test(body.toString("latin1", 0, 6))) {
+    const frame = gifFrameSize(body);
+    size = frame
+      ? { width: Math.max(body.readUInt16LE(6), frame.width), height: Math.max(body.readUInt16LE(8), frame.height) }
+      : null;
+  } else if (body.length >= 16 && body.toString("latin1", 0, 4) === "RIFF" && body.toString("latin1", 8, 12) === "WEBP") {
+    size = webpSize(body);
+  } else if (body.length >= 12 && body.toString("latin1", 4, 8) === "ftyp") {
+    size = avifSize(body);
+  }
+  return size && size.width > 0 && size.height > 0 ? size : null;
+}
+
+/** Refuses a picture whose decode would be larger than the limits above. */
+function checkPictureSize(body: Buffer, contentType: string): void {
+  const size = readPictureSize(body);
+  if (!size) {
+    // An SVG is drawn as vectors into the frame, without a pixmap of its own size. Measured on
+    // resvg-js 2.6.2: a raster embedded in it is not decoded either.
+    if (contentType === "image/svg+xml") {
+      return;
+    }
+    throw new RemoteImageRefused("has a size that cannot be read");
+  }
+  if (
+    size.width > REMOTE_IMAGE_MAX_SIDE ||
+    size.height > REMOTE_IMAGE_MAX_SIDE ||
+    size.width * size.height > REMOTE_IMAGE_MAX_PIXELS
+  ) {
+    throw new RemoteImageRefused("is larger than the picture size limit");
+  }
+}
+
 async function resolvePublicAddresses(hostname: string, resolveHost: ResolveHost): Promise<Array<{ address: string; family: number }>> {
   const bare = hostname.replace(/^\[|\]$/g, "");
   const addresses = isIP(bare) ? [{ address: bare, family: isIP(bare) }] : await resolveHost(bare);
@@ -179,7 +314,16 @@ export function requestOnce(url: URL, pinned: { address: string; family: number 
           }
           chunks.push(chunk);
         });
-        response.on("end", () => resolve({ kind: "image", image: { contentType, body: Buffer.concat(chunks) } }));
+        response.on("end", () => {
+          const body = Buffer.concat(chunks);
+          try {
+            checkPictureSize(body, contentType);
+          } catch (error) {
+            reject(error);
+            return;
+          }
+          resolve({ kind: "image", image: { contentType, body } });
+        });
         response.on("error", reject);
       }
     );

@@ -113,6 +113,11 @@ export type UserRecord = {
   /** The stored secret exists but will not open with the current APP_SECRET; the 2FA gate fails closed. */
   twoFactorSecretUnreadable?: boolean;
   twoFactorConfirmedAt?: string;
+  /**
+   * Part of every session stamp (M127). A sign-out advances it, which ends every session of this account;
+   * 0, the value of every row from before, signs the stamp as before, so the update signs nobody out.
+   */
+  sessionEpoch?: number;
   createdAt: string;
   lastLoginAt: string;
 };
@@ -211,7 +216,9 @@ export type AuditEvent = {
  * something is being configured and near-silence otherwise, so 500 entries spans weeks to months of
  * ordinary use. The one writer an attacker can drive is `relay.publish_rejected`, and the throttle
  * in the web tier caps that at ten per minute globally: 500 entries is a little under an hour of
- * sustained attack, against ten minutes at the old bound. The ceiling exists at all because the
+ * sustained attack, against ten minutes at the old bound. Failed team sign-ins with Twitch
+ * (`twitch.login_rejected`, M127) are the second, throttled the same way; neither type is protected,
+ * so neither can push the protected window's entries out. The ceiling exists at all because the
  * table is carried through the full state serialisation on every read and write; at the 85 bytes a
  * row measures in practice this is about 42 KB, which is proportionate to the 250-row sync-run and
  * 100-row incident tables already travelling with it.
@@ -1787,7 +1794,7 @@ function noteSecretDecryptionFailure(context: string): void {
       event: "secrets.decrypt.failed",
       context,
       reason: "key-mismatch",
-      hint: "The stored secrets were encrypted under a different APP_SECRET. Restore it (env APP_SECRET or the persisted secret file on the data volume); re-entering the secrets is the alternative."
+      hint: "The stored secrets were encrypted under a different APP_SECRET. Restore it (env APP_SECRET or the persisted secret file on the data volume); if it is lost for good, reset the stored settings (docs/operations.md) and enter the secrets again."
     })
   );
   // Off the synchronous decrypt path, and never allowed to throw into it: the incident store is
@@ -1797,7 +1804,7 @@ function noteSecretDecryptionFailure(context: string): void {
       scope: "system",
       severity: "critical",
       title: "Stored secrets cannot be decrypted with the current APP_SECRET",
-      message: `A stored ${context} failed to decrypt. Twitch credentials, stream keys and the relay key read as missing, and two-factor login is refused until the APP_SECRET that encrypted them is restored (env APP_SECRET or the persisted secret file on the data volume). Re-entering every secret is the alternative.`,
+      message: `A stored ${context} failed to decrypt. Twitch credentials, stream keys and the relay key read as missing, and two-factor login is refused until the APP_SECRET that encrypted them is restored (env APP_SECRET or the persisted secret file on the data volume). If it is lost for good, reset the stored settings (docs/operations.md) and enter every secret again.`,
       fingerprint: "secrets.key-mismatch"
     }).catch(() => undefined);
   });
@@ -2581,7 +2588,8 @@ async function applyCurrentSchemaDefinition(client: PoolClient): Promise<void> {
       two_factor_secret TEXT NOT NULL DEFAULT '',
       two_factor_confirmed_at TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL,
-      last_login_at TEXT NOT NULL
+      last_login_at TEXT NOT NULL,
+      session_epoch INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS team_access_grants (
@@ -4534,6 +4542,25 @@ if (!schemaMigrations.some((migration) => migration.id === teamGrantTwitchUserId
   schemaMigrations.push(teamGrantTwitchUserIdMigration);
 }
 
+/**
+ * The session epoch of each user (M127), part of every session stamp; a sign-out advances it. Word for
+ * word the base-schema line. A constant default is a catalog-only change on PostgreSQL 16, and 0 keeps
+ * every existing session valid.
+ */
+export const userSessionEpochMigration: MigrationDefinition = {
+  id: "20261125_001_user_session_epoch",
+  description: "Add the per-user session epoch that a sign-out advances.",
+  apply: async (client) => {
+    await client.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS session_epoch INTEGER NOT NULL DEFAULT 0;
+    `);
+  }
+};
+
+if (!schemaMigrations.some((migration) => migration.id === userSessionEpochMigration.id)) {
+  schemaMigrations.push(userSessionEpochMigration);
+}
+
 async function ensureSchemaMigrationsTable(client: PoolClient): Promise<void> {
   await client.query(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -5111,21 +5138,26 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
   // original beyond recovery -- and clears the very flag that makes a two-factor login refuse, so
   // the next sign-in skips the second factor again. The destinations below already carry their
   // ciphertext across this same rewrite; users did not.
-  const existingUserSecretsResult = await client.query<{ id: string; two_factor_secret: string }>(
-    "SELECT id, two_factor_secret FROM users"
+  //
+  // The session epoch (M127) is carried over from the stored row and never taken from `next`: a state
+  // snapshot read before a sign-out would otherwise put the old epoch back and revive the sessions the
+  // sign-out ended.
+  const existingUserSecretsResult = await client.query<{ id: string; two_factor_secret: string; session_epoch: number }>(
+    "SELECT id, two_factor_secret, session_epoch FROM users"
   );
   const existingUserSecrets = new Map(
     existingUserSecretsResult.rows.map((row) => [row.id, row.two_factor_secret || ""] as const)
   );
+  const existingSessionEpochs = new Map(existingUserSecretsResult.rows.map((row) => [row.id, row.session_epoch] as const));
   await client.query("DELETE FROM users");
   for (const user of next.users) {
     await client.query(
       `
         INSERT INTO users (
           id, email, display_name, auth_provider, role, twitch_user_id, twitch_login, password_hash,
-          two_factor_enabled, two_factor_secret, two_factor_confirmed_at, created_at, last_login_at
+          two_factor_enabled, two_factor_secret, two_factor_confirmed_at, created_at, last_login_at, session_epoch
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
       `,
       [
         user.id,
@@ -5140,7 +5172,8 @@ async function persistState(client: PoolClient, state: AppState): Promise<void> 
         preservedTwoFactorSecret(user, existingUserSecrets.get(user.id) ?? ""),
         user.twoFactorConfirmedAt ?? "",
         user.createdAt,
-        user.lastLoginAt
+        user.lastLoginAt,
+        existingSessionEpochs.get(user.id) ?? 0
       ]
     );
   }
@@ -5664,6 +5697,7 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
     two_factor_confirmed_at: string;
     created_at: string;
     last_login_at: string;
+    session_epoch: number;
   }>("SELECT * FROM users ORDER BY created_at ASC");
   const grantsResult = await client.query<{
     id: string;
@@ -6022,6 +6056,7 @@ async function hydrateState(client: PoolClient): Promise<AppState> {
         return { twoFactorSecret, twoFactorSecretUnreadable: Boolean(row.two_factor_secret) && !twoFactorSecret };
       })(),
       twoFactorConfirmedAt: row.two_factor_confirmed_at,
+      sessionEpoch: row.session_epoch ?? 0,
       createdAt: row.created_at,
       lastLoginAt: row.last_login_at
     })),
@@ -7677,8 +7712,44 @@ export async function runAssetRetentionSweep(args: {
   });
 }
 
-export async function updateManagedConfigRecord(config: ManagedConfigRecord): Promise<void> {
-  await withSerializedStateWrite("updateManagedConfigRecord", async (client) => {
+/**
+ * A managed-config save was refused because the stored payload does not open with the current
+ * APP_SECRET. Nothing was written: the payload stays byte-identical, so restoring the original
+ * APP_SECRET brings every stored credential back.
+ */
+export class ManagedConfigKeyMismatchError extends Error {
+  constructor() {
+    super("The stored managed config cannot be decrypted with the current APP_SECRET; nothing was written.");
+    this.name = "ManagedConfigKeyMismatchError";
+  }
+}
+
+/**
+ * Read-modify-write of the managed config inside one serialized write. `update` gets the record as
+ * stored at this moment (read under the state-write lock, defaults merged as readManagedConfigRecord
+ * does) and returns the record to store, so a save never reverts a field another save committed
+ * after the caller's own state read. `update` must be synchronous and must not touch the database.
+ * A stored payload this process cannot decrypt is never overwritten (the persistState rule), but
+ * the save is refused with ManagedConfigKeyMismatchError instead of being skipped silently.
+ */
+export async function updateManagedConfigRecord(
+  update: (current: ManagedConfigRecord) => ManagedConfigRecord
+): Promise<ManagedConfigRecord> {
+  return withSerializedStateWrite("updateManagedConfigRecord", async (client) => {
+    const result = await client.query<{ encrypted_payload: string; updated_at: string }>(
+      "SELECT encrypted_payload, updated_at FROM managed_config WHERE singleton_id = 1 FOR UPDATE"
+    );
+    const row = result.rows[0];
+    const storedPayload = row?.encrypted_payload ?? "";
+    const decrypted = storedPayload ? decryptManagedConfig(storedPayload) : null;
+    if (storedPayload && decrypted === null) {
+      throw new ManagedConfigKeyMismatchError();
+    }
+    const defaults = defaultState().managedConfig;
+    const current = decrypted
+      ? { ...defaults, ...decrypted, updatedAt: row?.updated_at || decrypted.updatedAt }
+      : defaults;
+    const next = update(current);
     await client.query(
       `
         INSERT INTO managed_config (singleton_id, encrypted_payload, updated_at)
@@ -7687,8 +7758,9 @@ export async function updateManagedConfigRecord(config: ManagedConfigRecord): Pr
           encrypted_payload = EXCLUDED.encrypted_payload,
           updated_at = EXCLUDED.updated_at
       `,
-      [encryptManagedConfig(config), config.updatedAt]
+      [encryptManagedConfig(next), next.updatedAt]
     );
+    return next;
   });
 }
 
@@ -8423,6 +8495,37 @@ export async function appendEngagementEventRecord(event: Partial<EngagementEvent
   });
 }
 
+/**
+ * Mirrors Twitch chat moderation into the stored chat lines (M127): `ids` are deleted messages,
+ * `login` a banned or timed-out user, `all` a cleared room. Only chat rows go; follows, raids and
+ * the rest stay. The login is not stored per row, so it matches the display name case-insensitively,
+ * which is the login unless the account uses a localized display name — the bridge therefore also
+ * passes the ids of that user's lines still in its buffer. Returns how many rows went.
+ */
+export async function deleteChatEngagementEvents(target: {
+  ids?: string[];
+  login?: string;
+  all?: boolean;
+}): Promise<number> {
+  const ids = (target.ids ?? []).filter((id) => id !== "");
+  const login = (target.login ?? "").trim().toLowerCase();
+  const all = target.all === true;
+  if (ids.length === 0 && login === "" && !all) {
+    return 0;
+  }
+  return withSerializedStateWrite("deleteChatEngagementEvents", async (client) => {
+    const result = await client.query(
+      `
+        DELETE FROM engagement_events
+        WHERE kind = 'chat'
+          AND (id = ANY($1::text[]) OR ($2::text <> '' AND lower(actor) = $2::text) OR $3::boolean)
+      `,
+      [ids, login, all]
+    );
+    return result.rowCount ?? 0;
+  });
+}
+
 export async function readEngagementEventRecords(limit = 50): Promise<EngagementEventRecord[]> {
   await ensureDatabase();
   const client = await getPool().connect();
@@ -9086,6 +9189,112 @@ export async function updateTwitchBroadcasterConnectionRecord(broadcaster: Twitc
   });
 }
 
+/**
+ * Which connection a worker write belongs to. A web connect writes a new connected_at, a rebind a
+ * new broadcaster_id as well, and a disconnect clears both, so the pair changes on every one of them.
+ */
+export type TwitchConnectionGeneration = { broadcasterId: string; connectedAt: string };
+
+export function twitchConnectionGeneration(connection: {
+  broadcasterId: string;
+  connectedAt: string;
+}): TwitchConnectionGeneration {
+  return { broadcasterId: connection.broadcasterId, connectedAt: connection.connectedAt };
+}
+
+// The fields a worker write may change, by column. The account and the generation are not among
+// them: only the web's connect and disconnect (updateTwitch*ConnectionRecord) set those.
+const TWITCH_CONNECTION_PATCH_COLUMNS = {
+  status: "status",
+  accessToken: "access_token",
+  refreshToken: "refresh_token",
+  tokenExpiresAt: "token_expires_at",
+  lastRefreshAt: "last_refresh_at",
+  lastMetadataSyncAt: "last_metadata_sync_at",
+  lastSyncedTitle: "last_synced_title",
+  lastSyncedCategoryName: "last_synced_category_name",
+  lastSyncedCategoryId: "last_synced_category_id",
+  lastScheduleSyncAt: "last_schedule_sync_at",
+  liveStatus: "live_status",
+  viewerCount: "viewer_count",
+  startedAt: "started_at",
+  error: "error"
+} as const satisfies Partial<Record<keyof TwitchConnection, string>>;
+
+const TWITCH_BROADCASTER_CONNECTION_PATCH_COLUMNS = {
+  status: "status",
+  accessToken: "access_token",
+  refreshToken: "refresh_token",
+  tokenExpiresAt: "token_expires_at",
+  lastRefreshAt: "last_refresh_at",
+  error: "error"
+} as const satisfies Partial<Record<keyof TwitchBroadcasterConnection, string>>;
+
+export type TwitchConnectionPatch = Partial<Pick<TwitchConnection, keyof typeof TWITCH_CONNECTION_PATCH_COLUMNS>>;
+export type TwitchBroadcasterConnectionPatch = Partial<
+  Pick<TwitchBroadcasterConnection, keyof typeof TWITCH_BROADCASTER_CONNECTION_PATCH_COLUMNS>
+>;
+
+async function patchTwitchConnectionTable(
+  operationName: string,
+  table: "twitch_connection" | "twitch_broadcaster_connection",
+  columns: Readonly<Record<string, string>>,
+  expected: TwitchConnectionGeneration,
+  patch: Readonly<Record<string, unknown>>
+): Promise<boolean> {
+  const assignments: string[] = [];
+  const values: unknown[] = [expected.broadcasterId, expected.connectedAt];
+  for (const [key, column] of Object.entries(columns)) {
+    if (patch[key] !== undefined) {
+      values.push(key === "startedAt" ? patch[key] || "" : patch[key]);
+      assignments.push(`${column} = $${values.length}`);
+    }
+  }
+  if (assignments.length === 0) {
+    return true;
+  }
+  return withSerializedStateWrite(operationName, async (client) => {
+    const result = await client.query(
+      `UPDATE ${table} SET ${assignments.join(", ")} WHERE singleton_id = 1 AND broadcaster_id = $1 AND connected_at = $2`,
+      values
+    );
+    return (result.rowCount ?? 0) === 1;
+  });
+}
+
+/**
+ * The worker's write to the identity connection (M127): only the fields it owns, and only while the
+ * row is still the connection the worker read. False when a disconnect or a (re)connect happened
+ * since that read: nothing is written, so the worker cannot bring back an account or a token the
+ * operator replaced or removed while it was waiting on Twitch.
+ */
+export async function patchTwitchConnectionRecord(
+  expected: TwitchConnectionGeneration,
+  patch: TwitchConnectionPatch
+): Promise<boolean> {
+  return patchTwitchConnectionTable(
+    "patchTwitchConnectionRecord",
+    "twitch_connection",
+    TWITCH_CONNECTION_PATCH_COLUMNS,
+    expected,
+    patch
+  );
+}
+
+/** The same for the broadcaster slot; see patchTwitchConnectionRecord. */
+export async function patchTwitchBroadcasterConnectionRecord(
+  expected: TwitchConnectionGeneration,
+  patch: TwitchBroadcasterConnectionPatch
+): Promise<boolean> {
+  return patchTwitchConnectionTable(
+    "patchTwitchBroadcasterConnectionRecord",
+    "twitch_broadcaster_connection",
+    TWITCH_BROADCASTER_CONNECTION_PATCH_COLUMNS,
+    expected,
+    patch
+  );
+}
+
 export async function replaceTwitchScheduleSegments(segments: TwitchScheduleSegmentRecord[]): Promise<void> {
   await withSerializedStateWrite("replaceTwitchScheduleSegments", async (client) => {
     await client.query("DELETE FROM twitch_schedule_segments");
@@ -9172,6 +9381,7 @@ export async function upsertUserRecord(user: UserRecord): Promise<void> {
   });
 }
 
+/** An unconditional write of the owner row. First-run setup claims through claimOwnerAndInitialize. */
 export async function updateOwnerAndInitialized(args: {
   initialized: boolean;
   owner: OwnerAccount;
@@ -9189,6 +9399,60 @@ export async function updateOwnerAndInitialized(args: {
       `,
       [args.initialized, args.owner.email, args.owner.passwordHash, args.owner.createdAt]
     );
+  });
+}
+
+/**
+ * The first-run owner claim (M127): marks the workspace initialized with this owner and creates the
+ * owner's user, but only while nobody has claimed it yet. Returns false, with nothing written, when
+ * the workspace is already initialized or has an owner.
+ *
+ * The check lives in the write itself. The setup route's own "not initialized yet" read is only a
+ * fast path: two requests that overlap both pass it, and with an unconditional write both became an
+ * owner. Under the state write lock the second claim sees the first one's row and matches nothing.
+ * The user row goes through the same client and transaction, so a lost claim leaves no user behind.
+ */
+export async function claimOwnerAndInitialize(owner: OwnerAccount, ownerUser: UserRecord): Promise<boolean> {
+  return withSerializedStateWrite("claimOwnerAndInitialize", async (client) => {
+    const claimed = await client.query(
+      `
+        INSERT INTO system_state (singleton_id, initialized, owner_email, owner_password_hash, owner_created_at)
+        VALUES (1, TRUE, $1, $2, $3)
+        ON CONFLICT (singleton_id) DO UPDATE SET
+          initialized = EXCLUDED.initialized,
+          owner_email = EXCLUDED.owner_email,
+          owner_password_hash = EXCLUDED.owner_password_hash,
+          owner_created_at = EXCLUDED.owner_created_at
+        WHERE system_state.initialized = FALSE AND system_state.owner_email = ''
+      `,
+      [owner.email, owner.passwordHash, owner.createdAt]
+    );
+    if (claimed.rowCount !== 1) {
+      return false;
+    }
+
+    await client.query(
+      `
+        INSERT INTO users (
+          id, email, display_name, auth_provider, role, twitch_user_id, twitch_login, password_hash,
+          two_factor_enabled, two_factor_secret, two_factor_confirmed_at, created_at, last_login_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, FALSE, '', '', $9, $10)
+      `,
+      [
+        ownerUser.id,
+        ownerUser.email,
+        ownerUser.displayName,
+        ownerUser.authProvider,
+        ownerUser.role,
+        ownerUser.twitchUserId,
+        ownerUser.twitchLogin,
+        ownerUser.passwordHash ?? "",
+        ownerUser.createdAt,
+        ownerUser.lastLoginAt
+      ]
+    );
+    return true;
   });
 }
 
@@ -9215,6 +9479,74 @@ export async function setOwnerPasswordHash(passwordHash: string): Promise<string
   });
 }
 
+/**
+ * Records a sign-in (M127): the user's last_login_at and nothing else. The sign-in routes wrote back the
+ * whole row they had read before checking the password, so a password change or a 2FA change committed in
+ * between was undone. Returns false when the user no longer exists; nothing is written then.
+ */
+export async function recordUserSignIn(userId: string, at: string): Promise<boolean> {
+  return withSerializedStateWrite("recordUserSignIn", async (client) => {
+    const result = await client.query("UPDATE users SET last_login_at = $2 WHERE id = $1", [userId, at]);
+    return result.rowCount === 1;
+  });
+}
+
+/**
+ * Changes a user's two-factor columns (M127), and only while the stored row is what the caller checked:
+ * `expected.enabled` and, when given, the secret the caller verified a code against. Returns false, with
+ * nothing written, when the row is gone or changed in the meantime. `next.secret` replaces the stored
+ * secret; without it the stored ciphertext stays. A stored secret this process cannot decrypt is never
+ * replaced (the rule of preservedTwoFactorSecret), so such a write returns false too.
+ */
+export async function updateUserTwoFactorRecord(
+  userId: string,
+  expected: { enabled: boolean; secret?: string },
+  next: { enabled: boolean; secret?: string; confirmedAt: string }
+): Promise<boolean> {
+  return withSerializedStateWrite("updateUserTwoFactorRecord", async (client) => {
+    const stored = await client.query<{ two_factor_secret: string }>(
+      "SELECT two_factor_secret FROM users WHERE id = $1 AND two_factor_enabled = $2",
+      [userId, expected.enabled]
+    );
+    const storedCiphertext = stored.rows[0]?.two_factor_secret;
+    if (storedCiphertext === undefined) {
+      return false;
+    }
+    const storedSecret = decryptSecretString(storedCiphertext, "two-factor secret");
+    if (expected.secret !== undefined && storedSecret !== expected.secret) {
+      return false;
+    }
+    // A second factor the current APP_SECRET cannot read is never encrypted over while it is on: it may
+    // be the only copy, readable again once the key is restored. With 2FA off it gates nothing, and
+    // keeping it would leave setup refusing for good after the key was lost.
+    if (next.secret !== undefined && expected.enabled && storedCiphertext && !storedSecret) {
+      return false;
+    }
+
+    const result = await client.query(
+      `
+        UPDATE users
+        SET two_factor_enabled = $3,
+            two_factor_confirmed_at = $4,
+            two_factor_secret = COALESCE($5, two_factor_secret)
+        WHERE id = $1 AND two_factor_enabled = $2
+      `,
+      [userId, expected.enabled, next.enabled, next.confirmedAt, next.secret === undefined ? null : encryptSecretString(next.secret)]
+    );
+    return result.rowCount === 1;
+  });
+}
+
+/**
+ * Ends every session of a user (M127): the session stamp includes this epoch, so advancing it makes
+ * every cookie issued before refuse. Used by the sign-out.
+ */
+export async function bumpUserSessionEpoch(userId: string): Promise<void> {
+  await withSerializedStateWrite("bumpUserSessionEpoch", async (client) => {
+    await client.query("UPDATE users SET session_epoch = session_epoch + 1 WHERE id = $1", [userId]);
+  });
+}
+
 export async function upsertTeamAccessGrantRecord(grant: TeamAccessGrant): Promise<void> {
   await withSerializedStateWrite("upsertTeamAccessGrantRecord", async (client) => {
     await client.query(
@@ -9230,6 +9562,25 @@ export async function upsertTeamAccessGrantRecord(grant: TeamAccessGrant): Promi
       `,
       [grant.id, grant.twitchLogin, grant.twitchUserId ?? "", grant.role, grant.createdAt, grant.createdBy]
     );
+  });
+}
+
+/**
+ * Binds a team grant to the Twitch account signing in with it (M127): its user id and its current login.
+ * Only an existing grant that is unbound or already bound to this id is changed, and its role is never
+ * written. The Twitch sign-in wrote back the whole grant it had read before the code exchange, which
+ * brought back a grant an admin had removed in between, or its old role. Returns false when nothing matched.
+ */
+export async function bindTeamAccessGrantRecord(grantId: string, twitchUserId: string, twitchLogin: string): Promise<boolean> {
+  return withSerializedStateWrite("bindTeamAccessGrantRecord", async (client) => {
+    const result = await client.query(
+      `
+        UPDATE team_access_grants SET twitch_user_id = $2, twitch_login = $3
+        WHERE id = $1 AND (twitch_user_id = '' OR twitch_user_id = $2)
+      `,
+      [grantId, twitchUserId, twitchLogin]
+    );
+    return result.rowCount === 1;
   });
 }
 

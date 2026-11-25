@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { evaluateRelayAuth, stripInvisibleCharacters } from "@stream247/core";
 import { appendAuditEvent } from "@/lib/server/state";
+import { PREAUTH_BODY_LIMIT_BYTES, readBoundedText } from "@/lib/server/bounded-body";
 import { consumeRateLimit, getClientIdentifier, RELAY_AUTH_RATE_LIMIT } from "@/lib/server/rate-limit";
 import { shouldAuditRejectedPublish } from "@/lib/server/relay-audit-throttle";
 import { readRelayCredentials } from "@/lib/server/relay-credentials";
@@ -44,9 +45,16 @@ export async function POST(request: Request): Promise<Response> {
   // object (literal null, a string, an array), collapses to the same empty request the policy
   // will reject — never an uncaught TypeError that would surface as a 500 and stand out from
   // every other refusal.
+  //
+  // An oversized body is one more refusal of the same kind (M127): the bounded reader stops at 16 KiB,
+  // before the credential read and the rate limit, and the answer is the same bare 403.
   let body: Record<string, unknown> = {};
   try {
-    const parsed = (await request.json()) as unknown;
+    const rawBody = await readBoundedText(request, PREAUTH_BODY_LIMIT_BYTES);
+    if (rawBody === null) {
+      return denied();
+    }
+    const parsed = JSON.parse(rawBody) as unknown;
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       body = parsed as Record<string, unknown>;
     }

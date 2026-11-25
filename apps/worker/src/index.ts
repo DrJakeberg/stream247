@@ -162,8 +162,9 @@ import {
   updateAssetChapterProbeRecords,
   updatePlayoutRuntime,
   updatePoolCursor,
-  updateTwitchBroadcasterConnectionRecord,
-  updateTwitchConnectionRecord,
+  patchTwitchBroadcasterConnectionRecord,
+  patchTwitchConnectionRecord,
+  twitchConnectionGeneration,
   upsertSources,
   upsertIncident,
   type AppState,
@@ -171,6 +172,10 @@ import {
   type OutputSettingsRecord,
   type PoolRecord,
   type StreamDestinationRecord,
+  type TwitchBroadcasterConnection,
+  type TwitchBroadcasterConnectionPatch,
+  type TwitchConnection,
+  type TwitchConnectionPatch,
   readChatInteractionSettingsRecord,
   readChatOverlayMessagesRecord,
   readChatSkipVoteRecord,
@@ -4044,6 +4049,36 @@ async function writeOnAirOverlay(
   await fs.writeFile(onAirOverlayPath, `${lines.join("\n")}\n`, "utf8");
 }
 
+/**
+ * The worker's writes to the two Twitch connection rows (M127). Each names only the fields its
+ * writer owns and applies only while the row is still the connection `read` came from: a disconnect
+ * or a (re)connect the operator made while the worker waited on Twitch wins, and the stale write is
+ * dropped (logged as twitch.connection.write.dropped) instead of bringing the old account back.
+ */
+async function patchIdentityConnection(
+  read: TwitchConnection,
+  writer: string,
+  patch: TwitchConnectionPatch
+): Promise<boolean> {
+  const applied = await patchTwitchConnectionRecord(twitchConnectionGeneration(read), patch);
+  if (!applied) {
+    logRuntimeEvent("twitch.connection.write.dropped", { account: "identity", writer });
+  }
+  return applied;
+}
+
+async function patchBroadcasterSlotConnection(
+  read: TwitchBroadcasterConnection,
+  writer: string,
+  patch: TwitchBroadcasterConnectionPatch
+): Promise<boolean> {
+  const applied = await patchTwitchBroadcasterConnectionRecord(twitchConnectionGeneration(read), patch);
+  if (!applied) {
+    logRuntimeEvent("twitch.connection.write.dropped", { account: "broadcaster", writer });
+  }
+  return applied;
+}
+
 // Renamed from refreshBroadcasterAccessToken: it always refreshed the *identity* connection
 // (state.twitch), and since M51 "broadcaster" means the second slot — the old name pointed at
 // the wrong one of the two.
@@ -4064,14 +4099,11 @@ async function refreshIdentityAccessToken(): Promise<string> {
     account: "identity"
   });
   const refreshedAt = new Date().toISOString();
-  const tokenExpiresAt = payload.expires_in
-    ? new Date(Date.now() + payload.expires_in * 1000).toISOString()
-    : state.twitch.tokenExpiresAt;
+  const tokenExpiresAt = payload.expires_in ? new Date(Date.now() + payload.expires_in * 1000).toISOString() : undefined;
 
-  await updateTwitchConnectionRecord({
-    ...state.twitch,
+  await patchIdentityConnection(state.twitch, "token-refresh", {
     accessToken: payload.access_token,
-    refreshToken: payload.refresh_token ?? state.twitch.refreshToken,
+    refreshToken: payload.refresh_token ?? undefined,
     status: "connected",
     tokenExpiresAt,
     lastRefreshAt: refreshedAt,
@@ -4107,14 +4139,11 @@ async function refreshBroadcasterSlotAccessToken(): Promise<string> {
   });
   const refreshedAt = new Date().toISOString();
 
-  await updateTwitchBroadcasterConnectionRecord({
-    ...state.twitchBroadcaster,
+  await patchBroadcasterSlotConnection(state.twitchBroadcaster, "token-refresh", {
     accessToken: payload.access_token,
-    refreshToken: payload.refresh_token ?? state.twitchBroadcaster.refreshToken,
+    refreshToken: payload.refresh_token ?? undefined,
     status: "connected",
-    tokenExpiresAt: payload.expires_in
-      ? new Date(Date.now() + payload.expires_in * 1000).toISOString()
-      : state.twitchBroadcaster.tokenExpiresAt,
+    tokenExpiresAt: payload.expires_in ? new Date(Date.now() + payload.expires_in * 1000).toISOString() : undefined,
     lastRefreshAt: refreshedAt,
     error: ""
   });
@@ -10522,8 +10551,7 @@ async function syncTwitchSchedule(args: {
   // A segment Twitch did not delete stays in the stored list, so a later sync tries again (M113).
   await replaceTwitchScheduleSegments([...nextSegments, ...staleCleanup.kept]);
   twitchSegmentsKeptAfterFailedDelete = new Set(staleCleanup.kept.map((segment) => segment.key));
-  await updateTwitchConnectionRecord({
-    ...args.state.twitch,
+  await patchIdentityConnection(args.state.twitch, "schedule-sync", {
     lastScheduleSyncAt: new Date().toISOString(),
     error: ""
   });
@@ -10597,11 +10625,9 @@ async function healTwitchConnection(): Promise<void> {
     return;
   }
 
-  await updateTwitchConnectionRecord({
-    ...state.twitch,
-    status: "connected",
-    error: ""
-  });
+  if (!(await patchIdentityConnection(state.twitch, "heal", { status: "connected", error: "" }))) {
+    return;
+  }
 
   await appendAuditEvent(
     "twitch.connected",
@@ -10645,11 +10671,15 @@ async function markIdentityRefreshRefused(error: unknown): Promise<boolean> {
   const state = await readAppState();
   // Read before the write: the alert belongs to the moment the entry opens (R2), not to each refusal.
   const opening = opensIncident(state.incidents, "twitch.reconnect.required");
-  await updateTwitchConnectionRecord({
-    ...state.twitch,
+  const marked = await patchIdentityConnection(state.twitch, "refresh-refused", {
     status: "error",
     error: TWITCH_REFRESH_REFUSED_ERROR
   });
+  if (!marked) {
+    // A reconnect replaced the refused token meanwhile: there is nothing left to reconnect, and
+    // nothing for the caller to alert about either.
+    return true;
+  }
   const message = `Twitch refused the stored refresh token of ${state.twitch.broadcasterLogin || "the bot account"}, so the connection cannot be renewed. Reconnect it under Admin → Settings → Twitch accounts; until then title, category and schedule sync are paused, and chat cannot sign in once the access token has run out.`;
   await upsertIncident({
     scope: "twitch",
@@ -10965,13 +10995,16 @@ async function reconcileTwitch(): Promise<void> {
     // the same lie one step smaller, so its last-synced values stay untouched too — that is also
     // what makes the next cycle still see the difference and retry after the interval.
     if (metadataSyncGate.mode !== "waiting-for-broadcaster") {
-      await updateTwitchConnectionRecord({
-        ...state.twitch,
+      await patchIdentityConnection(state.twitch, "metadata-sync", {
         status: "connected",
         lastMetadataSyncAt: new Date().toISOString(),
-        lastSyncedTitle: channelWriteThrottled ? state.twitch.lastSyncedTitle : desiredTitle,
-        lastSyncedCategoryName: channelWriteThrottled ? state.twitch.lastSyncedCategoryName : desiredCategoryName,
-        lastSyncedCategoryId: channelWriteThrottled ? state.twitch.lastSyncedCategoryId : desiredCategoryId,
+        ...(channelWriteThrottled
+          ? {}
+          : {
+              lastSyncedTitle: desiredTitle,
+              lastSyncedCategoryName: desiredCategoryName,
+              lastSyncedCategoryId: desiredCategoryId
+            }),
         error: ""
       });
     }
@@ -11140,12 +11173,7 @@ async function reconcileTwitchLiveStatus(): Promise<void> {
 
   if (state.twitch.status !== "connected" || !broadcasterId || !clientId || !clientSecret) {
     if (state.twitch.liveStatus !== "unknown" || state.twitch.viewerCount !== 0 || state.twitch.startedAt) {
-      await updateTwitchConnectionRecord({
-        ...state.twitch,
-        liveStatus: "unknown",
-        viewerCount: 0,
-        startedAt: ""
-      });
+      await patchIdentityConnection(state.twitch, "live-status", { liveStatus: "unknown", viewerCount: 0, startedAt: "" });
     }
     return;
   }
@@ -11165,20 +11193,14 @@ async function reconcileTwitchLiveStatus(): Promise<void> {
       return;
     }
 
-    await updateTwitchConnectionRecord({
-      ...state.twitch,
+    await patchIdentityConnection(state.twitch, "live-status", {
       liveStatus: snapshot.liveStatus,
       viewerCount: snapshot.viewerCount,
       startedAt: snapshot.startedAt
     });
   } catch (error) {
     if (state.twitch.liveStatus !== "unknown" || state.twitch.viewerCount !== 0 || state.twitch.startedAt) {
-      await updateTwitchConnectionRecord({
-        ...state.twitch,
-        liveStatus: "unknown",
-        viewerCount: 0,
-        startedAt: ""
-      });
+      await patchIdentityConnection(state.twitch, "live-status", { liveStatus: "unknown", viewerCount: 0, startedAt: "" });
     }
 
     logRuntimeEvent("twitch.live-status.sync.failed", {

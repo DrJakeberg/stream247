@@ -10,12 +10,12 @@ import { resolveAppBaseUrl } from "@stream247/db";
 import { issueOAuthState, type OAuthFlowKind } from "./oauth-state";
 import {
   appendAuditEvent,
+  bindTeamAccessGrantRecord,
   findTeamGrantForTwitchUser,
   getManagedTwitchConfig,
   readAppState,
   updateTwitchBroadcasterConnectionRecord,
   updateTwitchConnectionRecord,
-  upsertTeamAccessGrantRecord,
   upsertUserRecord,
   type AppState,
   type UserRecord,
@@ -354,6 +354,17 @@ export async function recordTwitchBroadcasterError(message: string) {
   await appendAuditEvent("twitch.broadcaster.error", message);
 }
 
+/**
+ * A real Twitch account that has no team grant here (M127). Only a completed Twitch sign-in reaches it,
+ * so the callback records it apart from failures an anonymous client can produce with a made-up code.
+ */
+export class TwitchLoginNotAuthorizedError extends Error {
+  constructor(login: string) {
+    super(`Twitch user ${login} is not authorized for this workspace.`);
+    this.name = "TwitchLoginNotAuthorizedError";
+  }
+}
+
 export async function exchangeTwitchLoginCode(code: string): Promise<UserRecord> {
   const state = await readAppState();
   const { clientId, clientSecret } = getManagedTwitchConfig(state);
@@ -378,12 +389,17 @@ export async function exchangeTwitchLoginCode(code: string): Promise<UserRecord>
     state.twitch.broadcasterId !== "" && state.twitch.broadcasterId === twitchUser.id;
 
   if (!grant && !isBroadcasterOwner) {
-    throw new Error(`Twitch user ${twitchUser.login} is not authorized for this workspace.`);
+    throw new TwitchLoginNotAuthorizedError(twitchUser.login);
   }
 
   if (grant && (grant.twitchUserId !== twitchUser.id || grant.twitchLogin !== twitchUser.login.toLowerCase())) {
     // The first sign-in binds the grant to this account, and a rename moves the login along; a new owner of the old name gets nothing.
-    await upsertTeamAccessGrantRecord({ ...grant, twitchUserId: twitchUser.id, twitchLogin: twitchUser.login.toLowerCase() });
+    // Only the binding is written, and only to a grant that still exists unbound or bound to this id (M127):
+    // writing back the grant read above brought back one an admin removed or lowered during the exchange.
+    const bound = await bindTeamAccessGrantRecord(grant.id, twitchUser.id, twitchUser.login.toLowerCase());
+    if (!bound && !isBroadcasterOwner) {
+      throw new TwitchLoginNotAuthorizedError(twitchUser.login);
+    }
   }
 
   const role: UserRole = isBroadcasterOwner ? "owner" : grant?.role ?? "viewer";

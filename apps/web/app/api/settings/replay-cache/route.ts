@@ -7,6 +7,7 @@ import {
   VOD_CACHE_LIMITS
 } from "@stream247/core";
 import { requireApiRoles } from "@/lib/server/auth";
+import { managedConfigSaveRefusal } from "@/lib/server/managed-config-save";
 import { appendAuditEvent, readAppState, updateManagedConfigRecord } from "@/lib/server/state";
 
 // The replay-cache half of M56 part 2. Partial on purpose, like every managed-settings route:
@@ -125,10 +126,13 @@ export async function PUT(request: NextRequest) {
     }
   }
 
-  await updateManagedConfigRecord({
-    ...candidate,
-    updatedAt: new Date().toISOString()
-  });
+  // The pair above is checked against the snapshot; the write merges only this request's keys onto
+  // the record as stored now, so it never reverts a field another save committed meanwhile.
+  try {
+    await updateManagedConfigRecord((current) => ({ ...current, ...updates, updatedAt: new Date().toISOString() }));
+  } catch (error) {
+    return managedConfigSaveRefusal(error);
+  }
 
   await appendAuditEvent("settings.replay_cache.updated", "Managed replay cache settings were updated.");
   return NextResponse.json({ ok: true, message: "Replay cache settings saved." });

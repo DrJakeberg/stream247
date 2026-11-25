@@ -666,6 +666,21 @@ uses it.
   token of the broadcast channel's own account opens `twitch.refresh.failed` naming that account, and
   its status stays as it is (an error status there would lock its refresh out); title, category,
   schedule and emote-only wait for the next cycle, which tries that refresh again
+- the worker writes only the fields it owns to a Twitch connection (tokens, sync times, live status), and
+  only while the connection is still the one it read at the start of its step (since M127). When a
+  disconnect, a reconnect or an account switch under Admin → Settings → Twitch accounts happened while it
+  was waiting on Twitch, the write is dropped and the log shows `twitch.connection.write.dropped` with
+  `account` (`identity` or `broadcaster`) and `writer` (`token-refresh`, `schedule-sync`, `heal`,
+  `refresh-refused`, `metadata-sync` or `live-status`). The operator's change wins; nothing to do. Before
+  M127 such a write could bring a disconnected account or a replaced token back
+- a failed team sign-in with Twitch (a stale or missing state cookie, a refused consent, a code that does
+  not exchange, a member without a grant) is recorded in the audit trail as `twitch.login_rejected`, at
+  most once per kind of failure per minute and ten per minute in all; a row written after a quiet spell ends
+  with "(N more of this kind since the last such row)". A Twitch account without a grant has its own kind, so
+  made-up codes cannot hide a real refused sign-in. It no longer sets the bot
+  connection's error (since M127; before, every failure wrote `twitch.error`). Anyone can cause these by
+  opening the callback address, so a burst is noise, not a fault; the type is outside the protected part
+  of the trail and cannot push sign-ins, grants or deletions out of it
 
 ### Crash-loop protection active
 
@@ -992,6 +1007,18 @@ What counts time counts real time:
   reads as the default overlay; one with a field of the wrong type is listed with its other fields (applying
   it can still be refused; save the preset again). Save the overlay again in the studio (or re-save the preset) to write the column anew
 
+### An overlay picture draws empty (since M125, M127)
+
+- the scene renderer fetches every image and logo layer itself, for the studio preview and on air alike.
+  It draws a picture empty (a transparent pixel) and asks for it again after a minute when the address is
+  not http or https on a public host (M125), when the answer is not an image or is larger than 4 MiB, and
+  since M127 when the picture's header declares more than 8192 px on a side or more than 16 777 216 px
+  (4096 × 4096) in total, or when a raster picture's header does not give its size. The limit is on the
+  size the file declares, not on its bytes: a small file can declare a huge picture, and decoding it would
+  take gigabytes. An SVG picture is not measured. Scale such a picture down, or give a smaller one
+- a studio preview no longer waits for another preview's slow picture (M127): the pictures of a preview are
+  fetched before it joins the queue in which one preview at a time is drawn
+
 ### No playable asset
 
 - verify local media exists or remote sources ingest correctly
@@ -1292,6 +1319,17 @@ database does not answer within 2 s, the bot answers from the last cycle as befo
 on air is predicted at the moment of asking from that row and the schedule, pools and assets the last
 cycle read.
 
+### Chat lines after Twitch moderation (since M127)
+
+- the recent events under Admin → Overlays keep the last chat lines with the follows, raids and the
+  rest. A chat line a moderator deletes on Twitch leaves that list, all lines of a user who is banned or
+  timed out leave it, and a chat clear removes every chat line; the other events stay. The match is by
+  message id and by the login; a user whose display name differs from the login (a localized name) and
+  whose line already left the chat overlay's buffer of the last 50 lines can stay in that list, which only
+  staff see, until retention removes it
+- the public `/api/channel/live` and its event stream carry no chat lines at all; `/channel` never showed
+  them
+
 ### Owner password lost (since M91)
 
 The owner password is changed under `Admin → Settings → Security` with the current one. Once it is lost,
@@ -1312,6 +1350,38 @@ Since M117 every session is bound to the password it signed in with. The reset t
 owner session out, including one opened with a leaked password; a change under Security signs out every
 other session and keeps the one that made it. Twitch sign-ins of the team are not touched. Updating to
 M117 signs everyone out once, because older session cookies carry no password stamp.
+
+Since M127 a sign-out ends every session of that account on every device, not only the cookie in this
+browser; this holds for the owner and for each Twitch team member on their own. A session lasts at most
+14 days from the sign-in (`SESSION_MAX_AGE_SECONDS`, `docs/deployment.md`). When the sign-out answers
+that other sessions could not be ended (the database did not answer), this browser is signed out anyway:
+sign in and out again. A sign-in that overlaps a password change or reset no longer writes the old password
+back.
+
+To move two-factor authentication to a new authenticator, turn it off first (password and a current code),
+then set it up again. Since M127 setup refuses with HTTP 409 while it is on, because setup with only the
+password would have replaced the second factor. When two two-factor changes overlap, the later one answers
+"Two-factor settings changed in the meantime. Reload the page and try again."
+
+### The original APP_SECRET is lost (since M127)
+
+A `secrets.key-mismatch` incident means stored secrets were encrypted under a different `APP_SECRET`. Put
+that key back first (the environment, or the secret file on the data volume) and restart web and worker:
+nothing is lost then. Since M127 the managed settings cannot be saved over while they do not open (every settings form answers
+HTTP 409), so entering the secrets again under `Admin → Settings` is
+no longer a way out on its own. When the key is gone for good, reset the stored managed settings on the
+host, in the directory of the Compose file (take a PostgreSQL backup first):
+
+```bash
+docker compose exec -T postgres psql -U stream247 -d stream247 -c "DELETE FROM managed_config WHERE singleton_id = 1"
+```
+
+This discards every managed setting, not only the secrets: the encoder, watchdog, operations, instance,
+feed-tuning and replay-cache settings and the Twitch app, EventSub, SMTP and Discord values fall back to
+the environment and the defaults. Enter them again under `Admin → Settings`, enter the stream keys of the
+destinations again, reconnect the Twitch accounts, then restart the worker: its first cycle closes the
+incident once every stored secret decrypts. A two-factor secret that was already turned off before the key
+was lost can be set up again (since M127); a user whose two-factor is on cannot sign in until the key is back.
 
 ### Secrets in the audit trail and incidents
 
@@ -1345,8 +1415,17 @@ queue or fallback tier still references is never touched.
   when free space is back (above the trigger watermark for the media volume, above the recovery mark
   for the system volume); before M95 they stayed open until resolved by
   hand. The same first cycle closes `secrets.key-mismatch` when every stored secret decrypts with the
-  current `APP_SECRET` (after it was put back, or every secret was entered again). The log line
+  current `APP_SECRET` (after it was put back, or after the reset in *The original APP_SECRET is lost*
+  and every secret was entered again). The log line
   `incident.state_flags.rearmed` says what it found
+- while the stored settings do not open with the current `APP_SECRET` (since M127), every managed-settings
+  form (encoder, credentials, watchdogs, operations, instance, feed tuning, replay cache, the Twitch app and
+  accounts) and the first-run Twitch credentials refuse to save with HTTP 409 and the message "The stored
+  settings were encrypted with a different APP_SECRET…"; nothing is written. Before M127 such a save went
+  through and erased the stored Twitch, EventSub, SMTP and Discord secrets. Put the original `APP_SECRET`
+  back (the environment, or the secret file on the data volume) and save again; when it is lost for good,
+  see *The original APP_SECRET is lost*. Two saves at the same
+  moment now both stick; before, the later one could put back a field the earlier one had just changed
 
 ### Uplink is not publishing
 

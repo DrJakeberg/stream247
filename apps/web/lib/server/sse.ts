@@ -17,6 +17,22 @@ const UNREAD_PUSHES_BEFORE_CLOSE = 3;
 
 let activeSseConnections = 0;
 
+// One log line per stream event and message per minute (M127). A database outage fails every open
+// connection's snapshot every few seconds, and the public live stream can have many of them.
+const SNAPSHOT_FAILURE_LOG_INTERVAL_MS = 60_000;
+const lastSnapshotFailureLog = new Map<string, { message: string; at: number }>();
+
+function logSnapshotFailure(event: string, error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  const now = Date.now();
+  const last = lastSnapshotFailureLog.get(event);
+  if (last && last.message === message && now - last.at < SNAPSHOT_FAILURE_LOG_INTERVAL_MS) {
+    return;
+  }
+  lastSnapshotFailureLog.set(event, { message, at: now });
+  console.error(`[sse:${event}] snapshot failed:`, message);
+}
+
 function registerSseConnection() {
   activeSseConnections += 1;
   let active = true;
@@ -47,7 +63,7 @@ export function createSseResponse<T>(request: Request, event: string, makeSnapsh
   let cleanupConnection: (() => void) | null = null;
   const snapshotIntervalMs = options.snapshotIntervalMs ?? 5000;
   const heartbeatIntervalMs = options.heartbeatIntervalMs ?? 15000;
-  const errorMessage = options.errorMessage ?? "Unknown SSE error.";
+  const errorMessage = options.errorMessage ?? "The live state could not be read.";
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -121,8 +137,10 @@ export function createSseResponse<T>(request: Request, event: string, makeSnapsh
           if (closed) {
             return;
           }
-          const message = error instanceof Error ? error.message : errorMessage;
-          controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ message })}\n\n`));
+          // The client only ever sees the fixed text (M127): /api/channel/live/stream is public, and a
+          // database error message names internal hosts and ports. The detail goes to the server log.
+          logSnapshotFailure(event, error);
+          controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ message: errorMessage })}\n\n`));
         }
       };
 

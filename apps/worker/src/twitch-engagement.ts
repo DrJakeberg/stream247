@@ -21,7 +21,7 @@ import {
   sanitizeChatLine,
 } from "@stream247/core";
 import type { AppState, EngagementEventRecord } from "@stream247/db";
-import { appendEngagementEventRecord, resolveChannelLanguage } from "@stream247/db";
+import { appendEngagementEventRecord, deleteChatEngagementEvents, resolveChannelLanguage } from "@stream247/db";
 import { logRuntimeEvent } from "./runtime-log.js";
 
 // Twitch pings roughly every five minutes; silence past six means the connection is gone even if
@@ -213,16 +213,21 @@ export function createRingBuffer<T>(capacity: number) {
     },
     /** Removes every matching entry and reports how many went — the moderation path. */
     remove(predicate: (entry: T) => boolean): number {
-      let removed = 0;
-      for (let index = entries.length - 1; index >= 0; index -= 1) {
-        if (predicate(entries[index]!)) {
-          entries.splice(index, 1);
-          removed += 1;
-        }
-      }
-      return removed;
-    }
+      return take(predicate).length;
+    },
+    /** Removes every matching entry and returns them, oldest first. */
+    take
   };
+
+  function take(predicate: (entry: T) => boolean): T[] {
+    const removed: T[] = [];
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      if (predicate(entries[index]!)) {
+        removed.unshift(entries.splice(index, 1)[0]!);
+      }
+    }
+    return removed;
+  }
 }
 
 /**
@@ -331,6 +336,10 @@ async function appendChatStatus(
 
 export class TwitchChatBridge {
   private socket: tls.TLSSocket | null = null;
+  // The stored chat lines are written one at a time, in the order chat delivered them (M127). Each
+  // write takes its own connection, so a moderator delete fired right behind its message could
+  // otherwise commit first, find nothing, and leave the line the append stores a moment later.
+  private chatWrites: Promise<void> = Promise.resolve();
   private channel = "";
   private buffer = "";
   // Entries carry the login alongside the display event: CLEARCHAT names the login, and a
@@ -616,7 +625,7 @@ export class TwitchChatBridge {
 
       const moderation = parseTwitchChatModerationLine(line);
       if (moderation) {
-        const removed = this.messages.remove((entry) => {
+        const removed = this.messages.take((entry) => {
           if (moderation.kind === "clear-message") {
             return entry.id === moderation.targetMessageId;
           }
@@ -625,9 +634,19 @@ export class TwitchChatBridge {
           }
           return true;
         });
-        if (removed > 0) {
+        if (removed.length > 0) {
           this.onOverlayMessagesChanged?.();
         }
+        // The stored copy follows (M127), whether or not the line is still buffered: it is what the
+        // admin's recent events read. A user's buffered ids also catch a localized display name,
+        // which the stored row carries instead of the login. Queued behind the appends already sent.
+        const target =
+          moderation.kind === "clear-message"
+            ? { ids: [moderation.targetMessageId] }
+            : moderation.kind === "clear-user"
+              ? { ids: removed.map((entry) => entry.id), login: moderation.login }
+              : { all: true as const };
+        this.queueChatWrite(() => deleteChatEngagementEvents(target));
         continue;
       }
 
@@ -715,7 +734,15 @@ export class TwitchChatBridge {
         segments: message.emotes.length > 0 ? buildChatMessageSegments(message.message, message.emotes) : []
       });
       this.onOverlayMessagesChanged?.();
-      void appendEngagementEventRecord(event).catch(() => undefined);
+      this.queueChatWrite(() => appendEngagementEventRecord(event));
     }
+  }
+
+  private queueChatWrite(write: () => Promise<unknown>): void {
+    // A failed write never blocks the ones behind it, and never reaches the socket handler.
+    this.chatWrites = this.chatWrites.then(write).then(
+      () => undefined,
+      () => undefined
+    );
   }
 }

@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { VIEWER_LOCALES } from "@stream247/core";
 import { isUsableTimeZone } from "@stream247/db";
 import { requireApiRoles } from "@/lib/server/auth";
-import { appendAuditEvent, readAppState, updateManagedConfigRecord } from "@/lib/server/state";
+import { managedConfigSaveRefusal } from "@/lib/server/managed-config-save";
+import { appendAuditEvent, updateManagedConfigRecord } from "@/lib/server/state";
 
 /**
  * Instance basics from the setup wizard: the public app URL, the channel timezone, and the channel
@@ -18,11 +19,11 @@ export async function PUT(request: NextRequest) {
   }
 
   const body = (await request.json()) as Partial<{ appUrl: string; channelTimezone: string; channelLanguage: string }>;
-  const state = await readAppState();
+  // Only the fields the request carries; the rest stay as stored when the save runs.
+  const updates: { appUrl?: string; channelTimezone?: string; channelLanguage?: string } = {};
 
-  let appUrl = state.managedConfig.appUrl;
   if (typeof body.appUrl === "string") {
-    appUrl = body.appUrl.trim().replace(/\/+$/, "");
+    const appUrl = body.appUrl.trim().replace(/\/+$/, "");
     if (appUrl) {
       // Validated here because everything downstream — OAuth redirect URIs, EventSub callbacks,
       // overlay links — quietly builds broken URLs out of a bad base instead of failing.
@@ -36,22 +37,22 @@ export async function PUT(request: NextRequest) {
         return NextResponse.json({ message: "The public URL must use http or https." }, { status: 400 });
       }
     }
+    updates.appUrl = appUrl;
   }
 
-  let channelTimezone = state.managedConfig.channelTimezone;
   if (typeof body.channelTimezone === "string") {
-    channelTimezone = body.channelTimezone.trim();
+    const channelTimezone = body.channelTimezone.trim();
     if (channelTimezone && !isUsableTimeZone(channelTimezone)) {
       return NextResponse.json(
         { message: `"${channelTimezone}" is not a usable IANA timezone name (like Europe/Berlin).` },
         { status: 400 }
       );
     }
+    updates.channelTimezone = channelTimezone;
   }
 
-  let channelLanguage = state.managedConfig.channelLanguage ?? "";
   if (typeof body.channelLanguage === "string") {
-    channelLanguage = body.channelLanguage.trim().toLowerCase();
+    const channelLanguage = body.channelLanguage.trim().toLowerCase();
     // Refused rather than coerced: the readers would quietly speak English for an unknown value,
     // and an operator who asked for something else should hear why it did not happen.
     if (channelLanguage && !(VIEWER_LOCALES as readonly string[]).includes(channelLanguage)) {
@@ -60,15 +61,14 @@ export async function PUT(request: NextRequest) {
         { status: 400 }
       );
     }
+    updates.channelLanguage = channelLanguage;
   }
 
-  await updateManagedConfigRecord({
-    ...state.managedConfig,
-    appUrl,
-    channelTimezone,
-    channelLanguage,
-    updatedAt: new Date().toISOString()
-  });
+  try {
+    await updateManagedConfigRecord((current) => ({ ...current, ...updates, updatedAt: new Date().toISOString() }));
+  } catch (error) {
+    return managedConfigSaveRefusal(error);
+  }
 
   await appendAuditEvent(
     "settings.instance.updated",

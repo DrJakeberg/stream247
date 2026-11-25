@@ -765,6 +765,20 @@ describe("ops state helpers", () => {
     expect(snapshot.presence.remainingMinutes).toBe(10);
   });
 
+  it("M127: the anonymous public snapshot carries no chat lines; the staff snapshot keeps them", () => {
+    const state = createState({
+      engagementEvents: [
+        { id: "m1", kind: "chat", actor: "Ada", message: "a line a moderator deleted", createdAt: "2026-11-25T10:00:00.000Z" },
+        { id: "m2", kind: "chat", actor: "Bob", message: "hello", createdAt: "2026-11-25T10:00:01.000Z" }
+      ]
+    });
+
+    expect(getBroadcastSnapshot(state).engagement.recentEvents).toHaveLength(2);
+    const publicSnapshot = getPublicChannelSnapshot(state);
+    expect(publicSnapshot.engagement.recentEvents).toEqual([]);
+    expect(JSON.stringify(publicSnapshot)).not.toContain("a line a moderator deleted");
+  });
+
   it("keeps recent moderation presence windows sorted newest-first even after expiry", () => {
     const recentWindows = getRecentPresenceWindows(
       createState({

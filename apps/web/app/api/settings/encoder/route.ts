@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isValidEncoderBitrate, isValidEncoderSpeedPreset } from "@stream247/core";
 import { requireApiRoles } from "@/lib/server/auth";
-import { appendAuditEvent, readAppState, updateManagedConfigRecord } from "@/lib/server/state";
+import { managedConfigSaveRefusal } from "@/lib/server/managed-config-save";
+import { appendAuditEvent, updateManagedConfigRecord } from "@/lib/server/state";
 
 // Encoder quality lives in managed config since M56 (managed value wins, FFMPEG_* env is the
 // fallback). This route touches ONLY the encoder keys: the general secrets route overwrites
@@ -48,15 +49,18 @@ export async function PUT(request: NextRequest) {
     }
   }
 
-  const state = await readAppState();
-  await updateManagedConfigRecord({
-    ...state.managedConfig,
-    ffmpegPreset: preset,
-    ffmpegMaxrate: maxrate,
-    ffmpegBufsize: bufsize,
-    ffmpegAudioBitrate: audioBitrate,
-    updatedAt: new Date().toISOString()
-  });
+  try {
+    await updateManagedConfigRecord((current) => ({
+      ...current,
+      ffmpegPreset: preset,
+      ffmpegMaxrate: maxrate,
+      ffmpegBufsize: bufsize,
+      ffmpegAudioBitrate: audioBitrate,
+      updatedAt: new Date().toISOString()
+    }));
+  } catch (error) {
+    return managedConfigSaveRefusal(error);
+  }
 
   await appendAuditEvent("settings.encoder.updated", "Managed encoder quality settings were updated.");
   return NextResponse.json({ ok: true, message: "Encoder quality settings saved. They apply the next time an encoder starts." });
