@@ -19,22 +19,27 @@ Stream247 is currently designed as a self-hosted single-workspace deployment.
 Stream247 uses three distinct control surfaces:
 
 - the repo is the source of truth for code, Compose files, scripts, and pinned example image refs
-- Portainer on DT is the deployment control plane that applies stack changes
-- DT is the validation/testing environment for readiness checks, rehearsals, long soaks, release candidates, and destructive validation
-- DUT is the production/stable environment running the accepted baseline
+- Portainer runs on DT and is the deployment control plane that applies stack changes to the production
+  stack on the DUT
+- DUT is the production host and runs the latest final release (see the *Shipped* table in `PLANS.md`)
 
-Editing the local `docker-compose.yml` or `.env.production.example` does not change production by itself. Production changes happen when the DT Portainer stack is updated and redeployed with the intended image refs.
+Editing the local `docker-compose.yml` or `.env.production.example` does not change production by itself. Production changes happen when the Portainer stack is updated and redeployed with the intended image refs.
 
-## Operating Policy (since v1.5.19)
+## Operating Policy
 
-- **v1.5.19 is the accepted production baseline.** DUT runs v1.5.19.
-- v1.5.19 was rolled to DUT directly as an emergency fix under the clause below: v1.5.17 had left
-  the playout container in a restart loop (423 restarts, one every ~5 minutes) with the program
-  pinned to fallback content. See the 1.5.18 entry in `CHANGELOG.md`.
-- **DUT is production/stable.** Do NOT use DUT for experiments, soak tests, release candidates, or risky/destructive validation.
-- **All future testing, release candidates, experiments, and destructive validation happen on DT only.**
-- **DUT may be touched only for** explicit production maintenance, emergency fixes, or an approved final release rollout *after* it has passed validation on DT.
-- Release surface: `v1.5.17` (previous baseline) and `v1.5.19` (current baseline; the `v1.5.18` tag exists but published no images), one Git tag and one GitHub Release each, with matching GHCR package versions per image (`stream247-web/worker/playout`).
+- **DUT is production.** It runs the latest final release; a release candidate replaces it only for the
+  candidate's soak.
+- **A release candidate soaks on the DUT.** Once its CI run is green, the candidate is repinned onto the
+  DUT and soaks there for 24 hours before the final release (*Safe Upgrade Flow* below). A soak with any
+  outage or failure is "passed with failure", never "clean".
+- **No destructive or experimental validation on the DUT.** Experiments, rehearsals that reset state, and
+  destructive checks belong on a development stack.
+- **DUT may also be touched for** explicit production maintenance and emergency fixes.
+- History: v1.5.19 was rolled to DUT directly as an emergency fix: v1.5.17 had left the playout container in
+  a restart loop (423 restarts, one every ~5 minutes) with the program pinned to fallback content (see the
+  1.5.18 entry in `CHANGELOG.md`). The `v1.5.18` tag exists but published no images; `v1.5.17` and `v1.5.19`
+  have one Git tag, one GitHub Release and matching GHCR package versions per image
+  (`stream247-web/worker/playout`) each.
 
 ## Deploy Steps
 
@@ -130,6 +135,14 @@ wizard-managed and `APP_SECRET` is generated and persisted on the data volume wh
 - optional fallback Discord webhook URL
 - optional deployment-level output overrides (`STREAM_OUTPUT_WIDTH`, `STREAM_OUTPUT_HEIGHT`, `STREAM_OUTPUT_FPS`)
 - optional engagement flags (`STREAM_CHAT_OVERLAY_ENABLED`, `STREAM_ALERTS_ENABLED`, `TWITCH_EVENTSUB_SECRET`)
+- optional `SESSION_MAX_AGE_SECONDS` (read by `web`): how long a sign-in stays valid, in seconds from the
+  sign-in; default `2592000` (30 days), and a value that is not a positive integer falls back to it. The
+  browser keeps the session cookie for 14 days at most, so only a value below `1209600` shortens sessions
+- optional `SOURCE_SYNC_LIMIT` (read by `worker`): how many entries one sync of a YouTube playlist, YouTube
+  channel or Twitch archive lists (yt-dlp `--playlist-end`); default `200`. Each successful sync replaces
+  the source's library entries with what the listing returned, so entries past the limit are not imported
+  and lowering the value removes stored entries beyond it from the library; the value is passed to yt-dlp
+  as written
 
 Does not belong in `.env`:
 
@@ -204,12 +217,12 @@ Every release follows the same order:
 2. **Publish GHCR artifacts**
    - `main` publishes `main-<sha>` snapshot images
    - `v*` tags publish the versioned release images
-3. **Update the DT Portainer stack**
+3. **Update the Portainer stack**
    - change the stack environment so the image refs match the intended release tags
    - redeploy the stack from Portainer on DT
-4. **Verify DT matches the pinned release**
+4. **Verify the stack matches the pinned release**
    - run `./scripts/portainer-stack-check.sh` with read-only Portainer API credentials
-   - confirm the running DT stack resolves to the same image digests as `.env.production.example`
+   - confirm the running stack resolves to the same image digests as `.env.production.example`
 5. **Validate on DUT**
    - SSH to DUT and run readiness checks against the active deployment path
    - run `./scripts/upgrade-rehearsal.sh <target-version>` from the DUT repo path against the active stack
@@ -269,8 +282,8 @@ Do not use `latest` for unattended production deployments.
    ```
    Before a new release tag exists, the rehearsal automatically uses the CI-published `main-<sha>` snapshot for the current commit instead of requiring `ghcr.io/...:<target-version>` (for example `v2.4.0-rc.2`) to exist already.
    On an empty rehearsal stack, the script bootstraps a rehearsal owner and seeds one tiny local media fixture so the current broadcast-readiness gate does not depend on stale local state. Set `UPGRADE_REHEARSAL_SEED_LOCAL_MEDIA=0` when the target media library already contains real playable media and you want to prevent fixture creation.
-7. After the release images exist, update the DT Portainer stack image refs to the target release tags and redeploy the stack from Portainer.
-8. Verify the DT stack matches the intended pinned refs:
+7. After the release images exist, update the Portainer stack image refs to the target release tags and redeploy the stack from Portainer.
+8. Verify the stack matches the intended pinned refs:
    ```bash
    PORTAINER_URL=https://portainer.example.com \
    PORTAINER_API_KEY=... \
@@ -1147,7 +1160,7 @@ image can misread rows the new one stored, and a reverse repin can need a step b
 2.3.1 the stack file, *Rollback to 2.3.1* above; to an image older than M93 the dated and one-off blocks,
 *Rollback to 2.1.0* above). Then:
 
-1. Revert the DT Portainer stack image refs to the previous known-good release tags.
+1. Revert the Portainer stack image refs to the previous known-good release tags.
 2. Redeploy the stack from Portainer.
 3. Confirm DUT returns to green readiness.
 4. If the database schema is incompatible, restore the PostgreSQL backup as well.
@@ -1209,7 +1222,7 @@ PORTAINER_STACK_NAME=stream247 \
 ./scripts/portainer-stack-check.sh
 ```
 
-The script does not update, redeploy, or restart anything. It only reports whether the currently running DT stack matches the pinned release env file.
+The script does not update, redeploy, or restart anything. It only reports whether the currently running Portainer stack matches the pinned release env file.
 
 Production `traefik`, `web`, `worker`, `relay`, `relay-watchdog`, `playout`, `uplink`, and `postgres` services now use `restart: unless-stopped` in `docker-compose.yml`, so the documented always-on Compose paths, including `docker compose --profile proxy up -d`, recover their stack processes after daemon and host restarts.
 
@@ -1221,7 +1234,7 @@ Production Compose enables the program-feed/uplink split by default. `playout` w
 
 Pushed video sources (M57 stage 2) enter through the relay's two ingest host ports: RTMP on `1935/tcp` and SRT on `8890/udp`. The relay runs the mounted `docker/mediamtx.yml` instead of image defaults and checks every publish and read against the web app at `/api/relay/auth`. Publishing to `src-<source-id>` requires that source's publish key — issued once when the source is saved as a pushed source in the studio's video source manager, rotatable there, never shown again. The relay's control API (`:9997`) and RTSP read side (`:8554`) stay container-internal; internal reads and any publish to the legacy `live/program` path require the internal relay key, a secret that generates itself into the database on first use and is deliberately never printed. Publisher settings that work with the auth scheme: OBS RTMP — server `rtmp://<host>:1935`, stream key `src-<source-id>?user=publisher&pass=<publish-key>`; SRT — `srt://<host>:8890?streamid=publish:src-<source-id>:publisher:<publish-key>`.
 
-The live attach itself stays behind `STREAM247_SOURCE_LIVE_ENABLED` (and the managed switch that wins over it), and is still awaiting its DT soak gate. Two operator surfaces cover it: `STREAM247_SOURCE_LIVE_GAIN_PERCENT` (0-200, default 40) is settable under Settings → Operations → **Sound from live video sources**, and the studio's video source manager shows the worker's last attach decision per pushed source in words. That decision is persisted by migration `20260826_004_overlay_video_source_live_state` (`live_state`, `live_state_at`, `live_retry_at` on `overlay_video_sources`, all additive and empty on existing rows) and written only when the decision changes, mirroring the `playout.source-live.attach_decision` runtime event. A live source's audio is mixed only into items whose duration is known in advance; on anything else the source is embedded as picture only so the feed-audio watchdog stays meaningful.
+The live attach itself stays behind `STREAM247_SOURCE_LIVE_ENABLED` (and the managed switch that wins over it), and is still awaiting its soak gate (the owner-gated soak part of M57, see `PLANS.md`). Two operator surfaces cover it: `STREAM247_SOURCE_LIVE_GAIN_PERCENT` (0-200, default 40) is settable under Settings → Operations → **Sound from live video sources**, and the studio's video source manager shows the worker's last attach decision per pushed source in words. That decision is persisted by migration `20260826_004_overlay_video_source_live_state` (`live_state`, `live_state_at`, `live_retry_at` on `overlay_video_sources`, all additive and empty on existing rows) and written only when the decision changes, mirroring the `playout.source-live.attach_decision` runtime event. A live source's audio is mixed only into items whose duration is known in advance; on anything else the source is embedded as picture only so the feed-audio watchdog stays meaningful.
 
 Consequence for the two rollback paths above: with relay auth active, `STREAM247_RELAY_ENABLED=1` and `STREAM247_UPLINK_INPUT_MODE=rtmp` publish and read `live/program` on the relay and therefore only work when `STREAM247_RELAY_OUTPUT_URL` / `STREAM247_RELAY_INPUT_URL` carry the internal relay key as credentials (`rtmp://relay:1935/live/program?user=internal&pass=<internal-relay-key>`). Both lines, with the key already embedded, are available to an owner or admin under Settings → Operations → **Relay access**: the group ships only a button, the value is fetched on click from `POST /api/settings/relay-access`, and each reveal writes a `relay.internal_key.revealed` audit event naming the actor. Copy both lines into the deployment environment and restart before taking either rollback path. Never weaken the relay auth config to avoid the key: the same path is reachable from the internet through the published ingest port.
 

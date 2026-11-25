@@ -168,8 +168,8 @@ Repository and operations:
   `tests/unit/ops-state.test.ts`); a Node build with ICU 77 would turn them red (proposal section 6).
 - The design baselines lag the code in wording; the 1 % pixel tolerance hides it (proposal section 6).
 - `docs/deployment.md`: *Upgrading To 2.3* says the release carries "M84-M105", but it carries M109 too;
-  *Operating Policy (since v1.5.19)* still names v1.5.19 as the production baseline (M106); the
-  *Production Default* example uses `<tag>` since the tidy-up.
+  *Operating Policy* named v1.5.19 as the production baseline (M106) until the order pass of 2026-11-25
+  rewrote it to today's practice (done); the *Production Default* example uses `<tag>` since the tidy-up.
 - Owner steps 26 and 27 of `planning/archive/suggestions-2026-10-04.md` are open: check the Twitch labels
   the guide names; delete the branches `claude/proposal-2026-10-te1vlg` and
   `claude/r1-scheduling-competitors-v5o5zi` (both still on origin).

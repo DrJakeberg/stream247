@@ -93,7 +93,8 @@ The steps are in `.claude/skills/release/SKILL.md`. The rules:
 
 - Both are on the owner's home network behind a short-lived SSH certificate. No cloud session reaches
   them. The owner runs every command there: give the exact command and wait for the output.
-- The deployed stack is the Portainer stack on DT (`docs/deployment.md`). The owner's commands:
+- The deployed stack is the Portainer stack: Portainer runs on DT, the stack on the DUT (`docs/deployment.md`).
+  The owner's commands:
   - soak result: `ssh dut 'grep -E "outage|complete" ~/logs/soak-<stamp>.log'`; passed means
     `soak-monitor-complete` in the log
   - repin: `ssh dt '~/repin.sh <tag> --dry-run'`, then without `--dry-run`
@@ -102,6 +103,10 @@ The steps are in `.claude/skills/release/SKILL.md`. The rules:
   - soak start: the command of step 10 of *Safe Upgrade Flow* in `docs/deployment.md` (a release checkout, `--follow-web`)
   - live check: `ssh dut 'docker exec stream247-playout-1 yt-dlp --simulate --print "%(is_live)s" https://www.twitch.tv/jimpanse247'`
 - A 24-hour soak runs only on the DUT. Never change DUT secrets or production values.
+- The Portainer stack has its own compose file, which differs from `docker-compose.yml`; the repin changes
+  only its three image pins. Before a release, compare `git diff <last tag> HEAD -- docker-compose.yml` with
+  the *Stack* part of the release's upgrade section in `docs/deployment.md`. Whether a compose change goes
+  into the stack file is the owner's decision: name it and ask.
 
 ## Never
 
@@ -121,9 +126,17 @@ The steps are in `.claude/skills/release/SKILL.md`. The rules:
 
 ## Claude Code
 
-- `CLAUDE.md` only imports this file. `.claude/settings.json` allows the usual pnpm, docker, git and
-  `gh api` commands and denies force-pushes, pushes to `main`, tag pushes and reading `.env` or `stack.env`. Personal
-  settings go into `settings.local.json` next to it (not committed).
+- `CLAUDE.md` only imports this file. `.claude/settings.json` allows the usual pnpm, docker and git commands,
+  pushes to `claude/` branches and `gh api` reads and pull-request work (create, comment, edit title or
+  body). It asks before `gh api` with `PUT` (merge, branch update), `merges` and `graphql`. It denies
+  force-pushes, pushes to `main`, tag pushes, `gh api` with `DELETE`, on `git/refs` or `git/tags`, on the
+  `releases` collection (creating a release, and listing too) and publishing a draft, and reading `.env` or
+  `stack.env`. Read a ref through `git/ref/<ref>`, a release through `releases/tags/<tag>` or `releases/latest`.
+  Personal settings go into `settings.local.json` next to it (not committed).
+- These rules match the whole command text: pass pull-request and comment bodies from a file
+  (`-F body=@body.md`), or words in them trip a rule. Another spelling (mixed-case method, absolute path,
+  `sh -c`) slips past, and a session that bypasses permissions never sees the prompts. The real guard stays
+  "Merge only on the owner's word" above.
 
 ## Hard blockers (the only reasons to stop before the milestone is done)
 
