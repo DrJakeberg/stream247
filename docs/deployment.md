@@ -217,8 +217,9 @@ Every release follows the same order:
      own address (`--follow-web`; step 10 of *Safe Upgrade Flow* below has the command)
 6. **Promote or roll back**
    - keep the Portainer deployment only after DUT stays healthy
-   - if DUT fails, read the release's rollback notes first (since 2.3, dated and one-off blocks are deleted
-     before a reverse repin: *Rollback to 2.1.0* below), then restore the prior pinned image refs in
+   - if DUT fails, read the release's rollback notes first (a reverse repin can need a step before it:
+     from 2.4 to 2.3.1 the stack file, *Rollback to 2.3.1* below; to an image older than M93 the dated and
+     one-off blocks, *Rollback to 2.1.0* below), then restore the prior pinned image refs in
      Portainer and redeploy the previous known-good stack
 
 ## Release Channels And Tags
@@ -244,9 +245,9 @@ Use pinned GHCR image tags in production.
 
 Example:
 
-- `ghcr.io/drjakeberg/stream247-web:v1.5.19`
-- `ghcr.io/drjakeberg/stream247-worker:v1.5.19`
-- `ghcr.io/drjakeberg/stream247-playout:v1.5.19`
+- `ghcr.io/drjakeberg/stream247-web:<tag>` (for example `v2.3.1`)
+- `ghcr.io/drjakeberg/stream247-worker:<tag>`
+- `ghcr.io/drjakeberg/stream247-playout:<tag>`
 - `bluenviron/mediamtx:1.15.4`
 
 Do not use `latest` for unattended production deployments.
@@ -264,9 +265,9 @@ Do not use `latest` for unattended production deployments.
    The preflight rejects blank or quoted-empty required settings plus untouched `.env.example` and `.env.production.example` placeholder values, including Traefik host defaults whenever proxy settings are present and ACME email placeholders when the built-in Let's Encrypt resolver is configured, so replace those first.
 6. Rehearse the target version with:
    ```bash
-   ./scripts/upgrade-rehearsal.sh v1.5.7
+   ./scripts/upgrade-rehearsal.sh <target-version>
    ```
-   Before a new release tag exists, the rehearsal automatically uses the CI-published `main-<sha>` snapshot for the current commit instead of requiring `ghcr.io/...:v1.5.7` to exist already.
+   Before a new release tag exists, the rehearsal automatically uses the CI-published `main-<sha>` snapshot for the current commit instead of requiring `ghcr.io/...:<target-version>` (for example `v2.4.0-rc.2`) to exist already.
    On an empty rehearsal stack, the script bootstraps a rehearsal owner and seeds one tiny local media fixture so the current broadcast-readiness gate does not depend on stale local state. Set `UPGRADE_REHEARSAL_SEED_LOCAL_MEDIA=0` when the target media library already contains real playable media and you want to prevent fixture creation.
 7. After the release images exist, update the DT Portainer stack image refs to the target release tags and redeploy the stack from Portainer.
 8. Verify the DT stack matches the intended pinned refs:
@@ -358,8 +359,9 @@ Useful overrides:
 - `SOAK_OUTAGE_TOLERANCE_SECONDS` (default 300): how long an outage may last, counted from its first bad
   sample, before the soak fails with `outage-exceeded`. Any bad sample opens the outage — a failed fetch,
   a not-ready service, `broadcastReady=false` — and the next healthy sample closes it. Written for the
-  DUT's nightly path interruption: every night at 23:31 UTC the stack loses its destination for one to
-  three minutes and heals itself, and two 24 h soaks on v2.0.0 died on it without any application fault.
+  DUT's nightly path interruption: every night (about 00:02 UTC lately, a forced reconnect of the internet
+  line; the minute has moved before, so measure it) the stack loses its destination for one to three
+  minutes and heals itself, and two 24 h soaks on v2.0.0 died on it without any application fault.
   Never carried by the window, whatever its age: a playout crash loop, a runaway uplink restart count
   (`SOAK_UPLINK_RESTART_RUNAWAY_DELTA`) and a container restart. `0` restores the strict per-sample rules
   below exactly.
@@ -1141,8 +1143,9 @@ What 2.3.1 does with what 2.4 left behind; none of it needs a step:
 ### Rollback
 
 If the new version is unhealthy, read the rollback part of the release's upgrade section first: an older
-image can misread rows the new one stored, and since 2.3 a reverse repin needs a step before it
-(*Rollback to 2.1.0* above). Then:
+image can misread rows the new one stored, and a reverse repin can need a step before it (from 2.4 to
+2.3.1 the stack file, *Rollback to 2.3.1* above; to an image older than M93 the dated and one-off blocks,
+*Rollback to 2.1.0* above). Then:
 
 1. Revert the DT Portainer stack image refs to the previous known-good release tags.
 2. Redeploy the stack from Portainer.
@@ -1155,11 +1158,15 @@ image can misread rows the new one stored, and since 2.3 a reverse repin needs a
   - validate
   - build
   - smoke-test
-  - publish `latest` and branch/SHA-tagged images
+  - publish `latest` and `main-<sha>` images (the `publish` job, only after the `validate` job of that
+    push run passed)
 - `push` of `v*` tags:
   - pull the CI-published `main-<sha>` snapshot images for the tagged commit
   - smoke-test them before push
   - retag and publish those same tested images as the versioned GHCR artifacts
+  - the `main-<sha>` images exist only when the push CI run of that very commit was green; on a red run
+    the tag workflow waits 60 minutes (120 x 30 s) and fails. Fix `main` with a new commit (or rerun a
+    flaky job until green) and tag that commit.
 - `pnpm release:preflight` runs a full `pnpm validate` on its own; the CI and release workflows set
   `RELEASE_PREFLIGHT_SKIP_VALIDATE=1` because their job has already run `pnpm validate`.
 - After the images, the tag's workflow creates the GitHub release from the version's `CHANGELOG.md` section
@@ -1220,7 +1227,7 @@ Consequence for the two rollback paths above: with relay auth active, `STREAM247
 
 Readiness and the soak monitor now separate Twitch/output continuity from short local playout failures in HLS program-feed mode. If `uplink` is running, the destination is ready, the program feed is fresh, and crash-loop protection is not active, a local `playout` failure is treated as a transient for `STREAM247_PLAYOUT_TRANSIENT_GRACE_SECONDS` seconds. The default grace is the larger of 20 seconds or `STREAM247_PROGRAM_FEED_FAILOVER_SECONDS`. Crash loops, a runaway unplanned uplink restart count, and Docker restarts for `web`, `worker`, `playout`, `uplink` or `relay` (the last two since M95) fail the soak at once. Uplink failures, stale program feeds, destination degradation and new unplanned uplink restarts fail it when they outlast the outage window (`SOAK_OUTAGE_TOLERANCE_SECONDS`, five minutes by default); healed sooner, they are logged as an outage and counted in the completion line. The readiness API also reports `sseConnections` so long-running installs can see whether browser or overlay event streams are being cleaned up after clients disconnect.
 
-Twitch VOD playback is cache-backed by default. The worker stores verified Twitch archive media under `MEDIA_LIBRARY_ROOT/.stream247-cache/twitch`, preserves the original Twitch URL on the asset record, and keeps the internal cache out of local library scans. Before each retry it deletes leftover transient partials for the same VOD, enforces the cache byte guardrail against both ready files and transient download artifacts, and times Twitch cache preparation out after `TWITCH_VOD_CACHE_DOWNLOAD_TIMEOUT_SECONDS` so playout falls back locally instead of stalling the program feed. Production pins that timeout to `8` seconds; keep it short unless a separate background warm-cache path exists. If a Twitch VOD cannot be cached, playout skips that asset for a cooldown window and falls through to the normal global-fallback / generic-fallback ladder before it ever drops to the standby slate. Keep at least one curated local fallback asset in `data/media` with `fallback` or `standby` in the file name so the local-library source promotes it to a global fallback automatically. Set `TWITCH_VOD_CACHE_ALLOW_REMOTE_FALLBACK=1` only as a temporary rollback.
+Twitch VOD playback is cache-backed by default. The worker stores verified Twitch archive media under `MEDIA_LIBRARY_ROOT/.stream247-cache/twitch`, preserves the original Twitch URL on the asset record, and keeps the internal cache out of local library scans. Before each retry it deletes leftover transient partials for the same VOD, enforces the cache byte guardrail against both ready files and transient download artifacts, and times Twitch cache preparation out after `TWITCH_VOD_CACHE_DOWNLOAD_TIMEOUT_SECONDS` (code default `120`, `1800` in `.env.production.example`). The worker runs each background download as a detached job, which may run up to the VOD's own running time (that value is the floor, one day the cap); a download awaited on a reconciliation cycle is clamped to half of `STREAM247_LOOP_STALL_TIMEOUT_SECONDS`. If a Twitch VOD cannot be cached, playout skips that asset for a cooldown window and falls through to the normal global-fallback / generic-fallback ladder before it ever drops to the standby slate. Keep at least one curated local fallback asset in `data/media` with `fallback` or `standby` in the file name so the local-library source promotes it to a global fallback automatically. Set `TWITCH_VOD_CACHE_ALLOW_REMOTE_FALLBACK=1` only as a temporary rollback.
 
 The Twitch cache also enforces basic retention and disk guardrails:
 
@@ -1241,13 +1248,13 @@ Output settings are available in `/output` with built-in profiles for 720p30, 10
 
 In-stream engagement is configured from Studio → Engagement (legacy `/overlays` redirects there) and is disabled by default. Both the database setting and the deployment flag must be enabled: set `STREAM_CHAT_OVERLAY_ENABLED=1` for Twitch IRC chat and the chatter-participation game (drawn in the on-air overlay), and set `STREAM_ALERTS_ENABLED=1` for follow / sub / cheer / channel-point alerts (recorded and listed under Studio → Engagement; not drawn on air yet). EventSub webhooks post to `/api/overlay/events`; production deployments should set `TWITCH_EVENTSUB_SECRET` and must expose `APP_URL` over reachable HTTPS for Twitch to deliver follow/sub notifications. Since 2.1 the subscriptions are about the broadcast channel: the worker registers `channel.follow` with the bot account as moderator (scope `moderator:read:followers` on the bot) whenever alerts are enabled and the bot is connected, and `channel.subscribe`, `channel.cheer` and `channel.channel_points_custom_reward_redemption.add` only with one account, or once the channel owner connection grants `channel:read:subscriptions`, `bits:read` and `channel:read:redemptions` (owner connections made before 2.1 must reconnect). Types that are switched on but withheld raise the info incident `twitch.eventsub.waiting-for-channel-owner`. Stream247 owns every subscription on its own callback URL; it verifies them before creating duplicates and deletes the ones no longer wanted, including 2.0's on the bot account's own channel. See `docs/twitch-setup.md`. The IRC chat bridge authenticates with the same identity token and needs `chat:read` (and `chat:edit` to reply to moderator check-ins); a token without them is refused by Twitch with `Login unsuccessful`, and the worker then raises the `Twitch chat login refused` incident and stops retrying for five minutes instead of reconnecting every cycle. Connections made before those scopes were requested must reconnect the Twitch account once — no chat, poll or chat-game input arrives until they do. Localhost-only installs can use the admin preview and chat settings, but cannot receive Twitch EventSub webhooks from the public internet.
 
-CI currently builds against the public ECR mirror for `node:22-alpine` to avoid Docker Hub rate limits on GitHub-hosted runners.
+The Dockerfiles take `node:22-alpine` from `public.ecr.aws`. Since M125 CI's test builds pull it from `mirror.gcr.io` and tag it under that name, because `public.ecr.aws` refuses pulls (429) for hours at a time; the publish job and the release images still pull from `public.ecr.aws`. A build that fails at a registry with "unexpected status code" or "429" is the registry: rerun the failed jobs.
 
 ## Current Capability Notes
 
 - Admin navigation is grouped by operator workflow: `Live` for control, status, and moderation, `Program` for schedule/library work, `Studio` for scene/engagement/output, and `Admin` for settings, moderation policy, and team access.
 - local media, direct media URLs, YouTube playlists/channels, and Twitch VODs/channels are ingestible today
-- Twitch VOD playout uses verified local cache files by default and falls back to standby when cache preparation fails
+- Twitch VOD playout uses verified local cache files by default; an archive that cannot be cached is skipped for a cooldown and the fallback ladder covers it before the standby slate
 - program-feed/uplink mode separates program playout restarts and asset boundaries from the external RTMP publishing worker
 - YouTube and Twitch ingestion rely on `yt-dlp`
 - schedule blocks support weekly CRUD, reusable show profiles, multi-day creation, overlap validation, drag/drop repositioning, resize-to-change-duration editing, weekly coverage summaries, and quick-start program templates

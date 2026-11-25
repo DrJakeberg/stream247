@@ -1,6 +1,6 @@
 # UI
 
-Updated: 2026-04-22
+Updated: 2026-11-25
 
 This document defines the permanent UI contract for the shipped admin app. It describes the current workspace model, the component rules new surfaces must follow, and the canonical product language used across the UI and docs.
 
@@ -39,7 +39,7 @@ The app has four top-level workspaces and uses tabs inside each workspace.
 Legacy admin routes may continue to redirect, but the workspace URLs above are the canonical entry points.
 
 Outside the workspaces, `/setup` is the first-run wizard (owner account → instance basics → Twitch
-app credentials → Twitch connection → where the stream goes → first programme → review). It stays reachable for signed-in operators after
+app credentials → Twitch accounts → where the stream goes → first programme → review). It stays reachable for signed-in operators after
 bootstrap; each step's completion is derived from what is actually configured, so it is resumable
 and every post-owner step is skippable.
 

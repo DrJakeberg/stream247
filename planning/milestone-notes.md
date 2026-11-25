@@ -707,6 +707,8 @@ under `planning/archive/`, text unchanged.
   Open pull request #56 rewrites the relay-watchdog paragraph of `docs/operations.md` and the M114 DUT
   entry with the opposite of this milestone (a two-minute `relay.unreachable` in every mode, a marker
   directory set where `/tmp` is a tmpfs): whoever merges second keeps M126's wording.
+  Pull request #56 was then merged into this milestone's branch (`7cd9b0a`) with M126's wording kept in
+  both places.
 
 ### Suggestions 2026-10-04 to M112-M124, then M125
 

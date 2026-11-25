@@ -16,7 +16,13 @@ Explicit non-goals:
 
 - `web`: Next.js admin UI, public pages, and API routes
 - `worker`: ingestion, Twitch reconciliation, incidents, alerts, and playout supervision
-- `playout`: playout runtime image used for FFmpeg-oriented broadcast execution
+- `playout`: playout runtime image used for FFmpeg-oriented broadcast execution; in relay mode it writes
+  the local HLS program feed
+- `uplink`: reads the local HLS program feed and owns the external RTMP destinations (relay mode)
+- `relay`: `bluenviron/mediamtx` local RTMP relay (ingest for pushed video sources, the legacy
+  `STREAM247_UPLINK_INPUT_MODE=rtmp` path)
+- `relay-watchdog`: worker image; restarts the relay when its API stops answering
+- `traefik` (profile `proxy`): optional HTTPS front with Let's Encrypt
 - `postgres`: durable relational state
 
 ## Persistence Model
