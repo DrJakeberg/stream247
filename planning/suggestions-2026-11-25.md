@@ -1,13 +1,19 @@
 # Suggestions from the nonstopvod.com comparison (2026-11-25)
 
 Ideas taken from the public pages of nonstopvod.com, a hosted service that replays a creator's Twitch VODs
-on a second channel. Every claim about their product was checked on their pages, and every statement about
-our code was checked in the repository. Ideas only: no texts, names, interfaces or code were taken
-(`AGENTS.md`, "Never"). The owner received this list in German with the same numbers on 2026-11-25.
+on a second channel. This file holds 47 ideas. Items 1 to 22 come from a comparison of their pages with
+our product; every claim about their product was checked on their pages, and every statement about our
+code was checked in the repository. Items 23 to 47 come from a look at the design of their public pages
+only (61 screenshots, desktop and phone, not logged in; nothing behind the login was seen). Ideas only,
+design included: no texts, names, colours, logos, layouts, interfaces or code were taken (`AGENTS.md`,
+"Never"). The owner received items 1 to 22 in German with the same numbers on 2026-11-25.
 **Nobody starts an item before the owner names its number.** Recommended first package: 2, 3 and 4, because
 they are small, security- or correctness-related and fit the owner's security audit. 1 should come next.
+For the design part only: 23, 24 and 25 together (one header, state badges, the existing button tiers),
+because they reuse tokens and classes that already exist.
 
-Status: on 2026-11-25 the owner asked for the list to be filed here; no item is named yet.
+Status: on 2026-11-25 the owner asked for the list to be filed here, and for 23 to 47 to be appended;
+no item is named yet.
 
 ## Viewers and platform rules
 
@@ -140,3 +146,144 @@ Status: on 2026-11-25 the owner asked for the list to be filed here; no item is 
     for a bounded time and never by default. `docs/getting-started.md` states a measured time to first
     stream. Files: `apps/web/app/setup/page.tsx`, worker test-card source, `docs/getting-started.md`,
     tests, baselines.
+
+## Design: admin surfaces
+
+Items 23 to 47 come from a review of the public pages only. Every item that changes UI text or layout needs
+the design and wording baselines re-recorded on a fresh stack through `scripts/design-baseline.sh`
+(`AGENTS.md`, "Scope and quality").
+
+23. **One header per admin page.** Goal: the first working card sits higher, and on Live control it moves up
+    by about one screen. Acceptance sketch: Live control and Program library each render exactly one page
+    header, the duplicated workspace hero and metric row are gone or merged into the top strip, and the
+    `live-control-desktop` baseline shows Open problems above the fold at 1440x900. Files:
+    `apps/web/app/(admin)/layout.tsx`, the Live control and Library page components,
+    `apps/web/app/globals.css`, baselines.
+24. **State badge at the start of each output and source row.** Goal: the state is readable before the detail
+    lines. Acceptance sketch: every output row in Sending to Twitch and every source row starts with an
+    existing `.badge` variant (ok / needs setup / failing) built from the tone tokens; no new pill class; unit
+    or e2e checks assert the badge for each state. Files: the Live control destination components, the
+    `sources/[id]` page and the sources list, `apps/web/app/globals.css:375-397` (reuse only). Note from the
+    check: today only `.badge-ready`, `.badge-action` and `.badge-optional` exist (positive, caution and
+    neutral tone); a "failing" state has no variant yet, so the item must either map it to `.badge-action` or
+    add one variant on the existing `--tone-critical-*` tokens in `tokens.css`. The owner picks.
+25. **Apply the existing button tiers.** Goal: destructive actions look destructive, and disabled buttons look
+    disabled. Acceptance sketch: `apps/web/components/asset-library-browser.tsx:652` (Delete curated set) and
+    `apps/web/components/playout-action-form.tsx:360` (Remove next) use `.button-danger`; disabled buttons
+    have lower contrast and no border; one primary per action group. Files: those two components,
+    `apps/web/app/globals.css:886-888` (`.button-danger`) and `:539` (`.button:disabled`), baselines.
+29. **Compact table view for outputs and the library.** Goal: outputs and assets can be compared at a glance.
+    Acceptance sketch: at desktop width the outputs render as a table (name, role, priority, state badge,
+    recovery) and the library has a list view, with the on-air row tinted; phone width keeps the cards;
+    keyboard and screen-reader table semantics are verified in the a11y tree. Files: the Live control
+    destination components, `apps/web/components/asset-library-browser.tsx`, `apps/web/app/globals.css`,
+    baselines.
+34. **Numeric metrics as large tabular figures.** Goal: numbers can be read from across the room. Acceptance
+    sketch: viewers, uptime, queue length and open incidents render as a larger numeral with
+    `font-variant-numeric: tabular-nums` and a muted caption; text states stay at body size; a small live dot
+    appears next to viewers when on air. Files: the metric strip component (the `.metric` rules in
+    `apps/web/app/globals.css`), `apps/web/app/styles/tokens.css`.
+37. **Extend the M90 phone treatment to all workspaces (owner decision).** Goal: the page heading is on the
+    first phone screen. Acceptance sketch: below 640 px, brand and workspaces sit in two compact columns, the
+    sidebar explanation card is hidden, and the shared rail collapses to one line; in the
+    `program-library-mobile` baseline the heading is above the fold. CSS only. Files:
+    `apps/web/app/globals.css` (the M90 comment and media query at `:1892-1901`), mobile baselines.
+40. **Type tokens and a font-size ratchet.** Goal: 21 font sizes become 5-6 steps with meaning. Acceptance
+    sketch: tokens (display, heading, subheading, body, small, eyebrow) in `tokens.css`; near-duplicate sizes
+    folded in; `scripts/css-token-lint.sh` and its baseline (today they ratchet raw colour literals only) also
+    ratchet raw `font-size` literals. Files: `apps/web/app/styles/tokens.css`, `apps/web/app/globals.css`,
+    `scripts/css-token-lint.sh`.
+41. **At most two nesting levels.** Goal: a card means one item of a set. Acceptance sketch: section card,
+    then plain rows with dividers for outputs, incidents and queue; bordered sub-cards only for selectable
+    asset tiles; Curated sets is no longer a card inside a card inside a card. Files: Live control and Library
+    components, `apps/web/app/globals.css`.
+42. **Show the readiness checklist where the gap is.** Goal: setup gaps become numbered steps instead of stray
+    text. Acceptance sketch: extend `apps/web/components/go-live-checklist.tsx` (no new component) with step
+    numbers and a compact variant shown in Live control while steps are open; data from
+    `apps/web/lib/server/onboarding.ts`. Files: those, plus the Live control page.
+43. **Dark scheme from tokens (owner decision on timing).** Goal: easier on the eyes at night, following the
+    system preference. Today the repository has no `prefers-color-scheme` rule; the interface is light only.
+    Acceptance sketch: a dark token set under `prefers-color-scheme: dark`, starting with the admin shell,
+    contrast checked for secondary text, baselines recorded in both schemes. Files:
+    `apps/web/app/styles/tokens.css`, `apps/web/app/globals.css`, the baseline spec
+    (`tests/e2e/design-baseline.spec.ts`).
+44. **Group the readiness list; fold the filters on the phone.** Goal: blockers first, and the first asset
+    sooner. Acceptance sketch: the Live status readiness list has three group headings (Twitch, Output,
+    Content) with blocking items first; below 640 px the Library filters sit behind one "Filters (n active)"
+    disclosure. Files: the Live status page, `apps/web/components/asset-library-browser.tsx`,
+    `apps/web/app/globals.css`.
+46. **One line per workspace in the sidebar.** Goal: no truncated explanation. Acceptance sketch: the sidebar
+    card at `apps/web/app/(admin)/layout.tsx:33-39` (explanation text at line 37) becomes one labelled line
+    per workspace, with one consistent icon family of our own. Files: that layout, `apps/web/app/globals.css`.
+47. **Readable measure in admin cards.** Goal: long help lines are easier to read. Acceptance sketch:
+    paragraphs inside admin cards are capped at about 70ch, and controls keep full width. Files:
+    `apps/web/app/globals.css`.
+
+## Design: first contact and documentation
+
+26. **README opening and first-run reassurance.** Goal: within five seconds a newcomer knows what stream247
+    does, what it needs and where to start. Acceptance sketch: `README.md` starts with one outcome sentence,
+    one prerequisites line (Linux host with Docker, public HTTPS hostname, Twitch account), a Getting started
+    link and a What it does today link; the licence block ("License Model", now at the top) moves below; Quick
+    Start says in our own words that a first start broadcasts nothing until an output is configured, and links
+    the exact Twitch scopes in `docs/twitch-setup.md`. Files: `README.md`, `docs/getting-started.md` section
+    0.
+27. **What stream247 does not do today.** Goal: an operator learns the limits before investing time.
+    Acceptance sketch: `README.md:134-137` ("What Is Not Done Yet", today two lines pointing to `PLANS.md` and
+    `docs/architecture.md`) becomes 5-8 plain bullets, each checked against the code and `PLANS.md` (nothing
+    assumed) and linked to an open milestone or a known gap. Files: `README.md`.
+28. **SECURITY.md and SUPPORT.md answer the trust questions.** Goal: one clear way to report a vulnerability
+    and an honest expectation of a reply. Acceptance sketch: `SECURITY.md` links the repository's private
+    advisory form, has a table of supported versions (latest release plus the previous minor) and a response
+    target the owner picks; `SUPPORT.md` names the maintainer role, what answers to expect and what to include
+    (version, `docker compose ps`, log lines without secrets). Files: `SECURITY.md`, `SUPPORT.md`.
+30. **Disk sizing in hours.** Goal: an operator can size the host before installing. Acceptance sketch:
+    `docs/deployment.md` gets a "Disk you need" table (library hours against GB at the default output bitrate,
+    plus PostgreSQL and log growth), marked as an estimate measured on the DUT (DUT check in
+    `planning/dut-checks.md`, no guessed numbers); it links the existing watermark text
+    (`docs/deployment.md:158-160`, `docs/operations.md:1303-1322`, "Media disk filling up") instead of
+    restating it; getting-started section 8 gets one worked sentence. Optionally, an "about N hours left" line
+    next to free space in the library. Files: `docs/deployment.md`, `docs/getting-started.md`,
+    `planning/dut-checks.md`.
+31. **Stage summary above the getting-started guide.** Goal: setup looks doable, and "done" is named.
+    Acceptance sketch: 3-4 stages (for example Deploy, Connect Twitch, Add media, Plan the week) with links to
+    the 12 sections (0 to 11) and an end state (Live -> Status green); the wizard rail groups its steps under
+    the same stage names. Files: `docs/getting-started.md`, `apps/web/app/setup/page.tsx`.
+32. **Decide the content before the tooling.** Goal: a newcomer picks a source kind for a reason. Acceptance
+    sketch: getting-started section 9 ("Programme") opens with a short paragraph in our own wording and three
+    bold-led options (own Twitch archive, YouTube playlist or channel, local files), each with one line on
+    rights and reliability, then the existing steps. Files: `docs/getting-started.md`.
+33. **Login says which card is whose.** Goal: team members and the owner each find their sign-in. Acceptance
+    sketch: a one-line heading explains Twitch sign-in for the team and the local account for setup and
+    recovery; the most-used card is visually primary; when Twitch sign-in is not configured, a short state
+    replaces the truncated setup text and points to Admin. Files: `apps/web/app/login/page.tsx` and its
+    components (`login-form.tsx`, `twitch-login-panel.tsx`), viewer/UI texts, baselines (`login-desktop`,
+    `login-mobile`).
+35. **Version stamp on operator docs.** Goal: an operator can tell whether a guide matches the pinned image.
+    Acceptance sketch: `docs/getting-started.md`, `docs/deployment.md` and `docs/twitch-setup.md` each carry
+    "Checked against vX.Y.Z on <date>"; the release skill's checklist updates it in the release commit. Files:
+    those three docs, `.claude/skills/release/SKILL.md`.
+36. **Spell out every deleting default.** Goal: nothing is removed by surprise. Acceptance sketch: for the
+    VOD/Twitch cache, incident history and logs, one sentence each in the docs and the UI hint: the default,
+    what it removes, what it never removes, and where to switch it off; the Twitch cache list at
+    `docs/deployment.md:1190-1201` (variable names without values) gets concrete values. Files:
+    `docs/operations.md`, `docs/deployment.md`, `apps/web/components/disk-watermark-form.tsx` and related
+    settings forms.
+
+## Design: public channel page
+
+38. **Optional operator footer on /channel (owner decision).** Goal: the operator can meet a legal duty to
+    publish an imprint without putting personal data on the page by default. Acceptance sketch: Admin settings
+    for an imprint URL and a privacy URL, read by `/channel` and hidden when empty; wired end to end with a
+    test that reads the stored value on the public page; additive schema with a downgrade note in
+    `docs/deployment.md`. Files: `apps/web/app/channel/page.tsx`, Admin settings,
+    `apps/web/lib/public-channel-view.ts`, docs.
+39. **Honest "on air since" line.** Goal: proof that the channel keeps running, from our own data only.
+    Acceptance sketch: next to the On air badge, one line with the start of the current broadcast from worker
+    data; the line is absent when off air; no aggregate counters; tests cover live and off-air. Files:
+    `apps/web/app/channel/page.tsx`, `apps/web/lib/public-channel-view.ts`, the worker's state export, viewer
+    texts.
+45. **Keep the watch action reachable on /channel.** Goal: one tap to the stream from anywhere on the page.
+    Acceptance sketch: either a compact sticky bar with the channel name and the watch button, or the button
+    repeated after the 7-day list; it must not cover content. Files: `apps/web/app/channel/page.tsx`,
+    `apps/web/components/live-channel-page.tsx`, CSS; baselines `channel-desktop`, `channel-mobile`.
