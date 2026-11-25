@@ -32,6 +32,7 @@ describe("workspace routing", () => {
         expect.objectContaining({ source: "/output", destination: "/studio?tab=output", permanent: false }),
         expect.objectContaining({ source: "/settings", destination: "/admin?tab=settings", permanent: false }),
         expect.objectContaining({ source: "/team", destination: "/admin?tab=team", permanent: false }),
+        expect.objectContaining({ source: "/audit", destination: "/admin?tab=audit", permanent: false }),
         expect.objectContaining({ source: "/ops", destination: "/live?tab=status", permanent: false })
       ])
     );

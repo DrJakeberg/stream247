@@ -29,7 +29,7 @@ describe("workspace navigation contract", () => {
       { label: "Live", tabs: ["Control", "Status", "Moderation"] },
       { label: "Program", tabs: ["Schedule", "Pools", "Library", "Sources"] },
       { label: "Studio", tabs: ["Scene", "Engagement", "Output"] },
-      { label: "Admin", tabs: ["Settings", "Team"] }
+      { label: "Admin", tabs: ["Settings", "Team", "Audit"] }
     ]);
   });
 

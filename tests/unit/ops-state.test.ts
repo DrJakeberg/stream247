@@ -12,6 +12,7 @@ import {
   getMaterializedProgrammingWeekPreview,
   getPlayoutQueueAssets,
   getPoolSourceGate,
+  getRecentAuditEvents,
   getSchedulePreview,
   getRecentPresenceWindows,
   getRuntimeDriftReport,
@@ -1331,5 +1332,46 @@ describe("ops state helpers", () => {
     );
     expect(snapshot.destinations.find((destination) => destination.id === "destination-backup")?.recoveryState).toBe("cooldown");
     expect(snapshot.destinations.find((destination) => destination.id === "destination-backup")?.failureHoldSecondsRemaining).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * The workspace-wide audit read.
+ *
+ * This selector was exported and then had no caller at all: the only audit surface in the product
+ * was the per-source list, which by construction cannot show a sign-in, a revealed relay key, or a
+ * team grant. It backs the Admin · Audit tab now, so its ordering and its bound are behaviour
+ * rather than an implementation detail.
+ */
+describe("getRecentAuditEvents", () => {
+  const trail = [
+    { id: "audit-old", type: "asset.updated", message: "older", createdAt: "2026-07-01T10:00:00.000Z" },
+    { id: "audit-new", type: "auth.twitch", message: "newest", createdAt: "2026-08-03T10:00:00.000Z" },
+    { id: "audit-mid", type: "settings.encoder.updated", message: "middle", createdAt: "2026-08-01T10:00:00.000Z" }
+  ];
+
+  it("returns the trail newest first regardless of stored order", () => {
+    const events = getRecentAuditEvents(createState({ auditEvents: trail }));
+
+    expect(events.map((event) => event.id)).toEqual(["audit-new", "audit-mid", "audit-old"]);
+  });
+
+  it("caps at the requested limit, keeping the newest entries", () => {
+    expect(getRecentAuditEvents(createState({ auditEvents: trail }), 2).map((event) => event.id)).toEqual([
+      "audit-new",
+      "audit-mid"
+    ]);
+    expect(getRecentAuditEvents(createState({ auditEvents: trail }), 0)).toEqual([]);
+  });
+
+  it("does not reorder the caller's state", () => {
+    const state = createState({ auditEvents: trail });
+    getRecentAuditEvents(state);
+
+    expect(state.auditEvents.map((event) => event.id)).toEqual(["audit-old", "audit-new", "audit-mid"]);
+  });
+
+  it("returns nothing for an empty trail", () => {
+    expect(getRecentAuditEvents(createState({ auditEvents: [] }))).toEqual([]);
   });
 });

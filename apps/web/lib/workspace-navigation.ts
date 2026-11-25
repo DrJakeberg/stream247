@@ -58,7 +58,8 @@ export const WORKSPACE_CONFIG: Record<WorkspaceId, WorkspaceConfig> = {
     defaultTab: "settings",
     tabs: [
       { id: "settings", label: "Settings" },
-      { id: "team", label: "Team" }
+      { id: "team", label: "Team" },
+      { id: "audit", label: "Audit" }
     ]
   }
 };

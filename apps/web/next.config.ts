@@ -92,6 +92,11 @@ const nextConfig: NextConfig = {
         permanent: false
       },
       {
+        source: "/audit",
+        destination: buildWorkspaceHref("admin", "audit"),
+        permanent: false
+      },
+      {
         source: "/ops",
         destination: buildWorkspaceHref("live", "status"),
         permanent: false

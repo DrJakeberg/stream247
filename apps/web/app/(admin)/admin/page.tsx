@@ -1,5 +1,6 @@
 export const dynamic = "force-dynamic";
 
+import AuditPage from "@/app/(admin)/audit/page";
 import SettingsPage from "@/app/(admin)/settings/page";
 import TeamPage from "@/app/(admin)/team/page";
 import { WorkspaceTabs } from "@/components/workspace-tabs";
@@ -19,6 +20,7 @@ export default async function AdminWorkspacePage(props: {
       <WorkspaceTabs activeTabId={tab} workspaceId="admin" />
       {tab === "team" ? <TeamPage /> : null}
       {tab === "settings" ? <SettingsPage /> : null}
+      {tab === "audit" ? <AuditPage /> : null}
     </div>
   );
 }

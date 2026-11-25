@@ -74,6 +74,7 @@ The admin UI is organized around four workspaces:
 - `Admin` at `/admin`
   - `?tab=settings`
   - `?tab=team`
+  - `?tab=audit` (owner and admin: the retained audit trail, security and configuration entries apart from the rest)
 
 Legacy routes remain as redirects where needed, but the workspace URLs above are the canonical surfaces.
 
@@ -489,7 +490,10 @@ Current operational domains:
 - acknowledgements
 - resolution state
 - runtime drift checks
-- recent audit trail visibility
+- recent audit trail visibility in `Admin → Audit` (both retention windows read in full; the security list
+  is what the retention rule protects, plus the relay key reveal and refused publishes and the broadcaster
+  account being connected or disconnected; refused publishes and Twitch callback errors, which an outsider
+  can cause, are folded into one row per type so they cannot push other entries below the row cap)
 - audit events
 - Discord alerts
 - SMTP email alerts
