@@ -17,7 +17,9 @@
 #   scripts/design-baseline.sh            verify against the current snapshots
 #   scripts/design-baseline.sh --update   regenerate them
 #
-# A stack already running on DEV_STACK_PORT is reused; otherwise one is started and left up.
+# A stack already running on DEV_STACK_PORT is reused after `dev-stack.sh up` has reconciled it
+# against the current images; otherwise one is started and left up. Pass the DEV_STACK_STATE_DIR the
+# stack was started with, unless the point is to switch it to a fresh one.
 
 set -euo pipefail
 
@@ -41,14 +43,18 @@ SPEC="${DESIGN_BASELINE_SPEC:-tests/e2e/design-baseline.spec.ts tests/e2e/channe
 EXTRA_ARGS=""
 [ "${1:-}" = "--update" ] && EXTRA_ARGS="--update-snapshots"
 
-if ! curl -fsS "${BASE_URL}/api/health" >/dev/null 2>&1; then
-  echo "No dev stack on ${BASE_URL}; starting one."
-  DEV_STACK_PORT="$PORT" ./scripts/dev-stack.sh up >/dev/null
-else
+if curl -fsS "${BASE_URL}/api/health" >/dev/null 2>&1; then
   echo "Reusing the dev stack on ${BASE_URL}."
-  # Re-seeding is a no-op when the fixture is already present, and repairs a wiped workspace.
-  DEV_STACK_PORT="$PORT" ./scripts/dev-stack.sh seed >/dev/null
+else
+  echo "No dev stack on ${BASE_URL}; starting one."
 fi
+# `up` in both cases, not `seed` on reuse. Reusing the containers as-is pinned the gate to whatever
+# code they were created from: `pnpm test:design-baseline` rebuilds stream247-web:test first, and
+# the gate kept testing the old container — red, or recorded, for a reason that is not the diff.
+# `up` reconciles the running containers against the current image and against the state directory
+# of this invocation (DEV_STACK_STATE_DIR), so a rebuilt web image or a fresh state directory rolls
+# in here; with both unchanged it is a no-op plus the same re-seed the reuse path always did.
+DEV_STACK_PORT="$PORT" ./scripts/dev-stack.sh up >/dev/null
 
 echo "Running ${SPEC} in ${IMAGE}"
 

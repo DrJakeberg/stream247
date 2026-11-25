@@ -578,7 +578,7 @@ The intended validation path is:
 - `pnpm test:runtime-parity`
 - `pnpm test:broadcast-path`
 - `pnpm test:e2e:smoke`
-- `scripts/design-baseline.sh` (design and wording baselines, needs Docker; `pnpm test:design-baseline` builds the web image first)
+- `scripts/design-baseline.sh` (design and wording baselines, needs Docker; `pnpm test:design-baseline` builds the web image first; a dev stack already running on `DEV_STACK_PORT` is reconciled with `dev-stack.sh up`, which recreates its containers on a rebuilt image or a changed `DEV_STACK_STATE_DIR`)
 - `pnpm release:preflight`
 - Docker image build
 - container smoke test
