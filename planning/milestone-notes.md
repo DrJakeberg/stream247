@@ -710,6 +710,77 @@ under `planning/archive/`, text unchanged.
   Pull request #56 was then merged into this milestone's branch (`7cd9b0a`) with M126's wording kept in
   both places.
 
+### M128 Security Headers On The Web App And A Bounded Public Status Route
+
+- **Source.** Suggestions 2 and 4 of `planning/suggestions-2026-11-25.md`, named by the owner on 2026-11-25
+  ("ja klingt gut" to 2, 3 and 4; 3 goes into M129 because it changes UI text). The security audit of
+  2026-11-25 listed frame-ancestors/CSP as hardening; its confirmed findings are M127's, in other files.
+- **Headers.** One `headers()` entry on `/:path*` in `next.config.ts`, values in `apps/web/lib/security-headers.ts`
+  (a file without the `@/` alias, because `next.config.ts` imports it). The unit test turns the source into
+  the regex the build writes to the routes manifest (`buildCustomRoute` of Next.js), so it checks the
+  matcher Next.js uses, not a copy. HSTS without `includeSubDomains` and `preload`, `DENY` and
+  `frame-ancestors 'none'` everywhere, `Referrer-Policy: same-origin`: the plan's recommendations, open
+  as owner questions below.
+- **Framing, per route.** No product page is meant to be framed: there is no `<iframe>` in `apps/web`, the
+  studio scene preview (`/api/scenes/preview`) answers SVG that the studio inlines, the on-air overlay is
+  rendered by the worker (satori), not by a browser source, and no public overlay or embed page exists
+  (the page routes are the admin pages, `/`, `/channel`, `/login` and `/setup`). So every route is `DENY`.
+- **Redirects moved into the middleware.** Next.js 15.5.14 answers a `redirects()` entry before it applies
+  `headers()` (`resolve-routes.js` in Next.js's router utilities, the redirect branch returns without the
+  collected headers): the 307 of `/broadcast` carried `location` alone, measured on the built image, and
+  its body was the target URL as text. Both reviewers held A3 unmet on that, so the 13 legacy paths moved
+  from `next.config.ts` into `apps/web/lib/legacy-redirects.ts`, answered by `middleware.ts`: the headers()
+  entries run before the middleware and its redirect branch returns them. The request's query is kept and
+  the target's `tab` wins, as `redirects()` merged them. The matcher repeats the paths as literals (Next.js
+  reads it statically); `workspace-routing.test.ts` runs the middleware on each path and keeps the matcher
+  equal to the map, and the e2e test checks the five headers on the 307 of `/broadcast`.
+- **Report-only policy.** `middleware.ts` (matcher `/channel`) puts a fresh 128-bit nonce into
+  `Content-Security-Policy-Report-Only` on the answer and on the forwarded request, where the app renderer
+  reads it and stamps every script. A client-sent `Content-Security-Policy` request header is dropped
+  first: the renderer reads that one before the report-only one, so it would choose the nonce stamped into
+  the client's own page (a reviewer's finding, now a unit test). No report endpoint (it would be a new unauthenticated write
+  surface); violations show in the console only. Development adds `'unsafe-eval'`.
+- **Status route.** `apps/web/lib/server/public-channel-status.ts`: one serialized body for everyone, at most 5 s old
+  (served while `now <= read + 5000`), a single shared read for concurrent misses, a failed read never
+  cached (`503`, fixed message, the log takes the error's message only). The limit (120 a minute per
+  address, cached hits counted, as the limiter runs first) uses its own store from the new
+  `createRateLimiter(maxKeys, keepAfterEviction)` in `rate-limit.ts`: the shared sign-in store evicts the
+  oldest-expiring buckets past 10 000 keys, and a test showed a route on that store letting 20 000
+  addresses evict a sign-in bucket. The route's store keeps 9 000 after an eviction, so a flood sorts
+  the map once per 1 000 new keys instead of on every request. 120 leaves room for a few tabs behind one
+  address: a tab whose stream keeps failing polls about 26 times a minute.
+- **playout.message.** Gone from `getPublicChannelSnapshot` and from the `PublicChannelSnapshot` type, so
+  from the JSON, the SSE stream and the server-rendered `/channel` alike; `/channel` never showed it (the
+  viewer-language test now feeds an old payload that still carries it). The contract table in
+  `docs/operations.md` names the stable fields; `overlay`, `engagement`, `activeScene`, `queuedAssets` and
+  `queueItems` are still sent but outside the contract. B5 builds its snapshot from
+  `createInitialSeedState()` (`packages/db`), because the `createState()` fixture is local to
+  `ops-state.test.ts`; the ops-state case for the removal uses `createState()`.
+- **Tests on the old code.** `security-headers.test.ts`: without the middleware the import fails; with the
+  old `next.config.ts` 3 of 5 fail (`expected [] to have a length of 1`). With the old `route.ts`,
+  `state.ts` and `live-broadcast.ts`: 9 of 38 route and snapshot tests fail, B7 by its timeout (20 000
+  uncached reads). The `rate-limit.test.ts` B7 case cannot fail on main except by the missing factory: it
+  guards against a route moved onto the shared store, shown red in a run with that change.
+- **Owner questions** (recommendation first): keep HSTS without `includeSubDomains`/`preload` (yes; a
+  proxy can widen it; a browser keeps it a year, also across a reverse repin); a report endpoint for the report-only policy (none); when to enforce the script
+  policy and widen it beyond `/channel` (after one candidate without a console report on the DUT); drop
+  `overlay`, `engagement` (recent chat and alerts), `activeScene`, `queuedAssets` and `queueItems` from the
+  public answer (recommended: yes, a later milestone; `/channel` reads none of them).
+- **Left (outside the milestone).** The server render of `/channel` (`apps/web/app/channel/page.tsx`) still reads the
+  state on every page load, uncached. The SSE stream reads the state for each connection every 5 s (the
+  audit's "share one snapshot across connections", `apps/web/lib/server/sse.ts`, M127's area). Behind
+  Cloudflare and Traefik the limit keys on the address the nearest proxy wrote, a Cloudflare edge, and
+  Cloudflare does not cache this path without a Cache Rule: viewers behind one edge share 120 a minute
+  (the page keeps its last snapshot on a `429`); the DUT check through the public host and the access log
+  show it. A direct caller is keyed on its socket address (Next.js writes it into `X-Forwarded-For`). The
+  sign-in store still sorts the whole map on every request once it is over its
+  bound (about 0.4 ms each at 10 000 keys). Whether Traefik's `headers` middleware replaces a header the
+  app set was not measured; the doc says so, gives the `curl -sI` check, and the DUT check covers the real
+  proxy. `apps/web/lib/server/rate-limit.ts` is shared with M127's sign-in work: whichever merges second
+  builds on `createRateLimiter`. Next.js's own trailing-slash redirect (a 308 from `/login/` to `/login`)
+  carries none of the five headers, since Next.js answers it like a `redirects()` entry; the final review
+  found it, the doc names it, and doing that redirect in the middleware for every path was not worth it.
+
 ### Suggestions 2026-10-04 to M112-M124, then M125
 
 Moved out of `PLANS.md`, text unchanged apart from the archive path.

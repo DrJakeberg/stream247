@@ -4,6 +4,7 @@ import {
   TWO_FACTOR_RATE_LIMIT,
   clearAllRateLimits,
   consumeRateLimit,
+  createRateLimiter,
   getClientIdentifier,
   resetRateLimit
 } from "../../apps/web/lib/server/rate-limit.js";
@@ -99,6 +100,53 @@ describe("memory bounds", () => {
 
     // A later call prunes; the old key starts fresh rather than carrying a stale count.
     expect(consumeRateLimit("old", rule, start + 120_000).remaining).toBe(2);
+  });
+
+  it("M128: a limiter of its own cannot evict the sign-in buckets, however many keys it tracks", () => {
+    const loginKey = "login:owner@example.com:192.0.2.50";
+    for (let i = 0; i < 10; i++) {
+      consumeRateLimit(loginKey, LOGIN_RATE_LIMIT, start);
+    }
+
+    // Late in the sign-in window, so the login bucket would be the first evicted from a shared map.
+    const later = start + 14.5 * 60_000;
+    const publicLimiter = createRateLimiter(10_000, 9_000);
+    for (let i = 0; i < 20_000; i++) {
+      publicLimiter.consume(`channel-live:address-${String(i)}`, { limit: 120, windowMs: 60_000 }, later);
+    }
+
+    // Pruning runs before the new key is stored, so the bound is exceeded by at most that one key.
+    expect(publicLimiter.size()).toBeLessThanOrEqual(10_001);
+    expect(consumeRateLimit(loginKey, LOGIN_RATE_LIMIT, later).allowed).toBe(false);
+  });
+
+  it("M128: a limiter that keeps fewer keys after eviction evicts in batches, oldest first", () => {
+    const batched = createRateLimiter(100, 90);
+    for (let i = 0; i < 101; i++) {
+      batched.consume(`k-${String(i)}`, rule, start + i);
+    }
+    expect(batched.size()).toBe(101);
+
+    batched.consume("k-new", rule, start + 200);
+    expect(batched.size()).toBe(91);
+    // The oldest-expiring went first; the newest are still counted.
+    batched.consume("k-100", rule, start + 200);
+    expect(batched.consume("k-100", rule, start + 200).remaining).toBe(0);
+    expect(batched.consume("k-0", rule, start + 200).remaining).toBe(2);
+  });
+
+  it("M128: a limiter of its own keeps its own counts, reset and clear", () => {
+    const own = createRateLimiter();
+    for (let i = 0; i < 3; i++) {
+      own.consume("k", rule, start);
+    }
+
+    expect(own.consume("k", rule, start).allowed).toBe(false);
+    expect(consumeRateLimit("k", rule, start).allowed).toBe(true);
+    own.reset("k");
+    expect(own.consume("k", rule, start).allowed).toBe(true);
+    own.clear();
+    expect(own.size()).toBe(0);
   });
 });
 

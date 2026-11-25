@@ -932,6 +932,21 @@ describe("ops state helpers", () => {
     );
   });
 
+  it("M128: leaves the operator's status text out of the public snapshot", () => {
+    const base = createState();
+    const snapshot = getPublicChannelSnapshot({ ...base, playout: { ...base.playout, message: "Operator note 42" } });
+
+    expect(snapshot.playout).not.toHaveProperty("message");
+    expect(JSON.stringify(snapshot)).not.toContain("Operator note 42");
+    const full = getBroadcastSnapshot(base).playout;
+    expect(snapshot.playout).toEqual({
+      status: full.status,
+      currentTitle: full.currentTitle,
+      transitionState: full.transitionState,
+      overrideMode: full.overrideMode
+    });
+  });
+
   it("M100: gives the public page the item on air with its start and length, and the block when the start is stale", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-07T10:30:00.000Z"));

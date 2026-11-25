@@ -12,8 +12,9 @@ they are small, security- or correctness-related and fit the owner's security au
 For the design part only: 23, 24 and 25 together (one header, state badges, the existing button tiers),
 because they reuse tokens and classes that already exist.
 
-Status: on 2026-11-25 the owner asked for the list to be filed here, and for 23 to 47 to be appended;
-no item is named yet.
+Status: on 2026-11-25 the owner asked for the list to be filed here, and for 23 to 47 to be appended.
+The same day the owner named 2, 3 and 4 ("ja klingt gut"): 2 and 4 are done by M128; 3 goes into the admin
+milestone M129, because it changes UI text.
 
 ## Viewers and platform rules
 

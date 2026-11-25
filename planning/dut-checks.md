@@ -445,3 +445,37 @@ entries under its *DUT checks of 2.3.1 (run)*; the M107 entry below did not run 
   SQL
   ssh dut 'docker exec stream247-postgres-1 psql -U stream247 -d stream247 -At -c "SELECT status, COUNT(*) FROM incidents GROUP BY status"'
   ```
+
+- M128, after the repin: every answer carries the five security headers exactly once, behind the proxy in
+  front of `web` too (a proxy that adds its own copy sends two). Passes when the first command prints each
+  of the five lines once with the values of *Security Headers* in `docs/deployment.md`, plus one
+  `content-security-policy-report-only` line, and the second command prints the same five once each (run
+  from any machine; `<public host>` is the channel's public name). A header printed twice by the second
+  command means the proxy sets it as well: name the proxy and the header in the result (the remedy is in
+  the same section).
+
+  ```sh
+  ssh dut 'docker exec stream247-web-1 node -e "fetch(\"http://127.0.0.1:3000/channel\").then((r) => r.headers.forEach((v, k) => console.log(k + \": \" + v)))"' | grep -i -E "strict-transport|x-frame|content-security|x-content-type|referrer-policy"
+  curl -sI https://<public host>/channel | grep -i -E "strict-transport|x-frame|content-security|x-content-type|referrer-policy"
+  ```
+
+- M128, after the repin: `/channel` still works under its report-only policy. Passes when the page shows *Now*
+  and *Up next*, the live indicator follows the stream, and the browser's developer console on
+  `/channel` (desktop browser, one reload, a minute open) shows no message containing "Content Security
+  Policy". A report there blocks nothing; copy its text into the result.
+
+- M128, after the repin: the public status JSON is cached, limited and without the operator's status text.
+  Passes when the first command prints `0` (no `message` under `playout`), the second prints two equal
+  `generatedAt` lines (two reads in one process; on a mismatch the first read fell at the end of a 5-second
+  window: run it once more), the third, run a minute after the first two, prints `{"200":120,"429":1}`
+  (inside the container Next.js keys the request on its socket address, the loopback, which no viewer
+  behind the proxy shares; a count of `200` below 120 means something else polled from there in the same
+  minute: run it again a minute later), and the fourth, from any machine, prints `200` through the public
+  host.
+
+  ```sh
+  ssh dut 'docker exec stream247-web-1 wget -qO- http://127.0.0.1:3000/api/channel/live' | grep -o '"playout":{[^}]*}' | grep -c '"message"'
+  ssh dut 'docker exec stream247-web-1 node -e "(async () => { for (let i = 0; i < 2; i++) { const j = await (await fetch(\"http://127.0.0.1:3000/api/channel/live\")).json(); console.log(j.generatedAt); } })()"'
+  ssh dut 'docker exec stream247-web-1 node -e "(async () => { const n = {}; for (let i = 0; i < 121; i++) { const r = await fetch(\"http://127.0.0.1:3000/api/channel/live\"); n[r.status] = (n[r.status] ?? 0) + 1; } console.log(JSON.stringify(n)); })()"'
+  curl -s -o /dev/null -w '%{http_code}\n' https://<public host>/api/channel/live
+  ```

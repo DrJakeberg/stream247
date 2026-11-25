@@ -115,6 +115,43 @@ Editing the local `docker-compose.yml` or `.env.production.example` does not cha
   is published on `127.0.0.1` only by default. Do not set `STREAM247_WEB_BIND=0.0.0.0` on a host
   reachable from the internet.
 
+### Security Headers (since M128)
+
+`web` sets these on every answer, pages, API routes, static assets, 404s and the redirects of the old admin
+paths (`/broadcast`, `/settings` and the like) alike. One answer carries none of them: the 308 with which
+Next.js itself drops a trailing slash (`/login/` to `/login`); the page it leads to does.
+
+- `Strict-Transport-Security: max-age=31536000`
+- `X-Frame-Options: DENY`
+- `Content-Security-Policy: frame-ancestors 'none'`
+- `X-Content-Type-Options: nosniff`
+- `Referrer-Policy: same-origin`
+
+The values are fixed at build time (`apps/web/lib/security-headers.ts`); there is no setting for them.
+
+- **HSTS** has no `includeSubDomains` and no `preload`: the app cannot know the other subdomains of the
+  host, and preload cannot be taken back quickly. Browsers ignore HSTS on plain-HTTP answers and on IP
+  addresses, so LAN access on `http://<ip>:3000` is unaffected. To widen it, set the header in the proxy.
+  A browser that has seen the header over HTTPS keeps it for a year from the last time it saw it, and
+  then upgrades every request to that host name to HTTPS, on any port: reach `web` on the LAN by its IP,
+  not by the public name on port 3000, and a lapsed certificate on that name cannot be clicked through.
+  A reverse repin to an older image does not undo it for those browsers.
+- **Framing.** No page of the product is meant to be loaded in a frame: the studio preview inlines its
+  SVG, and the on-air overlay is drawn by the worker, not by a browser source. Embedding `/channel` in
+  another site is refused by the browser.
+- **Report-only policy on `/channel`.** The public channel page also answers with
+  `Content-Security-Policy-Report-Only`: a script policy with a fresh nonce per request (`script-src 'self'
+  'nonce-…' 'strict-dynamic'`, `object-src 'none'`, `base-uri 'none'`, `connect-src 'self'`). It blocks
+  nothing; a violation shows as a console message containing "Content Security Policy" in the browser's
+  developer tools on `/channel`. There is no report endpoint.
+- **A proxy that sets the same headers.** Keep one source: either drop them in the proxy, or let the
+  proxy overwrite the app's values. Traefik's `headers` middleware (`stsSeconds`, `frameDeny`,
+  `contentTypeNosniff`, `referrerPolicy`, `contentSecurityPolicy`) is expected to replace a header the app
+  already set (by Traefik's documentation; not measured for this release, so check it with the `curl` line
+  below). nginx's `add_header` adds a second copy instead; pair it with `proxy_hide_header <name>;` for each header
+  it sets. The built-in Traefik profile adds none of them. Afterwards `curl -sI https://<host>/channel`
+  should list each header once.
+
 ## Secrets And Runtime Settings
 
 Belongs in `.env` (since M52 as pins, not requirements: `APP_URL` and `CHANNEL_TIMEZONE` are
@@ -1079,6 +1116,13 @@ What changes on air in the first hours, without touching a setting:
   more." A new incident deletes only resolved incidents beyond the newest 100: an open one stays however
   old it is (before, a run of new incidents could push an open critical one out unresolved), so the table
   can hold more than 100 rows while old incidents are open.
+- **M128.** Every answer of `web` carries five security headers, and `/channel` a report-only script policy
+  (*Security Headers* under *Reverse Proxy And URL Notes*). A proxy that sets the same headers keeps one source.
+  `/api/channel/live` no longer carries `playout.message`, answers from a 5-second shared cache and limits
+  each address to 120 requests a minute (`429` with `retry-after`). Behind a CDN, all viewers share the CDN's
+  address; see *The public status JSON* in `docs/operations.md`. No schema change: after a reverse repin the
+  headers and the limit are gone and the operator's status text is public again; browsers that saw the HSTS
+  header keep using HTTPS for that host name for a year all the same.
 
 #### Rollback to 2.3.1
 

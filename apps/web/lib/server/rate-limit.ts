@@ -34,35 +34,87 @@ const MAX_TRACKED_KEYS = 10_000;
 // immediately when the map is over its bound.
 const PRUNE_INTERVAL_MS = 30_000;
 
-const buckets = new Map<string, Bucket>();
-let lastPruneAt = 0;
+export type RateLimiter = {
+  consume(key: string, rule: RateLimitRule, nowMs?: number): RateLimitResult;
+  reset(key: string): void;
+  /** Test seam only. */
+  clear(): void;
+  size(): number;
+};
 
-function prune(nowMs: number): void {
-  const overBound = buckets.size > MAX_TRACKED_KEYS;
-  if (!overBound && nowMs - lastPruneAt < PRUNE_INTERVAL_MS) {
-    return;
-  }
+/**
+ * A limiter with a store of its own (M128).
+ *
+ * The sign-in limits share one store, and its bound evicts the oldest-expiring buckets first. A
+ * public, anonymous route whose callers rotate addresses would push the sign-in buckets out of a
+ * shared store, so such a route takes its own instance.
+ *
+ * `keepAfterEviction` below `maxKeys` evicts down to it once the store is over its bound, so a flood
+ * of new keys pays for the sort once per batch instead of once per request.
+ */
+export function createRateLimiter(maxKeys = MAX_TRACKED_KEYS, keepAfterEviction = maxKeys): RateLimiter {
+  const buckets = new Map<string, Bucket>();
+  let lastPruneAt = 0;
 
-  lastPruneAt = nowMs;
+  function prune(nowMs: number): void {
+    const overBound = buckets.size > maxKeys;
+    if (!overBound && nowMs - lastPruneAt < PRUNE_INTERVAL_MS) {
+      return;
+    }
 
-  for (const [key, bucket] of buckets) {
-    if (bucket.resetAt <= nowMs) {
+    lastPruneAt = nowMs;
+
+    for (const [key, bucket] of buckets) {
+      if (bucket.resetAt <= nowMs) {
+        buckets.delete(key);
+      }
+    }
+
+    if (buckets.size <= maxKeys) {
+      return;
+    }
+
+    // Still oversized after dropping expired entries: evict oldest-expiring first. Under this much
+    // pressure the deployment is being attacked, and dropping tracking for the least recently
+    // relevant key is preferable to unbounded growth.
+    const ordered = [...buckets.entries()].sort((a, b) => a[1].resetAt - b[1].resetAt);
+    for (const [key] of ordered.slice(0, buckets.size - Math.min(keepAfterEviction, maxKeys))) {
       buckets.delete(key);
     }
   }
 
-  if (buckets.size <= MAX_TRACKED_KEYS) {
-    return;
-  }
+  return {
+    consume(key, rule, nowMs = Date.now()) {
+      prune(nowMs);
 
-  // Still oversized after dropping expired entries: evict oldest-expiring first. Under this much
-  // pressure the deployment is being attacked, and dropping tracking for the least recently
-  // relevant key is preferable to unbounded growth.
-  const ordered = [...buckets.entries()].sort((a, b) => a[1].resetAt - b[1].resetAt);
-  for (const [key] of ordered.slice(0, buckets.size - MAX_TRACKED_KEYS)) {
-    buckets.delete(key);
-  }
+      const existing = buckets.get(key);
+      const bucket = existing && existing.resetAt > nowMs ? existing : { count: 0, resetAt: nowMs + rule.windowMs };
+
+      bucket.count += 1;
+      buckets.set(key, bucket);
+
+      const allowed = bucket.count <= rule.limit;
+      return {
+        allowed,
+        remaining: Math.max(0, rule.limit - bucket.count),
+        retryAfterSeconds: allowed ? 0 : Math.max(1, Math.ceil((bucket.resetAt - nowMs) / 1000))
+      };
+    },
+    reset(key) {
+      buckets.delete(key);
+    },
+    clear() {
+      buckets.clear();
+      lastPruneAt = 0;
+    },
+    size() {
+      return buckets.size;
+    }
+  };
 }
+
+// The store of the sign-in, two-factor and relay limits.
+const authLimiter = createRateLimiter();
 
 /**
  * Records one attempt against `key` and reports whether it is allowed.
@@ -71,31 +123,17 @@ function prune(nowMs: number): void {
  * penalty that a determined attacker could keep resetting.
  */
 export function consumeRateLimit(key: string, rule: RateLimitRule, nowMs = Date.now()): RateLimitResult {
-  prune(nowMs);
-
-  const existing = buckets.get(key);
-  const bucket = existing && existing.resetAt > nowMs ? existing : { count: 0, resetAt: nowMs + rule.windowMs };
-
-  bucket.count += 1;
-  buckets.set(key, bucket);
-
-  const allowed = bucket.count <= rule.limit;
-  return {
-    allowed,
-    remaining: Math.max(0, rule.limit - bucket.count),
-    retryAfterSeconds: allowed ? 0 : Math.max(1, Math.ceil((bucket.resetAt - nowMs) / 1000))
-  };
+  return authLimiter.consume(key, rule, nowMs);
 }
 
 /** Clears a key after a genuine success, so one bad day does not lock a legitimate user out. */
 export function resetRateLimit(key: string): void {
-  buckets.delete(key);
+  authLimiter.reset(key);
 }
 
 /** Test seam only. */
 export function clearAllRateLimits(): void {
-  buckets.clear();
-  lastPruneAt = 0;
+  authLimiter.clear();
 }
 
 /**

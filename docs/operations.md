@@ -852,6 +852,57 @@ While nothing plays, the on-air next card names the next block and adds how soon
 `20:00-22:00 · in 25 min` under an hour, `· in 3 h` under a day. While a video plays it names the next
 video instead (since M107, below).
 
+### The public status JSON: `/api/channel/live` (since M128)
+
+`/channel` loads `GET /api/channel/live` once, then follows `/api/channel/live/stream` (server-sent events,
+a `state` event every 5 seconds) and polls the JSON every 10 seconds only while the stream is down. Both
+are public and carry the same snapshot. The fields below are a contract that only ever gains fields;
+`playout.message` left the answer when the contract was written. Times are ISO 8601 instants in UTC.
+
+| Field | Type | States |
+| --- | --- | --- |
+| `generatedAt` | string | when the server built the snapshot |
+| `timeZone` | string | the channel's IANA zone (`Europe/Berlin`) |
+| `locale` | string | `en`, `de` |
+| `timeZoneLabel` | string | the zone as a viewer names it, in `locale` (`Central European Time`) |
+| `watchUrl` | string | the Twitch channel URL, or empty without a usable broadcaster login |
+| `playout.status` | string | `idle`, `starting`, `running`, `switching`, `degraded`, `recovering`, `failed`, `standby`, `reconnecting` |
+| `playout.currentTitle` | string | the title on air, or empty |
+| `playout.transitionState` | string | `idle`, `prefetching`, `ready`, `switching` |
+| `playout.overrideMode` | string | `schedule`, `asset`, `fallback` |
+| `playout.message` | - | removed in M128: the operator's status text is not public |
+| `currentAsset` | object or null | the video on air, or `null` |
+| `nextAsset` | object or null | the video queued next, or `null` |
+| `currentScheduleItem` | object or null | the block the schedule has now, or `null` in a gap |
+| `nextScheduleItem` | object or null | the next block, or `null` |
+| `programme.now` | object or null | what *Now* shows, or `null` |
+| `programme.next` | array | *Up next*: the next 24 hours, one entry per block run |
+| `programme.week` | array | *The next 7 days* |
+
+The answer also carries `overlay`, `engagement` (recent chat and alert events included), `activeScene`,
+`queuedAssets` and `queueItems`. They are there today, `/channel` does not read them, and they are not
+part of the contract: build nothing on them.
+
+- **Cache:** the JSON answers from one body shared by every caller for 5 seconds (`cache-control: public,
+  max-age=` the seconds left), so polling cannot load the database: at most 12 state reads a minute. A
+  failed read is not cached: the answer is `503` with `{"message": "The channel status is unavailable
+  right now."}` and `cache-control: no-store`, the web log has `[channel-live] state read failed:`, and
+  the next request reads again.
+- **Limit:** 120 requests a minute per address, cached answers included. Beyond that the answer is `429`
+  with `{"message": "Too many requests. Try again shortly."}`, a `retry-after` header in seconds and
+  `cache-control: no-store`; `/channel` keeps its last snapshot meanwhile. The address is the last
+  `X-Forwarded-For` entry, the one the nearest proxy wrote (M125), as for the sign-in limits. Behind a CDN
+  or a second proxy that is the CDN's or proxy's own address, so the viewers behind one CDN edge share one
+  allowance; the limit itself has no setting. Cloudflare does not cache a path like `/api/channel/live` by
+  default: to let it carry the polling, add a Cache Rule for this path that respects the origin's
+  `max-age`, and watch the proxy's access log for `429` answers after an upgrade. A caller that reaches
+  `web` directly on port 3000 is keyed on its own socket address, which Next.js writes into
+  `X-Forwarded-For` when the request has none; only a request with neither that header nor `X-Real-IP`
+  would share the `unknown` allowance.
+- The limit has a store of its own, so a flood of addresses here cannot push the sign-in limits out.
+- The stream `/api/channel/live/stream` is neither cached nor limited by this; it reads the state for
+  each connection every 5 seconds.
+
 ### What the on-air Next card and `!next` name (since M107)
 
 The next card on the picture, the `Next:` / `Als Nächstes:` line of text mode and the slate, and the chat

@@ -79,13 +79,15 @@ function snapshot(locale: ViewerLocale, overrides: Partial<PublicChannelSnapshot
     overlay: {} as PublicChannelSnapshot["overlay"],
     engagement: {} as PublicChannelSnapshot["engagement"],
     activeScene: {} as PublicChannelSnapshot["activeScene"],
+    // A payload from before M128, which still carried the operator's status text: the view must not
+    // show it even when it arrives.
     playout: {
       status: "running",
       message: "Crash-loop protection is active.",
       currentTitle: "Replay standby",
       transitionState: "idle",
       overrideMode: "schedule"
-    },
+    } as PublicChannelSnapshot["playout"],
     currentAsset: null,
     nextAsset: null,
     queuedAssets: [],

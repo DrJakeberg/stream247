@@ -1623,7 +1623,6 @@ export function getPublicChannelSnapshot(state: AppState): PublicChannelSnapshot
     activeScene: snapshot.activeScene,
     playout: {
       status: snapshot.playout.status,
-      message: snapshot.playout.message,
       currentTitle: snapshot.playout.currentTitle,
       transitionState: snapshot.playout.transitionState,
       overrideMode: snapshot.playout.overrideMode
