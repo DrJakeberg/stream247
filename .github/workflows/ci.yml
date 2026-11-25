@@ -20,7 +20,10 @@ concurrency:
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    # Pinned: `ubuntu-latest` became Ubuntu 26.04 in November 2026, where Playwright 1.56.1 cannot install
+    # Chromium ("Playwright does not support chromium on ubuntu26.04-x64"). Move the pin together with
+    # Playwright and the design baselines, never alone.
+    runs-on: ubuntu-24.04
     # Without this the job inherits GitHub's 6-hour default. A hung apt mirror left a run wedged
     # for over an hour on the ffmpeg install, and because runs are serialised that blocked every
     # later commit behind it. Fail in a useful timeframe instead. A green run takes about 36 minutes
@@ -231,7 +234,8 @@ jobs:
   publish:
     needs: validate
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    # Pinned, see the validate job.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
