@@ -19,6 +19,12 @@ import {
   publishOverlayDraftRecord,
   appendAuditEvent,
   appendPresenceWindowRecord,
+  claimOwnerAndInitialize,
+  bindTeamAccessGrantRecord,
+  bumpUserSessionEpoch,
+  recordUserSignIn,
+  setOwnerPasswordHash,
+  updateUserTwoFactorRecord,
   readAppState,
   deleteTeamAccessGrantRecord,
   upsertTeamAccessGrantRecord,
@@ -49,6 +55,10 @@ import {
   updateAssetMetadataRecords,
   updateAssetPlaybackProbeRecords,
   updateDestinationRecord,
+  updateDestinationStatusRecord,
+  deleteDestinationRecord,
+  recordSourceSyncOutcomes,
+  upsertSources,
   updateEngagementSettingsRecord,
   updateOutputSettingsRecord,
   updatePoolCursor,
@@ -69,7 +79,20 @@ import {
   markChatViewerRequestsPlayed,
   writeAppState,
   writeChatOverlayMessagesRecord,
-  writeChatSkipVoteRecord
+  writeChatSkipVoteRecord,
+  appendEngagementEventRecord,
+  deleteChatEngagementEvents,
+  ManagedConfigKeyMismatchError,
+  patchTwitchBroadcasterConnectionRecord,
+  patchTwitchConnectionRecord,
+  readManagedConfigRecord,
+  twitchConnectionGeneration,
+  updateManagedConfigRecord,
+  updateTwitchBroadcasterConnectionRecord,
+  updateTwitchConnectionRecord,
+  type ManagedConfigRecord,
+  type TwitchBroadcasterConnection,
+  type TwitchConnection
 } from "@stream247/db";
 import { addPendingPlayoutAction, CHAPTER_PROBE_RECHECK_CAP, DEFAULT_OVERLAY_SCENE_LAYER_ORDER, isProvisionalProbedChapterList, type AsRunRecord } from "@stream247/core";
 import { decideCycleEndPendingAction, decideCycleEndRestartFlag } from "../../apps/worker/src/playout-boundary";
@@ -3692,6 +3715,612 @@ describe.sequential("database roundtrip", () => {
       expect((await readAppState()).incidents.find((incident) => incident.fingerprint === "test.m126.open")?.status).toBe("open");
 
       await executeSql("DELETE FROM incidents WHERE fingerprint LIKE 'test.m126.%';");
+    }, 60_000);
+  });
+
+  it("lets exactly one of two overlapping first-run claims become the owner (M127)", async () => {
+    await ensureDatabaseWithRetry();
+    // The suite shares one database, so the owner and the users are set aside and put back afterwards.
+    await executeSql(`
+      DROP TABLE IF EXISTS m127_users_backup, m127_system_state_backup;
+      CREATE TABLE m127_users_backup AS SELECT * FROM users;
+      CREATE TABLE m127_system_state_backup AS SELECT * FROM system_state;
+      DELETE FROM users;
+      UPDATE system_state SET initialized = FALSE, owner_email = '', owner_password_hash = '', owner_created_at = ''
+        WHERE singleton_id = 1;
+    `);
+
+    try {
+      const createdAt = "2026-11-25T12:00:00.000Z";
+      const claim = (email: string) =>
+        claimOwnerAndInitialize(
+          { email, passwordHash: `hash-${email}`, createdAt },
+          {
+            id: `user_${email.split("@")[0]}`,
+            email,
+            displayName: "Owner",
+            authProvider: "local",
+            role: "owner",
+            twitchUserId: "",
+            twitchLogin: "",
+            passwordHash: `hash-${email}`,
+            createdAt,
+            lastLoginAt: createdAt
+          }
+        );
+
+      // Two setup requests that both got past the route's "not initialized yet" read.
+      const results = await Promise.all([claim("first@example.com"), claim("second@example.com")]);
+      expect(results.filter(Boolean)).toHaveLength(1);
+      const winner = results[0] ? "first@example.com" : "second@example.com";
+
+      expect(await executeSql("SELECT COUNT(*) FROM users;")).toBe("1");
+      expect(await executeSql("SELECT email || '|' || role || '|' || password_hash FROM users;")).toBe(
+        `${winner}|owner|hash-${winner}`
+      );
+      expect(
+        await executeSql("SELECT initialized::text || '|' || owner_email || '|' || owner_password_hash FROM system_state;")
+      ).toBe(`true|${winner}|hash-${winner}`);
+
+      // A claim after the fact changes nothing either.
+      expect(await claim("third@example.com")).toBe(false);
+      expect(await executeSql("SELECT COUNT(*) FROM users;")).toBe("1");
+      expect(await executeSql("SELECT owner_email FROM system_state;")).toBe(winner);
+    } finally {
+      await executeSql(`
+        DELETE FROM users;
+        INSERT INTO users SELECT * FROM m127_users_backup;
+        UPDATE system_state SET initialized = b.initialized, owner_email = b.owner_email,
+          owner_password_hash = b.owner_password_hash, owner_created_at = b.owner_created_at
+          FROM m127_system_state_backup b WHERE system_state.singleton_id = b.singleton_id;
+        DROP TABLE m127_users_backup, m127_system_state_backup;
+      `);
+    }
+  }, 60_000);
+
+  describe("accounts and sessions write only what they change (M127)", () => {
+    const createdAt = "2026-11-25T12:00:00.000Z";
+    const localUser = (id: string, extra: Partial<Parameters<typeof upsertUserRecord>[0]> = {}) => ({
+      id,
+      email: `${id}@example.com`,
+      displayName: id,
+      authProvider: "local" as const,
+      role: "operator" as const,
+      twitchUserId: "",
+      twitchLogin: "",
+      passwordHash: "hash-one",
+      createdAt,
+      lastLoginAt: createdAt,
+      ...extra
+    });
+    const storedUser = async (id: string) => (await readAppState()).users.find((user) => user.id === id);
+
+    it("adds the session epoch to a database without it, advances it, and no other write takes it back", async () => {
+      await ensureDatabaseWithRetry();
+      await executeSql(`
+        ALTER TABLE users DROP COLUMN IF EXISTS session_epoch;
+        DELETE FROM schema_migrations WHERE id = '20261125_001_user_session_epoch';
+      `);
+      await resetDatabaseConnectionsForTests();
+      await ensureDatabaseWithRetry();
+      expect(
+        await executeSql("SELECT column_default || '|' || is_nullable FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'session_epoch';")
+      ).toBe("0|NO");
+
+      const user = localUser("user_m127_epoch");
+      await upsertUserRecord(user);
+      const staleState = await readAppState();
+      const snapshot = staleState.users.find((entry) => entry.id === user.id);
+      expect(snapshot?.sessionEpoch).toBe(0);
+
+      await bumpUserSessionEpoch(user.id);
+      expect((await storedUser(user.id))?.sessionEpoch).toBe(1);
+      // Full-state writes and a whole-row user write, from state read before the sign-out.
+      await updateAppState((state) => state);
+      await writeAppState(staleState);
+      await upsertUserRecord({ ...snapshot!, lastLoginAt: "2026-11-25T13:00:00.000Z" });
+      expect(await executeSql(`SELECT session_epoch FROM users WHERE id = '${user.id}';`)).toBe("1");
+
+      await executeSql(`DELETE FROM users WHERE id = '${user.id}';`);
+    }, 60_000);
+
+    it("records a sign-in without writing back a password changed since the sign-in read the row", async () => {
+      await ensureDatabaseWithRetry();
+      await executeSql(`
+        DROP TABLE IF EXISTS m127_accounts_users_backup, m127_accounts_system_state_backup;
+        CREATE TABLE m127_accounts_users_backup AS SELECT * FROM users;
+        CREATE TABLE m127_accounts_system_state_backup AS SELECT * FROM system_state;
+        DELETE FROM users;
+      `);
+      try {
+        const owner = localUser("user_m127_owner", { email: "m127-owner@example.com", role: "owner", passwordHash: "hash-one" });
+        expect(await claimOwnerAndInitializeOrUpdate(owner)).toBe(true);
+        const snapshot = await storedUser(owner.id);
+        expect(snapshot?.passwordHash).toBe("hash-one");
+
+        // The password changes after the sign-in read the row and before it records the sign-in.
+        expect(await setOwnerPasswordHash("hash-two")).toBe(owner.email);
+        expect(await recordUserSignIn(owner.id, "2026-11-25T14:00:00.000Z")).toBe(true);
+        expect(await executeSql(`SELECT password_hash || '|' || last_login_at FROM users WHERE id = '${owner.id}';`)).toBe(
+          "hash-two|2026-11-25T14:00:00.000Z"
+        );
+        expect(await recordUserSignIn("user_m127_missing", createdAt)).toBe(false);
+        expect(await executeSql("SELECT COUNT(*) FROM users WHERE id = 'user_m127_missing';")).toBe("0");
+
+        // The contrast: the whole-row write the sign-in used before puts the old password back.
+        await upsertUserRecord({ ...snapshot!, lastLoginAt: "2026-11-25T14:00:00.000Z" });
+        expect(await executeSql(`SELECT password_hash FROM users WHERE id = '${owner.id}';`)).toBe("hash-one");
+      } finally {
+        await executeSql(`
+          DELETE FROM users;
+          INSERT INTO users SELECT * FROM m127_accounts_users_backup;
+          UPDATE system_state SET initialized = b.initialized, owner_email = b.owner_email,
+            owner_password_hash = b.owner_password_hash, owner_created_at = b.owner_created_at
+            FROM m127_accounts_system_state_backup b WHERE system_state.singleton_id = b.singleton_id;
+          DROP TABLE m127_accounts_users_backup, m127_accounts_system_state_backup;
+        `);
+      }
+    }, 60_000);
+
+    it("changes the 2FA columns only while the stored row is what the route checked", async () => {
+      await ensureDatabaseWithRetry();
+      const user = localUser("user_m127_2fa", { twoFactorEnabled: true, twoFactorSecret: "SECRETONE", twoFactorConfirmedAt: createdAt });
+      await upsertUserRecord(user);
+      const columns = () =>
+        executeSql(`SELECT two_factor_enabled::text || '|' || two_factor_confirmed_at || '|' || password_hash FROM users WHERE id = '${user.id}';`);
+
+      // Setup while 2FA is on (finding 1): refused, nothing changes.
+      expect(await updateUserTwoFactorRecord(user.id, { enabled: false }, { enabled: false, secret: "SECRETNEW", confirmedAt: "" })).toBe(false);
+      expect(await columns()).toBe(`true|${createdAt}|hash-one`);
+      expect((await storedUser(user.id))?.twoFactorSecret).toBe("SECRETONE");
+
+      // A disable checked against a secret that was replaced since: refused.
+      expect(await updateUserTwoFactorRecord(user.id, { enabled: true, secret: "SECRETOLD" }, { enabled: false, confirmedAt: "" })).toBe(false);
+      expect(await columns()).toBe(`true|${createdAt}|hash-one`);
+
+      // A matching disable writes only the 2FA columns: a password changed meanwhile stays.
+      await executeSql(`UPDATE users SET password_hash = 'hash-two' WHERE id = '${user.id}';`);
+      expect(await updateUserTwoFactorRecord(user.id, { enabled: true, secret: "SECRETONE" }, { enabled: false, confirmedAt: "" })).toBe(true);
+      expect(await columns()).toBe("false||hash-two");
+      expect((await storedUser(user.id))?.twoFactorSecret).toBe("SECRETONE");
+
+      // Setup and confirm with 2FA off.
+      expect(await updateUserTwoFactorRecord(user.id, { enabled: false }, { enabled: false, secret: "SECRETNEW", confirmedAt: "" })).toBe(true);
+      expect((await storedUser(user.id))?.twoFactorSecret).toBe("SECRETNEW");
+      expect(await updateUserTwoFactorRecord(user.id, { enabled: false, secret: "SECRETONE" }, { enabled: true, confirmedAt: createdAt })).toBe(false);
+      expect(await updateUserTwoFactorRecord(user.id, { enabled: false, secret: "SECRETNEW" }, { enabled: true, confirmedAt: createdAt })).toBe(true);
+      expect(await columns()).toBe(`true|${createdAt}|hash-two`);
+
+      await executeSql(`DELETE FROM users WHERE id = '${user.id}';`);
+    }, 60_000);
+
+    it("lets setup replace a turned-off second factor the current APP_SECRET cannot read, and nothing else", async () => {
+      await ensureDatabaseWithRetry();
+      const secretBefore = process.env.APP_SECRET;
+      const user = localUser("user_m127_2fa_key", { twoFactorEnabled: true, twoFactorSecret: "SECRETON", twoFactorConfirmedAt: createdAt });
+      const off = localUser("user_m127_2fa_key_off", { twoFactorEnabled: false, twoFactorSecret: "SECRETLEFT" });
+      try {
+        process.env.APP_SECRET = "stream247-m127-2fa-key";
+        await resetDatabaseConnectionsForTests();
+        await ensureDatabaseWithRetry();
+        await upsertUserRecord(user);
+        await upsertUserRecord(off);
+        const sealed = await executeSql(`SELECT two_factor_secret FROM users WHERE id = '${user.id}';`);
+
+        process.env.APP_SECRET = "stream247-m127-2fa-key-rotated";
+        await resetDatabaseConnectionsForTests();
+        await ensureDatabaseWithRetry();
+
+        // 2FA on: the unreadable secret may be the only copy, so nothing writes over it.
+        expect(await updateUserTwoFactorRecord(user.id, { enabled: false }, { enabled: false, secret: "SECRETNEW", confirmedAt: "" })).toBe(false);
+        expect(await updateUserTwoFactorRecord(user.id, { enabled: true }, { enabled: true, secret: "SECRETNEW", confirmedAt: createdAt })).toBe(false);
+        expect(await executeSql(`SELECT two_factor_secret FROM users WHERE id = '${user.id}';`)).toBe(sealed);
+
+        // 2FA off: the leftover gates nothing, and setup can start over under the current key.
+        expect(await updateUserTwoFactorRecord(off.id, { enabled: false }, { enabled: false, secret: "SECRETNEW", confirmedAt: "" })).toBe(true);
+        expect((await storedUser(off.id))?.twoFactorSecret).toBe("SECRETNEW");
+      } finally {
+        process.env.APP_SECRET = secretBefore;
+        await resetDatabaseConnectionsForTests();
+        await ensureDatabaseWithRetry();
+        await executeSql(`DELETE FROM users WHERE id IN ('${user.id}', '${off.id}');`);
+      }
+    }, 60_000);
+
+    it("binds a team grant only while it exists unbound or bound to the same account, and never its role", async () => {
+      await ensureDatabaseWithRetry();
+      const grant = { id: "grant_m127", twitchLogin: "member_m127", twitchUserId: "", role: "admin" as const, createdAt, createdBy: "user_owner" };
+      const row = () => executeSql(`SELECT twitch_user_id || '|' || twitch_login || '|' || role FROM team_access_grants WHERE id = '${grant.id}';`);
+
+      // Removed while the member was signing in.
+      await upsertTeamAccessGrantRecord(grant);
+      await deleteTeamAccessGrantRecord(grant.id);
+      expect(await bindTeamAccessGrantRecord(grant.id, "tw-m127", "member_m127")).toBe(false);
+      expect(await row()).toBe("");
+
+      // Lowered while the member was signing in.
+      await upsertTeamAccessGrantRecord(grant);
+      await upsertTeamAccessGrantRecord({ ...grant, role: "viewer" });
+      expect(await bindTeamAccessGrantRecord(grant.id, "tw-m127", "member_m127")).toBe(true);
+      expect(await row()).toBe("tw-m127|member_m127|viewer");
+
+      // A rename moves the login along; another account never takes the grant over.
+      expect(await bindTeamAccessGrantRecord(grant.id, "tw-m127", "member_renamed")).toBe(true);
+      expect(await bindTeamAccessGrantRecord(grant.id, "tw-other", "member_renamed")).toBe(false);
+      expect(await row()).toBe("tw-m127|member_renamed|viewer");
+
+      await deleteTeamAccessGrantRecord(grant.id);
+    }, 60_000);
+
+    async function claimOwnerAndInitializeOrUpdate(owner: ReturnType<typeof localUser>): Promise<boolean> {
+      await executeSql(`
+        UPDATE system_state SET initialized = FALSE, owner_email = '', owner_password_hash = '', owner_created_at = ''
+          WHERE singleton_id = 1;
+      `);
+      return claimOwnerAndInitialize({ email: owner.email, passwordHash: owner.passwordHash, createdAt }, owner);
+    }
+  });
+
+  describe("managed config, Twitch connection writes and moderated chat (M127)", () => {
+    const at = (second: number) => `2026-11-25T12:00:${String(second).padStart(2, "0")}.000Z`;
+
+    it("merges each managed-config save onto the record as stored, so concurrent saves all stick", async () => {
+      await ensureDatabaseWithRetry();
+      // An earlier case leaves the payload under a rotated key; this one starts from an empty row.
+      const before = await executeSql("SELECT encrypted_payload FROM managed_config WHERE singleton_id = 1;");
+      await executeSql("DELETE FROM managed_config WHERE singleton_id = 1;");
+      await updateManagedConfigRecord((current) => ({ ...current, twitchEventsubSecret: "eventsub-old" }));
+
+      // Eight forms saved at the same moment, each touching one field.
+      const saves: Array<Partial<ManagedConfigRecord>> = [
+        { ffmpegPreset: "faster" },
+        { ffmpegMaxrate: "6000k" },
+        { ffmpegBufsize: "12000k" },
+        { ffmpegAudioBitrate: "160k" },
+        { twitchEventsubSecret: "eventsub-rotated" },
+        { twitchClientSecret: "client-rotated" },
+        { smtpPassword: "smtp-rotated" },
+        { discordWebhookUrl: "https://discord.example/rotated" }
+      ];
+      await Promise.all(saves.map((save) => updateManagedConfigRecord((current) => ({ ...current, ...save }))));
+      expect(await readManagedConfigRecord()).toMatchObject(Object.assign({}, ...saves));
+
+      // The shape every route had before M127: a record built from a snapshot taken outside the lock.
+      // The rotation that commits after the snapshot is reverted.
+      const snapshot = await readManagedConfigRecord();
+      await updateManagedConfigRecord((current) => ({ ...current, twitchEventsubSecret: "eventsub-rotated-again" }));
+      await updateManagedConfigRecord(() => ({ ...snapshot, ffmpegPreset: "veryfast" }));
+      expect((await readManagedConfigRecord()).twitchEventsubSecret).toBe("eventsub-rotated");
+
+      if (before) {
+        await executeSql(`UPDATE managed_config SET encrypted_payload = '${before}' WHERE singleton_id = 1;`);
+      } else {
+        await executeSql("DELETE FROM managed_config WHERE singleton_id = 1;");
+      }
+    }, 60_000);
+
+    it("refuses a managed-config save over a payload the current APP_SECRET cannot open, and writes nothing", async () => {
+      await ensureDatabaseWithRetry();
+      const secretBefore = process.env.APP_SECRET;
+      const payloadBefore = await executeSql("SELECT encrypted_payload FROM managed_config WHERE singleton_id = 1;");
+      try {
+        process.env.APP_SECRET = "stream247-m127-key-a";
+        await resetDatabaseConnectionsForTests();
+        await ensureDatabaseWithRetry();
+        await executeSql("DELETE FROM managed_config WHERE singleton_id = 1;");
+        await updateManagedConfigRecord((current) => ({ ...current, twitchClientSecret: "keep", smtpPassword: "keep-smtp" }));
+        const sealed = await executeSql("SELECT encrypted_payload FROM managed_config WHERE singleton_id = 1;");
+
+        process.env.APP_SECRET = "stream247-m127-key-a-rotated";
+        await resetDatabaseConnectionsForTests();
+        await ensureDatabaseWithRetry();
+        // What the encoder form sends; before M127 it stored the defaults' empty secrets under the new key.
+        await expect(
+          updateManagedConfigRecord((current) => ({ ...current, ffmpegPreset: "veryfast" }))
+        ).rejects.toBeInstanceOf(ManagedConfigKeyMismatchError);
+        expect(await executeSql("SELECT encrypted_payload FROM managed_config WHERE singleton_id = 1;")).toBe(sealed);
+
+        process.env.APP_SECRET = "stream247-m127-key-a";
+        await resetDatabaseConnectionsForTests();
+        await ensureDatabaseWithRetry();
+        expect(await readManagedConfigRecord()).toMatchObject({ twitchClientSecret: "keep", smtpPassword: "keep-smtp" });
+      } finally {
+        process.env.APP_SECRET = secretBefore;
+        await resetDatabaseConnectionsForTests();
+        await ensureDatabaseWithRetry();
+        await executeSql(
+          payloadBefore
+            ? `UPDATE managed_config SET encrypted_payload = '${payloadBefore}' WHERE singleton_id = 1;`
+            : "DELETE FROM managed_config WHERE singleton_id = 1;"
+        );
+      }
+    }, 60_000);
+
+    const identity = (broadcasterId: string, connectedAt: string): TwitchConnection => ({
+      status: "connected",
+      broadcasterId,
+      broadcasterLogin: `login_${broadcasterId}`,
+      accessToken: `access_${broadcasterId}`,
+      refreshToken: `refresh_${broadcasterId}`,
+      connectedAt,
+      tokenExpiresAt: "",
+      lastRefreshAt: "",
+      lastMetadataSyncAt: "",
+      lastSyncedTitle: "",
+      lastSyncedCategoryName: "",
+      lastSyncedCategoryId: "",
+      lastScheduleSyncAt: "",
+      liveStatus: "unknown",
+      viewerCount: 0,
+      startedAt: "",
+      error: ""
+    });
+    const emptySlot: TwitchBroadcasterConnection = {
+      status: "not-connected",
+      broadcasterId: "",
+      broadcasterLogin: "",
+      accessToken: "",
+      refreshToken: "",
+      connectedAt: "",
+      tokenExpiresAt: "",
+      lastRefreshAt: "",
+      error: ""
+    };
+
+    it("drops a worker write to the broadcaster slot once the operator disconnected it", async () => {
+      await ensureDatabaseWithRetry();
+      await updateTwitchBroadcasterConnectionRecord({
+        ...emptySlot,
+        status: "connected",
+        broadcasterId: "slot_a",
+        broadcasterLogin: "channel_a",
+        accessToken: "slot-access",
+        refreshToken: "slot-refresh",
+        connectedAt: at(1)
+      });
+      const read = (await readAppState()).twitchBroadcaster;
+
+      // The web disconnect commits while the worker waits on Twitch's token endpoint.
+      await updateTwitchBroadcasterConnectionRecord(emptySlot);
+      expect(
+        await patchTwitchBroadcasterConnectionRecord(twitchConnectionGeneration(read), {
+          accessToken: "slot-access-new",
+          refreshToken: "slot-refresh-new",
+          status: "connected",
+          error: ""
+        })
+      ).toBe(false);
+      expect(
+        await executeSql("SELECT status || '|' || broadcaster_id || '|' || access_token || '|' || refresh_token FROM twitch_broadcaster_connection;")
+      ).toBe("not-connected|||");
+    }, 60_000);
+
+    it("drops a worker write to the identity row after a rebind, and keeps a refresh made earlier in the cycle", async () => {
+      await ensureDatabaseWithRetry();
+      const row = () =>
+        executeSql("SELECT broadcaster_id || '|' || access_token || '|' || refresh_token || '|' || last_metadata_sync_at FROM twitch_connection;");
+
+      // Rebind: the cycle read account A, the operator connected account B meanwhile.
+      await updateTwitchConnectionRecord(identity("acct_a", at(2)));
+      const readA = (await readAppState()).twitch;
+      await updateTwitchConnectionRecord(identity("acct_b", at(3)));
+      expect(await patchTwitchConnectionRecord(twitchConnectionGeneration(readA), { status: "connected", lastMetadataSyncAt: at(4), error: "" })).toBe(false);
+      expect(await patchTwitchConnectionRecord(twitchConnectionGeneration(readA), { liveStatus: "unknown", viewerCount: 0, startedAt: "" })).toBe(false);
+      expect(await row()).toBe("acct_b|access_acct_b|refresh_acct_b|");
+
+      // Same connection: the refresh writes the tokens, the metadata sync from the cycle-start read
+      // writes only its own fields, and the refreshed refresh token stays.
+      const cycleStart = (await readAppState()).twitch;
+      expect(
+        await patchTwitchConnectionRecord(twitchConnectionGeneration(cycleStart), {
+          accessToken: "access_refreshed",
+          refreshToken: "refresh_refreshed",
+          status: "connected",
+          lastRefreshAt: at(5),
+          error: ""
+        })
+      ).toBe(true);
+      expect(
+        await patchTwitchConnectionRecord(twitchConnectionGeneration(cycleStart), {
+          status: "connected",
+          lastMetadataSyncAt: at(6),
+          lastSyncedTitle: "Title",
+          error: ""
+        })
+      ).toBe(true);
+      expect(await row()).toBe(`acct_b|access_refreshed|refresh_refreshed|${at(6)}`);
+      expect((await readAppState()).twitch).toMatchObject({ lastSyncedTitle: "Title", lastRefreshAt: at(5), connectedAt: at(3) });
+
+      // A disconnected identity row: the worker's live-status reset still applies to it.
+      await updateTwitchConnectionRecord({ ...identity("", ""), status: "not-connected", broadcasterLogin: "", accessToken: "", refreshToken: "", liveStatus: "live", viewerCount: 3 });
+      const disconnected = (await readAppState()).twitch;
+      expect(await patchTwitchConnectionRecord(twitchConnectionGeneration(disconnected), { liveStatus: "unknown", viewerCount: 0, startedAt: "" })).toBe(true);
+      expect(await executeSql("SELECT live_status || '|' || viewer_count FROM twitch_connection;")).toBe("unknown|0");
+    }, 60_000);
+
+    it("deletes moderated chat lines and nothing else", async () => {
+      await ensureDatabaseWithRetry();
+      const ours = ["m127_m1", "m127_m2", "m127_m3", "m127_f1", "m127_m4"];
+      const stored = async () =>
+        (await executeSql(`SELECT string_agg(id, ',' ORDER BY id) FROM engagement_events WHERE id IN (${ours.map((id) => `'${id}'`).join(",")});`));
+      await appendEngagementEventRecord({ id: "m127_m1", kind: "chat", actor: "Ada", message: "one", createdAt: at(10) });
+      await appendEngagementEventRecord({ id: "m127_m2", kind: "chat", actor: "Bob", message: "two", createdAt: at(11) });
+      await appendEngagementEventRecord({ id: "m127_m3", kind: "chat", actor: "エイダ", message: "three", createdAt: at(12) });
+      await appendEngagementEventRecord({ id: "m127_f1", kind: "follow", actor: "Ada", message: "followed", createdAt: at(13) });
+      await appendEngagementEventRecord({ id: "m127_m4", kind: "chat", actor: "Cy", message: "four", createdAt: at(14) });
+
+      // A ban of "ada": the display-name match, and the id of a localized-name line the bridge still had.
+      expect(await deleteChatEngagementEvents({ ids: ["m127_m3"], login: "ada" })).toBe(2);
+      expect(await stored()).toBe("m127_f1,m127_m2,m127_m4");
+
+      // One deleted message, by id; a follow's id is never a chat line.
+      expect(await deleteChatEngagementEvents({ ids: ["m127_m2", "m127_f1"] })).toBe(1);
+      expect(await stored()).toBe("m127_f1,m127_m4");
+
+      // A room clear takes every chat line and leaves the follow.
+      await deleteChatEngagementEvents({ all: true });
+      expect(await stored()).toBe("m127_f1");
+      expect(await executeSql("SELECT COUNT(*) FROM engagement_events WHERE kind = 'chat';")).toBe("0");
+      expect(await deleteChatEngagementEvents({})).toBe(0);
+    }, 60_000);
+  });
+
+  describe("worker write-backs keep an operator's change made during the cycle (M127)", () => {
+    const syncedAt = "2026-11-25T13:00:00.000Z";
+    const youtubeSource = (id: string) => ({
+      id,
+      name: id,
+      type: "YouTube playlist",
+      connectorKind: "youtube-playlist" as const,
+      enabled: true,
+      status: "Ready",
+      externalUrl: `https://www.youtube.com/playlist?list=${id}`,
+      notes: "",
+      lastSyncedAt: "2026-11-25T12:00:00.000Z"
+    });
+    const listedAsset = (sourceId: string, videoId: string) => ({
+      id: `asset_${sourceId}_${videoId}`,
+      sourceId,
+      title: videoId,
+      path: `https://www.youtube.com/watch?v=${videoId}`,
+      folderPath: `youtube-playlist/${sourceId}`,
+      tags: [],
+      status: "ready" as const,
+      includeInProgramming: true,
+      externalId: videoId,
+      fallbackPriority: 100,
+      isGlobalFallback: false,
+      createdAt: syncedAt,
+      updatedAt: syncedAt
+    });
+
+    it("records a source sync without undoing a disable, a URL change or a delete committed during it", async () => {
+      await ensureDatabaseWithRetry();
+      const ids = ["m127_src_disabled", "m127_src_moved", "m127_src_deleted", "m127_src_untouched"];
+      await upsertSources(ids.map(youtubeSource));
+      await replaceAssetsForSourceIds(ids, ids.map((id) => listedAsset(id, `${id}_old`)));
+
+      // The worker's cycle snapshot, taken before its yt-dlp calls.
+      const snapshot = (await readAppState()).sources.filter((source) => ids.includes(source.id));
+      expect(snapshot).toHaveLength(4);
+
+      // What operators commit while yt-dlp runs.
+      const movedUrl = "https://www.youtube.com/playlist?list=m127_src_moved_new";
+      await updateSourceFieldRecords([
+        { id: "m127_src_disabled", enabled: false },
+        { id: "m127_src_moved", externalUrl: movedUrl, status: "Sync queued" }
+      ]);
+      await deleteSourceRecordAndAssets("m127_src_deleted");
+
+      // The worker's write-back, as the YouTube, Twitch and direct-media syncs make it.
+      const written = await recordSourceSyncOutcomes(
+        snapshot.map((source) => ({
+          id: source.id,
+          syncedExternalUrl: source.externalUrl ?? "",
+          status: "Ready",
+          notes: "Ingested 1 YouTube item(s) via yt-dlp.",
+          lastSyncedAt: syncedAt
+        }))
+      );
+      await replaceAssetsForSourceIds(
+        ids,
+        ids.map((id) => listedAsset(id, `${id}_new`)),
+        { allowEmptyReplacement: true, expectedSourceUrls: new Map(snapshot.map((source) => [source.id, source.externalUrl ?? ""])) }
+      );
+
+      expect(written.sort()).toEqual(["m127_src_disabled", "m127_src_untouched"]);
+      const row = (id: string) =>
+        executeSql(`SELECT enabled::text || '|' || external_url || '|' || status || '|' || last_synced_at FROM sources WHERE id = '${id}';`);
+      const assetsOf = (id: string) =>
+        executeSql(`SELECT COALESCE(string_agg(external_id, ',' ORDER BY external_id), '') FROM assets WHERE source_id = '${id}';`);
+      // The disable stays; the sync of the unchanged URL is still recorded.
+      expect(await row("m127_src_disabled")).toBe(`false|${youtubeSource("m127_src_disabled").externalUrl}|Ready|${syncedAt}`);
+      // The new URL stays, and the old URL's listing is not filed under it.
+      expect(await row("m127_src_moved")).toBe(`true|${movedUrl}|Sync queued|2026-11-25T12:00:00.000Z`);
+      expect(await assetsOf("m127_src_moved")).toBe("m127_src_moved_old");
+      // The deleted source and its assets stay deleted.
+      expect(await executeSql("SELECT COUNT(*) FROM sources WHERE id = 'm127_src_deleted';")).toBe("0");
+      expect(await assetsOf("m127_src_deleted")).toBe("");
+      // A source nobody touched gets the sync as before.
+      expect(await row("m127_src_untouched")).toBe(`true|${youtubeSource("m127_src_untouched").externalUrl}|Ready|${syncedAt}`);
+      expect(await assetsOf("m127_src_untouched")).toBe("m127_src_untouched_new");
+
+      for (const id of ids) {
+        await deleteSourceRecordAndAssets(id);
+      }
+    }, 60_000);
+
+    it("writes a destination's status without undoing a disable, a URL change or a delete committed meanwhile", async () => {
+      await ensureDatabaseWithRetry();
+      const ids = ["m127_dest_disabled", "m127_dest_moved", "m127_dest_deleted", "m127_dest_untouched"];
+      // Created through the API's full upsert, which stays the only writer of the configuration.
+      for (const [index, id] of ids.entries()) {
+        await updateDestinationRecord(
+          {
+            id,
+            provider: "custom-rtmp",
+            role: "backup",
+            priority: 10 + index,
+            name: id,
+            enabled: true,
+            rtmpUrl: `rtmp://old.example/${id}`,
+            streamKeyPresent: true,
+            status: "error",
+            notes: "",
+            lastValidatedAt: "2026-11-25T12:00:00.000Z",
+            lastFailureAt: "2026-11-25T12:00:00.000Z",
+            failureCount: 2,
+            lastError: "Connection refused"
+          },
+          { managedStreamKey: `old-key-${id}` }
+        );
+      }
+
+      // The worker's snapshot, before its awaits (syncDestinations, playout and uplink start).
+      const snapshot = (await readAppState()).destinations.filter((destination) => ids.includes(destination.id));
+      expect(snapshot).toHaveLength(4);
+      const before = (id: string) => snapshot.find((destination) => destination.id === id)!;
+
+      // What the owner saves meanwhile: a disable, a move together with a key rotation, a delete.
+      await updateDestinationRecord({ ...before("m127_dest_disabled"), enabled: false });
+      await updateDestinationRecord(
+        { ...before("m127_dest_moved"), rtmpUrl: "rtmp://new.example/m127_dest_moved" },
+        { managedStreamKey: "rotated-key" }
+      );
+      await deleteDestinationRecord("m127_dest_deleted");
+
+      // The worker's write-back of a clean start.
+      const existed: boolean[] = [];
+      for (const destination of snapshot) {
+        existed.push(
+          await updateDestinationStatusRecord({
+            id: destination.id,
+            status: "ready",
+            lastValidatedAt: syncedAt,
+            failureCount: 0,
+            lastError: "",
+            notes: "Backup destination is active in the current multi-output group."
+          })
+        );
+      }
+
+      expect(existed).toEqual([true, true, false, true]);
+      const row = (id: string) =>
+        executeSql(
+          `SELECT enabled::text || '|' || rtmp_url || '|' || status || '|' || failure_count || '|' || last_error FROM stream_destinations WHERE id = '${id}';`
+        );
+      expect(await row("m127_dest_disabled")).toBe("false|rtmp://old.example/m127_dest_disabled|ready|0|");
+      // The new URL and the rotated key stay together.
+      expect(await row("m127_dest_moved")).toBe("true|rtmp://new.example/m127_dest_moved|ready|0|");
+      expect((await readManagedDestinationStreamKeys(["m127_dest_moved"]))["m127_dest_moved"]).toBe("rotated-key");
+      expect(await executeSql("SELECT COUNT(*) FROM stream_destinations WHERE id = 'm127_dest_deleted';")).toBe("0");
+      expect(await row("m127_dest_untouched")).toBe("true|rtmp://old.example/m127_dest_untouched|ready|0|");
+      // The status write leaves the managed key alone.
+      expect((await readManagedDestinationStreamKeys(["m127_dest_untouched"]))["m127_dest_untouched"]).toBe("old-key-m127_dest_untouched");
+
+      for (const id of ids) {
+        await deleteDestinationRecord(id);
+      }
     }, 60_000);
   });
 });

@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
   }
   // Every session is bound to the password it signed in with (M117), so the others end here; this one
   // gets a cookie for the new password and stays signed in.
-  await setSessionCookie(user.id, newHash);
+  await setSessionCookie(user.id, newHash, user.sessionEpoch ?? 0);
   await appendAuditEvent("auth.password.changed", `Owner password changed by ${email}; other sessions were signed out.`);
 
   return NextResponse.json({ ok: true, message: "Password changed. Every other signed-in session is signed out." });

@@ -147,6 +147,7 @@ import {
   appendAuditEvent,
   appendPresenceWindowRecord,
   readManagedDestinationStreamKeys,
+  recordSourceSyncOutcomes,
   replaceAssetsForSourceIds,
   readAppState,
   replaceTwitchScheduleSegments,
@@ -156,14 +157,15 @@ import {
   resolveChannelTimeZone,
   resolveIncident,
   resolveSecretKeyMismatchWhenSecretsDecrypt,
-  updateDestinationRecord,
+  updateDestinationStatusRecord,
   updateEngagementGameRuntimeRecord,
   updateAssetCacheRecords,
   updateAssetChapterProbeRecords,
   updatePlayoutRuntime,
   updatePoolCursor,
-  updateTwitchBroadcasterConnectionRecord,
-  updateTwitchConnectionRecord,
+  patchTwitchBroadcasterConnectionRecord,
+  patchTwitchConnectionRecord,
+  twitchConnectionGeneration,
   upsertSources,
   upsertIncident,
   type AppState,
@@ -171,6 +173,10 @@ import {
   type OutputSettingsRecord,
   type PoolRecord,
   type StreamDestinationRecord,
+  type TwitchBroadcasterConnection,
+  type TwitchBroadcasterConnectionPatch,
+  type TwitchConnection,
+  type TwitchConnectionPatch,
   readChatInteractionSettingsRecord,
   readChatOverlayMessagesRecord,
   readChatSkipVoteRecord,
@@ -302,7 +308,7 @@ import {
   watchAsRunEnd,
   type AsRunStopIntent
 } from "./as-run.js";
-import { AlertDeduper, deliverAlert, opensIncident } from "./alerts.js";
+import { AlertDeduper, deliverAlert, opensIncident, smtpTransportOptions } from "./alerts.js";
 import {
   ensureLocalAssetThumbnail,
   getAssetThumbnailPath,
@@ -2470,8 +2476,8 @@ async function markDestinationFailure(destinationId: string, errorMessage: strin
     return;
   }
 
-  await updateDestinationRecord({
-    ...destination,
+  await updateDestinationStatusRecord({
+    id: destination.id,
     status: "error",
     lastValidatedAt: now,
     lastFailureAt: now,
@@ -4044,6 +4050,36 @@ async function writeOnAirOverlay(
   await fs.writeFile(onAirOverlayPath, `${lines.join("\n")}\n`, "utf8");
 }
 
+/**
+ * The worker's writes to the two Twitch connection rows (M127). Each names only the fields its
+ * writer owns and applies only while the row is still the connection `read` came from: a disconnect
+ * or a (re)connect the operator made while the worker waited on Twitch wins, and the stale write is
+ * dropped (logged as twitch.connection.write.dropped) instead of bringing the old account back.
+ */
+async function patchIdentityConnection(
+  read: TwitchConnection,
+  writer: string,
+  patch: TwitchConnectionPatch
+): Promise<boolean> {
+  const applied = await patchTwitchConnectionRecord(twitchConnectionGeneration(read), patch);
+  if (!applied) {
+    logRuntimeEvent("twitch.connection.write.dropped", { account: "identity", writer });
+  }
+  return applied;
+}
+
+async function patchBroadcasterSlotConnection(
+  read: TwitchBroadcasterConnection,
+  writer: string,
+  patch: TwitchBroadcasterConnectionPatch
+): Promise<boolean> {
+  const applied = await patchTwitchBroadcasterConnectionRecord(twitchConnectionGeneration(read), patch);
+  if (!applied) {
+    logRuntimeEvent("twitch.connection.write.dropped", { account: "broadcaster", writer });
+  }
+  return applied;
+}
+
 // Renamed from refreshBroadcasterAccessToken: it always refreshed the *identity* connection
 // (state.twitch), and since M51 "broadcaster" means the second slot — the old name pointed at
 // the wrong one of the two.
@@ -4064,14 +4100,11 @@ async function refreshIdentityAccessToken(): Promise<string> {
     account: "identity"
   });
   const refreshedAt = new Date().toISOString();
-  const tokenExpiresAt = payload.expires_in
-    ? new Date(Date.now() + payload.expires_in * 1000).toISOString()
-    : state.twitch.tokenExpiresAt;
+  const tokenExpiresAt = payload.expires_in ? new Date(Date.now() + payload.expires_in * 1000).toISOString() : undefined;
 
-  await updateTwitchConnectionRecord({
-    ...state.twitch,
+  await patchIdentityConnection(state.twitch, "token-refresh", {
     accessToken: payload.access_token,
-    refreshToken: payload.refresh_token ?? state.twitch.refreshToken,
+    refreshToken: payload.refresh_token ?? undefined,
     status: "connected",
     tokenExpiresAt,
     lastRefreshAt: refreshedAt,
@@ -4107,14 +4140,11 @@ async function refreshBroadcasterSlotAccessToken(): Promise<string> {
   });
   const refreshedAt = new Date().toISOString();
 
-  await updateTwitchBroadcasterConnectionRecord({
-    ...state.twitchBroadcaster,
+  await patchBroadcasterSlotConnection(state.twitchBroadcaster, "token-refresh", {
     accessToken: payload.access_token,
-    refreshToken: payload.refresh_token ?? state.twitchBroadcaster.refreshToken,
+    refreshToken: payload.refresh_token ?? undefined,
     status: "connected",
-    tokenExpiresAt: payload.expires_in
-      ? new Date(Date.now() + payload.expires_in * 1000).toISOString()
-      : state.twitchBroadcaster.tokenExpiresAt,
+    tokenExpiresAt: payload.expires_in ? new Date(Date.now() + payload.expires_in * 1000).toISOString() : undefined,
     lastRefreshAt: refreshedAt,
     error: ""
   });
@@ -4376,12 +4406,13 @@ async function syncDirectMediaSources(): Promise<void> {
     });
   });
 
-  await upsertSources(
+  await recordSourceSyncOutcomes(
     directSources.map((source) => {
       const invalid = plan.invalidSourceIds.has(source.id);
       const preservedAssets = invalid ? (storedBySource.get(source.id) ?? 0) : 0;
       return {
-        ...source,
+        id: source.id,
+        syncedExternalUrl: source.externalUrl ?? "",
         status: invalid ? (preservedAssets > 0 ? "Invalid URL (asset preserved)" : "Invalid URL") : "Ready",
         notes: invalid
           ? preservedAssets > 0
@@ -4628,7 +4659,7 @@ async function reconcileSourceDroughtIncident(args: {
  */
 async function replaceSyncedSourceAssets(args: {
   connector: string;
-  sources: { id: string }[];
+  sources: { id: string; externalUrl?: string }[];
   storedAssets: AssetRecord[];
   incomingAssets: AssetRecord[];
   failedSourceIds: Set<string>;
@@ -4653,8 +4684,12 @@ async function replaceSyncedSourceAssets(args: {
     return;
   }
 
-  // The sync computed both lists together, so an empty write here really is an emptied source.
-  await replaceAssetsForSourceIds(plan.replaceableSourceIds, plan.assetsToWrite, { allowEmptyReplacement: true });
+  // The sync computed both lists together, so an empty write here really is an emptied source. A source
+  // deleted or pointed elsewhere while the sync ran is skipped under the lock (M127).
+  await replaceAssetsForSourceIds(plan.replaceableSourceIds, plan.assetsToWrite, {
+    allowEmptyReplacement: true,
+    expectedSourceUrls: new Map(args.sources.map((source) => [source.id, source.externalUrl ?? ""]))
+  });
 }
 
 async function syncYoutubePlaylistSources(): Promise<void> {
@@ -4794,7 +4829,9 @@ async function syncYoutubePlaylistSources(): Promise<void> {
   }
   noteSourceSyncDeferrals("youtube-sources", deferredSourceIds);
 
-  await upsertSources(
+  // Only the sync columns, and only for a source still at the URL listed above (M127): the snapshot is
+  // minutes old by now, and spreading it undid an operator's disable, URL change or delete.
+  await recordSourceSyncOutcomes(
     youtubeSources.map((source) => {
       // Describing the source from the same outcome the replacement decision uses is the point:
       // "Ingestion failed" alone read identically whether the archive survived or was deleted.
@@ -4805,7 +4842,8 @@ async function syncYoutubePlaylistSources(): Promise<void> {
         storedAssetCount: state.assets.filter((asset) => asset.sourceId === source.id).length
       });
       return {
-        ...source,
+        id: source.id,
+        syncedExternalUrl: source.externalUrl ?? "",
         status: description.status,
         notes: description.assetsPreserved
           ? buildPreservedAssetsNote(description.effectiveAssetCount)
@@ -5012,7 +5050,7 @@ async function syncTwitchVodSources(): Promise<void> {
   noteSourceSyncDeferrals("twitch-sources", deferredSourceIds);
   twitchSyncHeldBack = twitchCallsStarted === 0 && deferredSourceIds.length > 0 && youtubeCallsStarted > 0;
 
-  await upsertSources(
+  await recordSourceSyncOutcomes(
     twitchSources.map((source) => {
       // The source of the original wipe. The status now says whether the archive survived it.
       const description = describeSourceSyncStatus({
@@ -5022,7 +5060,8 @@ async function syncTwitchVodSources(): Promise<void> {
         storedAssetCount: state.assets.filter((asset) => asset.sourceId === source.id).length
       });
       return {
-        ...source,
+        id: source.id,
+        syncedExternalUrl: source.externalUrl ?? "",
         status: description.status,
         notes: description.assetsPreserved
           ? buildPreservedAssetsNote(description.effectiveAssetCount)
@@ -6806,8 +6845,8 @@ async function promoteRecoveringDestinations(reason: "manual" | "transition"): P
 
   const now = new Date().toISOString();
   for (const destination of recoveringDestinations) {
-    await updateDestinationRecord({
-      ...destination,
+    await updateDestinationStatusRecord({
+      id: destination.id,
       status: "ready",
       lastValidatedAt: now,
       notes:
@@ -7723,8 +7762,8 @@ async function startOrSwitchPlayout(args: {
 
   if (args.updateDestinations !== false) {
     for (const destination of args.destinations) {
-      await updateDestinationRecord({
-        ...destination,
+      await updateDestinationStatusRecord({
+        id: destination.id,
         status: "ready",
         lastValidatedAt: startedAt,
         // Failures since the last clean start — the counter meant nothing while it only ever grew.
@@ -7759,13 +7798,13 @@ async function syncDestinations(): Promise<void> {
         role: destination.role
       });
     }
-    await updateDestinationRecord({
-      ...destination,
+    // Status columns only (M127): spreading the snapshot undid an owner's disable, URL change or delete
+    // saved while this loop ran, and paired a rotated key with the old URL.
+    await updateDestinationStatusRecord({
+      id: destination.id,
       streamKeyPresent: Boolean(managedKey || envConfig.key),
-      streamKeySource,
       status: nextStatus,
       lastValidatedAt: now,
-      lastError: destination.lastError,
       notes: coolingDown
         ? `${
             destination.role === "backup" ? "Backup" : "Primary"
@@ -9747,8 +9786,8 @@ async function startUplink(group: DestinationRuntimeTargetGroup, managedConfig: 
   }));
 
   for (const destination of group.targets.map((entry) => entry.destination)) {
-    await updateDestinationRecord({
-      ...destination,
+    await updateDestinationStatusRecord({
+      id: destination.id,
       status: "ready",
       lastValidatedAt: startedAt,
       // Failures since the last clean start — the counter meant nothing while it only ever grew.
@@ -10323,13 +10362,7 @@ async function sendAlert(subject: string, message: string): Promise<void> {
     discordWebhookUrl: getDiscordWebhookUrl(state),
     smtp,
     fetchImpl: fetch,
-    createTransport: (settings) =>
-      nodemailer.createTransport({
-        host: settings.host,
-        port: settings.port,
-        secure: settings.port === 465,
-        auth: settings.user ? { user: settings.user, pass: settings.password || "" } : undefined
-      })
+    createTransport: (settings) => nodemailer.createTransport(smtpTransportOptions(settings))
   });
   logRuntimeEvent("alert.delivery", { subject, discord: report.discord, email: report.email, delivered: report.delivered });
 
@@ -10522,8 +10555,7 @@ async function syncTwitchSchedule(args: {
   // A segment Twitch did not delete stays in the stored list, so a later sync tries again (M113).
   await replaceTwitchScheduleSegments([...nextSegments, ...staleCleanup.kept]);
   twitchSegmentsKeptAfterFailedDelete = new Set(staleCleanup.kept.map((segment) => segment.key));
-  await updateTwitchConnectionRecord({
-    ...args.state.twitch,
+  await patchIdentityConnection(args.state.twitch, "schedule-sync", {
     lastScheduleSyncAt: new Date().toISOString(),
     error: ""
   });
@@ -10597,11 +10629,9 @@ async function healTwitchConnection(): Promise<void> {
     return;
   }
 
-  await updateTwitchConnectionRecord({
-    ...state.twitch,
-    status: "connected",
-    error: ""
-  });
+  if (!(await patchIdentityConnection(state.twitch, "heal", { status: "connected", error: "" }))) {
+    return;
+  }
 
   await appendAuditEvent(
     "twitch.connected",
@@ -10645,11 +10675,15 @@ async function markIdentityRefreshRefused(error: unknown): Promise<boolean> {
   const state = await readAppState();
   // Read before the write: the alert belongs to the moment the entry opens (R2), not to each refusal.
   const opening = opensIncident(state.incidents, "twitch.reconnect.required");
-  await updateTwitchConnectionRecord({
-    ...state.twitch,
+  const marked = await patchIdentityConnection(state.twitch, "refresh-refused", {
     status: "error",
     error: TWITCH_REFRESH_REFUSED_ERROR
   });
+  if (!marked) {
+    // A reconnect replaced the refused token meanwhile: there is nothing left to reconnect, and
+    // nothing for the caller to alert about either.
+    return true;
+  }
   const message = `Twitch refused the stored refresh token of ${state.twitch.broadcasterLogin || "the bot account"}, so the connection cannot be renewed. Reconnect it under Admin → Settings → Twitch accounts; until then title, category and schedule sync are paused, and chat cannot sign in once the access token has run out.`;
   await upsertIncident({
     scope: "twitch",
@@ -10965,13 +10999,16 @@ async function reconcileTwitch(): Promise<void> {
     // the same lie one step smaller, so its last-synced values stay untouched too — that is also
     // what makes the next cycle still see the difference and retry after the interval.
     if (metadataSyncGate.mode !== "waiting-for-broadcaster") {
-      await updateTwitchConnectionRecord({
-        ...state.twitch,
+      await patchIdentityConnection(state.twitch, "metadata-sync", {
         status: "connected",
         lastMetadataSyncAt: new Date().toISOString(),
-        lastSyncedTitle: channelWriteThrottled ? state.twitch.lastSyncedTitle : desiredTitle,
-        lastSyncedCategoryName: channelWriteThrottled ? state.twitch.lastSyncedCategoryName : desiredCategoryName,
-        lastSyncedCategoryId: channelWriteThrottled ? state.twitch.lastSyncedCategoryId : desiredCategoryId,
+        ...(channelWriteThrottled
+          ? {}
+          : {
+              lastSyncedTitle: desiredTitle,
+              lastSyncedCategoryName: desiredCategoryName,
+              lastSyncedCategoryId: desiredCategoryId
+            }),
         error: ""
       });
     }
@@ -11140,12 +11177,7 @@ async function reconcileTwitchLiveStatus(): Promise<void> {
 
   if (state.twitch.status !== "connected" || !broadcasterId || !clientId || !clientSecret) {
     if (state.twitch.liveStatus !== "unknown" || state.twitch.viewerCount !== 0 || state.twitch.startedAt) {
-      await updateTwitchConnectionRecord({
-        ...state.twitch,
-        liveStatus: "unknown",
-        viewerCount: 0,
-        startedAt: ""
-      });
+      await patchIdentityConnection(state.twitch, "live-status", { liveStatus: "unknown", viewerCount: 0, startedAt: "" });
     }
     return;
   }
@@ -11165,20 +11197,14 @@ async function reconcileTwitchLiveStatus(): Promise<void> {
       return;
     }
 
-    await updateTwitchConnectionRecord({
-      ...state.twitch,
+    await patchIdentityConnection(state.twitch, "live-status", {
       liveStatus: snapshot.liveStatus,
       viewerCount: snapshot.viewerCount,
       startedAt: snapshot.startedAt
     });
   } catch (error) {
     if (state.twitch.liveStatus !== "unknown" || state.twitch.viewerCount !== 0 || state.twitch.startedAt) {
-      await updateTwitchConnectionRecord({
-        ...state.twitch,
-        liveStatus: "unknown",
-        viewerCount: 0,
-        startedAt: ""
-      });
+      await patchIdentityConnection(state.twitch, "live-status", { liveStatus: "unknown", viewerCount: 0, startedAt: "" });
     }
 
     logRuntimeEvent("twitch.live-status.sync.failed", {

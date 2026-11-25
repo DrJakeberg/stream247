@@ -78,10 +78,9 @@ function runReset(input: string): Promise<{ code: number | null; stdout: string;
 
 async function signInWith(email: string, password: string): Promise<number> {
   clearAllRateLimits();
-  const response = await signIn({
-    json: async () => ({ email, password }),
-    headers: new Headers()
-  } as never);
+  const response = await signIn(
+    new Request("http://localhost/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }) as never
+  );
   return response.status;
 }
 

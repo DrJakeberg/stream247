@@ -5,7 +5,12 @@
 // may only export route handlers, so the concurrency gate — and the counter that proves it works —
 // live here.
 
-import { loadSceneRendererFonts, renderSceneSvg, type SceneRenderFont } from "@stream247/overlay-render";
+import {
+  loadSceneRendererFonts,
+  prepareSceneLayout,
+  renderPreparedSceneSvg,
+  type SceneRenderFont
+} from "@stream247/overlay-render";
 import type { ScenePreviewRequest } from "@/lib/scene-preview-request";
 
 let fontsPromise: Promise<SceneRenderFont[]> | null = null;
@@ -28,6 +33,10 @@ function sceneFonts(): Promise<SceneRenderFont[]> {
 // every time the operator changes something. Six concurrent renders would be six cores taken away
 // from the encoder for as long as they run. A queue costs the operator a few milliseconds of
 // latency; it costs the channel nothing.
+//
+// Only the drawing waits in that line (M127). The remote pictures of a frame are fetched before it
+// joins: a fetch is network time, not CPU, and a picture whose host never answers held every other
+// user's preview behind it for the whole fetch deadline when it waited inside.
 let renderQueue: Promise<unknown> = Promise.resolve();
 let activeRenders = 0;
 let peakRenders = 0;
@@ -37,18 +46,123 @@ export function peakConcurrentScenePreviewRenders(): number {
   return peakRenders;
 }
 
+// How many previews may hold fetched pictures at once, and how many of those may be one user's (M127).
+//
+// A prepared frame keeps every picture it fetched in memory as a data: URI until it is drawn, up to
+// 64 layers of 4 MiB each. With the fetch inside the drawing slot only one such frame existed at a
+// time; without a bound here a single signed-in user could hold as many as they could send. One slot
+// per user keeps a user whose picture host never answers from taking the other slot as well, so
+// everyone else still gets frames. A request waiting for a slot holds only its parsed scene.
+const PREVIEW_SLOTS = 2;
+const PREVIEW_SLOTS_PER_USER = 1;
+
+type SlotWaiter = { userId: string; grant: () => void };
+
+let slotsInUse = 0;
+const userSlots = new Map<string, number>();
+const slotWaiters: SlotWaiter[] = [];
+
+/** Thrown when the request that asked for a preview went away before its turn came. */
+export class ScenePreviewAbortedError extends Error {
+  constructor() {
+    super("The preview request was abandoned before it was drawn.");
+    this.name = "ScenePreviewAbortedError";
+  }
+}
+
+function slotFree(userId: string): boolean {
+  return slotsInUse < PREVIEW_SLOTS && (userSlots.get(userId) ?? 0) < PREVIEW_SLOTS_PER_USER;
+}
+
+function takeSlot(userId: string): void {
+  slotsInUse += 1;
+  userSlots.set(userId, (userSlots.get(userId) ?? 0) + 1);
+}
+
+function releaseSlot(userId: string): void {
+  slotsInUse -= 1;
+  const held = (userSlots.get(userId) ?? 1) - 1;
+  if (held > 0) {
+    userSlots.set(userId, held);
+  } else {
+    userSlots.delete(userId);
+  }
+
+  // First come, first served among the users who may take a slot now.
+  for (let index = 0; index < slotWaiters.length && slotsInUse < PREVIEW_SLOTS; ) {
+    const waiter = slotWaiters[index];
+    if (slotFree(waiter.userId)) {
+      slotWaiters.splice(index, 1);
+      takeSlot(waiter.userId);
+      waiter.grant();
+    } else {
+      index += 1;
+    }
+  }
+}
+
+function acquireSlot(userId: string, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) {
+    return Promise.reject(new ScenePreviewAbortedError());
+  }
+
+  if (slotFree(userId)) {
+    takeSlot(userId);
+    return Promise.resolve();
+  }
+
+  return new Promise<void>((resolve, reject) => {
+    // The studio aborts the previous request on every change, so a waiter whose page moved on leaves.
+    const onAbort = () => {
+      const index = slotWaiters.indexOf(waiter);
+      if (index >= 0) {
+        slotWaiters.splice(index, 1);
+      }
+      reject(new ScenePreviewAbortedError());
+    };
+    const waiter: SlotWaiter = {
+      userId,
+      grant: () => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      }
+    };
+    slotWaiters.push(waiter);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+/** Test seam: how many preview requests are waiting for a slot. */
+export function waitingScenePreviewRequests(): number {
+  return slotWaiters.length;
+}
+
 /**
  * Draws one preview frame, waiting its turn.
  *
  * Without embedded glyph outlines: the answer is inlined into a page that already declares the same
  * faces, so shipping the outlines again would multiply the size of every frame for nothing.
  */
-export async function renderScenePreviewSvg(scene: ScenePreviewRequest): Promise<string> {
+export async function renderScenePreviewSvg(
+  scene: ScenePreviewRequest,
+  requester: { userId?: string; signal?: AbortSignal } = {}
+): Promise<string> {
+  const userId = requester.userId ?? "";
+  await acquireSlot(userId, requester.signal);
+  try {
+    return await prepareAndDrawPreview(scene);
+  } finally {
+    releaseSlot(userId);
+  }
+}
+
+async function prepareAndDrawPreview(scene: ScenePreviewRequest): Promise<string> {
+  const [layout, fonts] = await Promise.all([prepareSceneLayout(scene), sceneFonts()]);
   const result = renderQueue.then(async () => {
     activeRenders += 1;
     peakRenders = Math.max(peakRenders, activeRenders);
     try {
-      return await renderSceneSvg(scene, await sceneFonts(), { embedFont: false });
+      return await renderPreparedSceneSvg(layout, scene, fonts, { embedFont: false });
     } finally {
       activeRenders -= 1;
     }

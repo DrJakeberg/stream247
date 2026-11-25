@@ -37,7 +37,7 @@ vi.mock("next/server", () => ({
 import { POST } from "../../apps/web/app/api/auth/login/route";
 
 function requestWith(body: unknown) {
-  return { json: async () => body, headers: new Headers(), nextUrl: new URL("http://localhost/api/auth/login") } as never;
+  return new Request("http://localhost/api/auth/login", { method: "POST", body: JSON.stringify(body) }) as never;
 }
 
 describe("login with an unreadable two-factor secret", () => {

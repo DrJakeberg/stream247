@@ -1,10 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildTwoFactorChallengeValue, sessionPasswordHash, setSessionCookie, verifyPassword } from "@/lib/server/auth";
-import { findUserByEmail, readAppState, upsertUserRecord } from "@/lib/server/state";
+import { findUserByEmail, readAppState, recordUserSignIn } from "@/lib/server/state";
 import { LOGIN_RATE_LIMIT, consumeRateLimit, getClientIdentifier, resetRateLimit } from "@/lib/server/rate-limit";
+import { PREAUTH_BODY_LIMIT_BYTES, bodyTooLargeResponse, readBoundedText } from "@/lib/server/bounded-body";
 
 export async function POST(request: NextRequest) {
-  const body = (await request.json()) as { email?: string; password?: string };
+  // Anonymous callers reach this, so the body is bounded before anything else reads or counts it.
+  const rawBody = await readBoundedText(request, PREAUTH_BODY_LIMIT_BYTES);
+  if (rawBody === null) {
+    return bodyTooLargeResponse();
+  }
+  const body = JSON.parse(rawBody) as { email?: string; password?: string };
   const email = (body.email ?? "").trim().toLowerCase();
   const password = body.password ?? "";
 
@@ -54,11 +60,12 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  await upsertUserRecord({
-    ...user,
-    lastLoginAt: new Date().toISOString()
-  });
+  // Only the sign-in time (M127): the row read above may be older than a password or 2FA change
+  // committed since, and writing it back undid that change.
+  if (!(await recordUserSignIn(user.id, new Date().toISOString()))) {
+    return NextResponse.json({ message: "Invalid email or password." }, { status: 401 });
+  }
 
-  await setSessionCookie(user.id, sessionPasswordHash(user, state));
+  await setSessionCookie(user.id, sessionPasswordHash(user, state), user.sessionEpoch ?? 0);
   return NextResponse.json({ ok: true });
 }

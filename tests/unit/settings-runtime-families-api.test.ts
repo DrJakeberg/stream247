@@ -32,7 +32,13 @@ vi.mock("next/server", () => ({
 vi.mock("@/lib/server/state", () => ({
   appendAuditEvent: mockAppendAuditEvent,
   readAppState: mockReadAppState,
-  updateManagedConfigRecord: mockUpdateManagedConfigRecord
+  // The route hands an updater (M127); apply it to the stored record, as the db does under its lock,
+  // and record and return what would be written.
+  updateManagedConfigRecord: async (update: (current: Record<string, unknown>) => unknown) => {
+    const next = update({ ...(await mockReadAppState()).managedConfig });
+    await mockUpdateManagedConfigRecord(next);
+    return next;
+  }
 }));
 
 import { PUT as putReplayCache } from "../../apps/web/app/api/settings/replay-cache/route";

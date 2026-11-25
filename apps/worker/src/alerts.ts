@@ -19,6 +19,22 @@ export type AlertDeliveryReport = {
 
 export type SmtpSettings = { host: string; port: number; user: string; password: string; from: string; to: string };
 
+/**
+ * The nodemailer options of the alert mail (M127, audit finding 18): implicit TLS on port 465 and mandatory
+ * STARTTLS on every other port, so the login and the alert never go out in plain text. A server without
+ * STARTTLS, or a path that strips it, makes the delivery fail instead.
+ */
+export function smtpTransportOptions(settings: SmtpSettings) {
+  const secure = settings.port === 465;
+  return {
+    host: settings.host,
+    port: settings.port,
+    secure,
+    requireTLS: !secure,
+    auth: settings.user ? { user: settings.user, pass: settings.password || "" } : undefined
+  };
+}
+
 type Mailer = { sendMail: (mail: { from: string; to: string; subject: string; text: string }) => Promise<unknown> };
 
 function describeError(error: unknown): string {

@@ -53,14 +53,16 @@ export type SceneRenderSvgOptions = {
   embedFont?: boolean;
 };
 
+/** A frame's layout with every remote picture already fetched: what satori draws, and nothing else. */
+export type PreparedSceneLayout = { readonly prepared: unknown };
+
 /**
- * Renders one overlay frame to SVG.
+ * The network half of a frame: the layout, with every remote picture fetched and inlined.
+ *
+ * Kept apart from the drawing (M127) so a caller that draws one frame at a time can fetch outside
+ * that slot: a picture whose host never answers then holds only its own frame, never the next one.
  */
-export async function renderSceneSvg(
-  request: SceneRenderRequest,
-  fonts: SceneRenderFont[],
-  options: SceneRenderSvgOptions = {}
-): Promise<string> {
+export async function prepareSceneLayout(request: SceneRenderRequest): Promise<PreparedSceneLayout> {
   const layout = buildOverlaySceneLayout(
     {
       payload: request.payload,
@@ -73,15 +75,33 @@ export async function renderSceneSvg(
   );
   // satori fetches nothing itself (M125): every remote picture is fetched under the address rules
   // of safe-image-fetch.ts first and handed over as a data: URI.
-  return satori(
-    (await inlineRemoteImages(layout)) as Parameters<typeof satori>[0],
-    {
-      width: request.width,
-      height: request.height,
-      fonts,
-      embedFont: options.embedFont ?? true
-    }
-  );
+  return { prepared: await inlineRemoteImages(layout) };
+}
+
+/** The CPU half of a frame: satori over a layout from prepareSceneLayout, at the request's size. */
+export async function renderPreparedSceneSvg(
+  layout: PreparedSceneLayout,
+  request: Pick<SceneRenderRequest, "width" | "height">,
+  fonts: SceneRenderFont[],
+  options: SceneRenderSvgOptions = {}
+): Promise<string> {
+  return satori(layout.prepared as Parameters<typeof satori>[0], {
+    width: request.width,
+    height: request.height,
+    fonts,
+    embedFont: options.embedFont ?? true
+  });
+}
+
+/**
+ * Renders one overlay frame to SVG.
+ */
+export async function renderSceneSvg(
+  request: SceneRenderRequest,
+  fonts: SceneRenderFont[],
+  options: SceneRenderSvgOptions = {}
+): Promise<string> {
+  return renderPreparedSceneSvg(await prepareSceneLayout(request), request, fonts, options);
 }
 
 /** What the strip needs to know: the line, how tall its run is, and the frame it belongs to. */

@@ -710,6 +710,109 @@ under `planning/archive/`, text unchanged.
   Pull request #56 was then merged into this milestone's branch (`7cd9b0a`) with M126's wording kept in
   both places.
 
+### M127 The Findings Of The Security Audit Of 2026-11-25 Are Closed
+
+- **Source.** The security audit of 2026-11-25 on `7cd9b0a` (the code of `main` 42cdd53; its output is outside
+  this repository): 14 confirmed findings, three medium and eleven low, closed here on the owner's word
+  ("ja schließen", 2026-11-25). Its eight leads that need facts only the owner has are not part of M127.
+  Every fix sits at the last point that decides, and each has a test that fails on the old code.
+- **Lost updates on stored rows.** The common cause of five findings was a whole row (or record) read
+  without the state write lock and written back later. Each writer now changes only its own columns under
+  the lock, with the precondition in the `WHERE`: the sign-in writes `last_login_at` only
+  (`recordUserSignIn`, finding 12); the 2FA routes write the 2FA columns only while the row still has the
+  state and the secret they checked (`updateUserTwoFactorRecord`, 1 and 12); the Twitch sign-in binds a
+  grant only while it exists unbound or bound to that id and never writes its role
+  (`bindTeamAccessGrantRecord`, 9); the worker patches the Twitch connections only while
+  `(broadcaster_id, connected_at)` is the generation it read (`patchTwitch*ConnectionRecord`, 10); the
+  managed-config save reads, merges and writes under the lock through an updater (3). The first-run claim is
+  an `INSERT … ON CONFLICT … WHERE initialized = FALSE AND owner_email = ''` with the owner user in the same
+  transaction (4).
+- **Sign-out (6).** `users.session_epoch` (migration `20261125_001_user_session_epoch`) is part of the
+  session stamp; epoch 0 signs exactly the old stamp, so no cookie is ended by the update. The sign-out
+  advances it, for a valid session only (else a stale cookie could sign the user out again and again).
+  `persistState` carries the epoch from the stored row, never from the state it writes. The session lifetime
+  default is 14 days, the cookie's own.
+- **Pre-auth bodies (5).** `readBoundedText` refuses a declared or streamed body over the limit before
+  anything else: 16 KiB for sign-in, its 2FA step, first-run setup and the relay check (which keeps its
+  bare 403), 64 KiB for EventSub. No proxy limit (it would need the Portainer stack file).
+- **Audit flood (2).** Failed team sign-ins write the unprotected `twitch.login_rejected`, one per kind per
+  minute, ten per minute in all, and no longer touch the identity connection row. After review: a Twitch
+  account without a grant (`TwitchLoginNotAuthorizedError`) is its own kind `not-authorized`, so garbage codes
+  cannot take its row, and each written row names how many of its kind were left out since the last one.
+- **Key mismatch (11).** A managed-config save whose stored payload does not decrypt throws
+  `ManagedConfigKeyMismatchError` and writes nothing; every managed-config route answers 409.
+- **Rendering (7, 13).** `renderSceneSvg` is split into `prepareSceneLayout` (the picture fetches) and
+  `renderPreparedSceneSvg` (satori); only the second runs in the preview's serial queue. After review: the
+  fetch had been the only bound on how many prepared frames (up to 64 data: URIs of 4 MiB each) existed at
+  once, so a preview now takes one of two slots, at most one per user, before it fetches; a waiting request
+  holds only its scene and leaves when the studio aborts it. A fetched picture
+  whose header declares more than 8192 px on a side or 16 777 216 px is refused, as is a raster whose size
+  cannot be read; PNG, JPEG, GIF (screen and first frame), WebP and AVIF are read. SVG passes: measured with
+  resvg-js 2.6.2, an 8000 × 8000 PNG inside an SVG picture peaked at 101 MB RSS against 389 MB drawn
+  directly (102 MB without a picture), so resvg does not decode a raster nested in an SVG.
+- **Public data (8, 14).** The SSE stream sends a fixed error text and logs the detail (once per event and
+  message per minute, after review: an outage fails every open connection every 5 s); the public
+  snapshot carries `recentEvents: []`; Twitch `CLEARMSG`, `CLEARCHAT` with a login and a room clear delete
+  the stored chat rows (`deleteChatEngagementEvents`, by id, by display name as login, or all). After
+  review the bridge sends its chat appends and these deletes one after another, so a delete fired right
+  behind its message cannot commit first and miss the row.
+- **Review fixes elsewhere.** `updateUserTwoFactorRecord` refuses to write over an unreadable secret only
+  while 2FA is on; a turned-off leftover gates nothing, and keeping it left setup refusing for good after a
+  lost key. The key-mismatch texts (incident action, log hint, incident detail) no longer offer re-entering
+  the secrets as a way out, which the 409 closed; `docs/operations.md` has the reset for a lost key. The 2.4
+  rollback note advances every `session_epoch` instead of changing the owner password, which leaves Twitch
+  sessions alone.
+- **Decisions.** 2FA setup while 2FA is on is a plain 409 (the form never offers it; replacing the
+  authenticator is off, then on). The logout bump goes through the full session check, not the signature
+  alone. A sign-in whose user row vanished meanwhile issues no cookie. `updateOwnerAndInitialized` stays
+  (test setup uses it); bootstrap no longer calls it. Bootstrap that claimed the workspace but meets an
+  unreadable managed config answers 409 with no cookie; the owner signs in normally.
+- **Second part: the third pass (15-18).** The audit's third pass on the same code added four confirmed
+  findings, closed in a second commit. (15, medium) The second-factor challenge, which the sign-in returns
+  after the password alone, had the session's construction and key: in 2.3.1 it worked as an owner session,
+  and 2.4 refused it only because the M117 session has four parts. The challenge is now
+  `userId:issuedAt:2fa:hmac` under a key derived from the app secret (`HMAC(secret,
+  "stream247:two-factor-challenge")`); the session is unchanged, so nobody is signed out, and a challenge
+  pending at the update is refused (the password again, within its 5 minutes). 2.3.1 refuses the new
+  challenge twice: wrong key, and `2fa` where it reads the issue time. Side find: on the old code a session
+  whose stamp was all digits (about 1 in 1 850) also passed as a challenge (no bypass, the TOTP step still
+  ran). (16, medium; 17, low) The worker's source syncs and destination checks wrote whole rows back from a
+  snapshot read before minutes of yt-dlp calls, undoing an operator's disable, URL change or delete and
+  re-inserting a deleted row. `recordSourceSyncOutcomes` writes only `status`, `notes` and
+  `last_synced_at`, `WHERE id = $1 AND external_url = $2`; `replaceAssetsForSourceIds` takes
+  `expectedSourceUrls` and, under the same lock, leaves out a source that is gone or moved with its incoming
+  assets. `updateDestinationStatusRecord` writes only the status columns by id (five worker call sites);
+  the full upserts stay for creation and the API. A source disabled during a sync still gets its status and
+  assets (it keeps `enabled = false`). (18, low) Alert mail authenticated in plain text on ports other than
+  465: `smtpTransportOptions` sets `secure` on 465 and `requireTLS` on every other port, with or without a
+  login. A plain-text LAN relay now fails the delivery; no opt-out exists and none was added (owner
+  question below). No schema change in this part.
+- **Measurements.** See the M127 row in `PLANS.md`.
+- **Owner question (18).** Should TLS be required only when a login is configured? Recommendation: no, the
+  alert text itself would go out in plain text; a LAN relay can offer STARTTLS or the owner uses Discord.
+- **Left.** The web's `recover_outputs` (`apps/web/lib/server/broadcast.ts`) still writes a destination back
+  from its snapshot with `updateDestinationRecord` (short window, operator-triggered); the fix is
+  `updateDestinationStatusRecord`. The local library's scan writes its fixed row whole each cycle
+  (`name: "Local Media Library"`, `enabled: true`); the sources PUT and bulk routes accept that row, so a
+  rename or disable of it is undone within one cycle (deterministic and older than M127; the fix is an
+  insert-if-missing plus `recordSourceSyncOutcomes`). The worker logs nothing when `recordSourceSyncOutcomes`
+  or `updateDestinationStatusRecord` drops a write for a row that is gone or moved (the next cycle syncs the
+  new URL; a `source.sync.outcome.dropped` line like `twitch.connection.write.dropped` would help diagnosis).
+  The Twitch team sign-in still upserts a whole user row from its snapshot, not keyed on `twitch_user_id`
+  (no unique constraint): two overlapping first sign-ins of one account create two rows, and a sign-out then
+  advances the epoch of one of them only (narrow, older than M127; the fix is a keyed, column-scoped write
+  under the lock, or a sign-out that advances every row of that Twitch id). `failure_count` in `markDestinationFailure` stays
+  snapshot + 1, not an atomic increment. A banned user whose display name differs from the login and whose line left the 50-line ring
+  stays in the staff-only recent events (no login column). A stale `writeAppState` snapshot (a whole-state
+  write) can bring back chat rows that a moderation delete removed; `updateAppState` is not affected. The
+  web's `recordTwitchError` and `recordTwitchBroadcasterError` still write the whole connection row from an
+  unlocked snapshot (authenticated callers only). Operations and replay-cache validate their field pairs
+  against the snapshot, so two saves of opposite halves can store a misordered pair (the worker ignores a
+  misordered pair whole). The number of preview requests waiting for a slot is not capped (each holds only
+  its parsed scene and leaves on abort). A data: image in a
+  layout (media panel, emotes) bypasses the fetch and the size check; only worker-made data reaches it today.
+  No override that saves the managed config after a key mismatch by entering every secret again.
+
 ### Suggestions 2026-10-04 to M112-M124, then M125
 
 Moved out of `PLANS.md`, text unchanged apart from the archive path.

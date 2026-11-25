@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser, verifyPassword } from "@/lib/server/auth";
-import { upsertUserRecord } from "@/lib/server/state";
+import { updateUserTwoFactorRecord } from "@/lib/server/state";
 import { verifyTotpCode } from "@/lib/server/two-factor";
 
 export async function POST(request: NextRequest) {
@@ -25,12 +25,16 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Invalid one-time code." }, { status: 401 });
   }
 
-  await upsertUserRecord({
-    ...user,
-    twoFactorEnabled: false,
-    twoFactorSecret: "",
-    twoFactorConfirmedAt: ""
-  });
+  // Only the 2FA columns, and only while the stored secret is the one the code was checked against
+  // (M127). The stored secret stays, as it did when the whole-row write left an empty secret unwritten.
+  const disabled = await updateUserTwoFactorRecord(
+    user.id,
+    { enabled: true, secret: user.twoFactorSecret },
+    { enabled: false, confirmedAt: "" }
+  );
+  if (!disabled) {
+    return NextResponse.json({ message: "Two-factor settings changed in the meantime. Reload the page and try again." }, { status: 409 });
+  }
 
   return NextResponse.json({ ok: true, message: "Two-factor authentication has been disabled." });
 }

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { WATCHDOG_LIMITS, isWithinWatchdogLimits } from "@stream247/core";
 import { requireApiRoles } from "@/lib/server/auth";
-import { appendAuditEvent, readAppState, updateManagedConfigRecord } from "@/lib/server/state";
+import { managedConfigSaveRefusal } from "@/lib/server/managed-config-save";
+import { appendAuditEvent, updateManagedConfigRecord } from "@/lib/server/state";
 
 // The watchdog-threshold half of M56 part 2. These values decide when the channel restarts its
 // own processes, so nothing is clamped silently here: a value outside the core bounds is refused
@@ -49,13 +50,11 @@ export async function PUT(request: NextRequest) {
     updates[key] = trimmed;
   }
 
-  const state = await readAppState();
-
-  await updateManagedConfigRecord({
-    ...state.managedConfig,
-    ...updates,
-    updatedAt: new Date().toISOString()
-  });
+  try {
+    await updateManagedConfigRecord((current) => ({ ...current, ...updates, updatedAt: new Date().toISOString() }));
+  } catch (error) {
+    return managedConfigSaveRefusal(error);
+  }
 
   await appendAuditEvent("settings.watchdogs.updated", "Managed watchdog thresholds were updated.");
   return NextResponse.json({ ok: true, message: "Watchdog thresholds saved." });

@@ -8,8 +8,11 @@ export {
   type SceneRenderFontFiles
 } from "./fonts.js";
 export {
+  prepareSceneLayout,
+  renderPreparedSceneSvg,
   renderSceneSvg,
   renderTickerStripSvg,
+  type PreparedSceneLayout,
   type SceneRenderRequest,
   type SceneRenderSvgOptions,
   type TickerStripRequest,

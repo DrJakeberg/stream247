@@ -8,6 +8,7 @@ import {
   type ManagedEventSubSecretInput
 } from "@stream247/core";
 import { appendEngagementEventRecord, readAppState } from "@/lib/server/state";
+import { EVENTSUB_BODY_LIMIT_BYTES, bodyTooLargeResponse, readBoundedText } from "@/lib/server/bounded-body";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -97,7 +98,12 @@ function buildEventSubMessage(args: {
 // fed the browser overlay page, which is gone: the on-air picture is drawn by the playout renderer,
 // and the studio preview is the same drawing.
 export async function POST(request: Request) {
-  const rawBody = await request.text();
+  // Anyone can POST here, and the signature can only be checked over the whole body, so the body is
+  // bounded first (M127).
+  const rawBody = await readBoundedText(request, EVENTSUB_BODY_LIMIT_BYTES);
+  if (rawBody === null) {
+    return bodyTooLargeResponse();
+  }
   // State is read before signature verification since M56: the shared secret itself may live in
   // managed config, with the env variable as fallback.
   const state = await readAppState();

@@ -45,5 +45,5 @@ export const DECLARED_SCHEMA: Record<string, string[]> = {
   twitch_broadcaster_connection: ["access_token", "broadcaster_id", "broadcaster_login", "connected_at", "error", "last_refresh_at", "refresh_token", "singleton_id", "status", "token_expires_at"],
   twitch_connection: ["access_token", "broadcaster_id", "broadcaster_login", "connected_at", "error", "last_metadata_sync_at", "last_refresh_at", "last_schedule_sync_at", "last_synced_category_id", "last_synced_category_name", "last_synced_title", "live_status", "refresh_token", "singleton_id", "started_at", "status", "token_expires_at", "viewer_count"],
   twitch_schedule_segments: ["block_id", "key", "segment_id", "start_time", "synced_at", "title"],
-  users: ["auth_provider", "created_at", "display_name", "email", "id", "last_login_at", "password_hash", "role", "twitch_login", "twitch_user_id", "two_factor_confirmed_at", "two_factor_enabled", "two_factor_secret"]
+  users: ["auth_provider", "created_at", "display_name", "email", "id", "last_login_at", "password_hash", "role", "session_epoch", "twitch_login", "twitch_user_id", "two_factor_confirmed_at", "two_factor_enabled", "two_factor_secret"]
 };
